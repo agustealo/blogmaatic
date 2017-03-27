@@ -1,0 +1,24 @@
+body {
+background: #ade9fc;
+}
+h1, .h1 {
+	color: #004040;
+}
+p, .p {
+	color: #0080c0;
+}
+.date {
+	color: #0080c0;
+}
+a {
+    color: #0080c0;
+    text-decoration: none;
+}
+a:hover {
+    color: #004040;
+    text-decoration: none;
+}
+
+.page-header {
+    border-bottom: 1px solid #004040;
+}

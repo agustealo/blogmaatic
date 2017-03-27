@@ -1,0 +1,32 @@
+{% extends 'bookmaatic/base.html' %}
+
+{% block content %}
+    {% for book in books %}
+    <!-- Add content loop -->
+        <div class="post">
+            <div class="date">
+                {{ book.bookmaatic }}
+            </div>
+            <h1><a href="{% url 'detail' pk=book.pk %}">{{ book.book_name }}</a></h1>
+            <p>{{ book.introduction|linebreaksbr }}</p>
+        </div>
+    {% endfor %}
+    <!-- End content loop -->
+    <!-- Add pagination to the page -->
+	<div class="pagination">
+	    <span class="step-links">
+	        {% if books.has_previous %}
+	            <a href="?page={{ books.previous_page_number }}">previous</a>
+	        {% endif %}
+	
+	        <span class="current">
+	            Page {{ books.number }} of {{ books.paginator.num_pages }}
+	        </span>
+	
+	        {% if books.has_next %}
+	            <a href="?page={{ books.next_page_number }}">next</a>
+	        {% endif %}
+	    </span>
+	</div>
+    <!-- End pagination -->
+{% endblock content %}

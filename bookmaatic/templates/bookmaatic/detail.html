@@ -1,0 +1,14 @@
+{% extends 'bookmaatic/base.html' %}
+
+{% block content %}
+    <div class="post">
+        {% if book.publication_date %}
+            <div class="date">
+                {{ book.publication_date }}
+            </div>
+        {% endif %}
+        <a class="btn btn-default" href="{% url 'edit' pk=book.pk %}"><span class="glyphicon glyphicon-pencil"></span></a>
+        <h1>{{ book.book_name }}</h1>
+        <p>{{ book.introduction|linebreaksbr }}</p>
+    </div>
+{% endblock %}
