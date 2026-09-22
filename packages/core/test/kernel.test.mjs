@@ -64,6 +64,7 @@ class ContractPublisher {
 
   #remote = new Map();
   deliveryCount = 0;
+  lastExistingRemote = undefined;
 
   async compile({ publication: item, route }) {
     const fingerprint = `${item.current.id}:${item.current.content.title}`;
@@ -80,7 +81,11 @@ class ContractPublisher {
 
   async deliver(request) {
     this.deliveryCount += 1;
-    const remote = { id: `remote-${request.projection.routeId}`, url: "https://publisher.invalid/post/1" };
+    this.lastExistingRemote = request.existingRemote;
+    const remote = request.existingRemote ?? {
+      id: `remote-${request.projection.routeId}`,
+      url: "https://publisher.invalid/post/1",
+    };
     this.#remote.set(request.projection.routeId, {
       remote,
       fingerprint: request.projection.fingerprint,
@@ -142,6 +147,35 @@ test("publishes, verifies, and emits a stable idempotency key", async () => {
 
   const projection = await fixture.publisher.compile({ publication: item, route: publicationGroup.routes[0] });
   assert.equal(receipts[0].idempotencyKey, deliveryIdempotencyKey(item, publicationGroup.routes[0], projection));
+});
+
+test("repeated publication is a no-op when the remote already matches", async () => {
+  const fixture = kernel();
+  const item = publication();
+  const publicationGroup = group();
+
+  const first = await fixture.kernel.publish({ publication: item, group: publicationGroup });
+  const second = await fixture.kernel.publish({ publication: item, group: publicationGroup });
+
+  assert.equal(first[0].status, "verified");
+  assert.equal(second[0].status, "verified");
+  assert.equal(fixture.publisher.deliveryCount, 1);
+  assert.equal(second[0].remote.id, "remote-route-1");
+});
+
+test("drifted projections update the existing remote identity instead of creating a duplicate", async () => {
+  const fixture = kernel();
+  const item = publication();
+  const publicationGroup = group();
+
+  await fixture.kernel.publish({ publication: item, group: publicationGroup });
+  fixture.publisher.forceFingerprint("route-1", "external-edit");
+  const receipts = await fixture.kernel.publish({ publication: item, group: publicationGroup });
+
+  assert.equal(receipts[0].status, "verified");
+  assert.equal(fixture.publisher.deliveryCount, 2);
+  assert.equal(fixture.publisher.lastExistingRemote.id, "remote-route-1");
+  assert.equal(receipts[0].remote.id, "remote-route-1");
 });
 
 test("fails closed when a route requires a capability the extension does not provide", async () => {

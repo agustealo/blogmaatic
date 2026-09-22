@@ -190,7 +190,53 @@ export class PublicationKernel {
 
       const projection = await extension.compile({ publication: input.publication, route });
       const idempotencyKey = deliveryIdempotencyKey(input.publication, route, projection);
-      const request: DeliveryRequest = { idempotencyKey, projection };
+      const before = await extension.inspect({ projection });
+
+      if (before.state === "unreachable") {
+        receipts.push({
+          publicationId: input.publication.id,
+          revisionId: input.publication.current.id,
+          groupId: input.group.id,
+          routeId: route.id,
+          projectionId: projection.projectionId,
+          idempotencyKey,
+          status: "unreachable",
+          policy,
+          ...(before.remote ? { remote: before.remote } : {}),
+          observed: before,
+          completedAt: this.#clock.now(),
+        });
+        continue;
+      }
+
+      if (before.state === "synchronized" && before.fingerprint === projection.fingerprint) {
+        receipts.push({
+          publicationId: input.publication.id,
+          revisionId: input.publication.current.id,
+          groupId: input.group.id,
+          routeId: route.id,
+          projectionId: projection.projectionId,
+          idempotencyKey,
+          status: "verified",
+          policy,
+          ...(before.remote ? { remote: before.remote } : {}),
+          observed: before,
+          completedAt: this.#clock.now(),
+        });
+        continue;
+      }
+
+      if (before.state === "missing") {
+        this.#extensions.assertCapabilities(route.destination.extensionId, ["article.create"]);
+      } else {
+        this.#extensions.assertCapabilities(route.destination.extensionId, ["article.update"]);
+      }
+
+      const request: DeliveryRequest = {
+        idempotencyKey,
+        projection,
+        ...(before.remote ? { existingRemote: before.remote } : {}),
+      };
       const delivered = await extension.deliver(request);
       const observed = await extension.inspect({ projection, remote: delivered.remote });
 

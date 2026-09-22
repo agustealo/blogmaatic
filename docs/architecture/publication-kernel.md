@@ -30,7 +30,9 @@ A projection is the destination-specific compiled form of a publication revision
 
 ### Delivery
 
-Deliveries carry an idempotency key derived from publication, revision, route, and desired fingerprint. Extensions must preserve or reconcile that identity when talking to remote systems.
+Delivery is reconcile-first. Before mutating a destination, the kernel inspects the remote projection. A synchronized projection is a no-op, a missing projection requires `article.create`, and a drifted projection requires `article.update` and carries the existing remote identity into delivery. This keeps duplicate prevention in the control plane instead of hoping every provider offers native idempotency.
+
+Deliveries also carry an idempotency key derived from publication, revision, route, and desired fingerprint. Extensions must preserve or reconcile that identity when talking to remote systems.
 
 ### Verification and receipts
 
