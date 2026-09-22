@@ -197,8 +197,8 @@ test("daily local schedules preserve wall-clock time across daylight-saving chan
     missedRunPolicy: "catch_up_once",
   }, "2026-03-01T00:00:00Z");
 
-  assert.equal(schedule.nextFireAt, "2026-03-07T14:00:00Z");
-  assert.equal(nextScheduleFireAfter(schedule, schedule.nextFireAt), "2026-03-08T13:00:00Z");
+  assert.equal(schedule.nextFireAt, "2026-03-07T14:00:00.000Z");
+  assert.equal(nextScheduleFireAfter(schedule, schedule.nextFireAt), "2026-03-08T13:00:00.000Z");
 });
 
 test("scheduler claims, launches and advances one durable fire at a time", async () => {
@@ -226,8 +226,8 @@ test("scheduler claims, launches and advances one durable fire at a time", async
     assert.equal(first[0].outcome, "started");
     assert.equal(launcher.calls.length, 1);
     const schedule = await store.getSchedule("morning-release");
-    assert.equal(schedule.nextFireAt, "2026-03-08T13:00:00Z");
-    assert.equal(schedule.lastFireAt, "2026-03-07T14:00:00Z");
+    assert.equal(schedule.nextFireAt, "2026-03-08T13:00:00.000Z");
+    assert.equal(schedule.lastFireAt, "2026-03-07T14:00:00.000Z");
 
     now = "2026-03-08T13:00:00Z";
     const second = await control.dispatchDueSchedules({ now });
