@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -5,9 +7,10 @@ import fastify, {
 } from "fastify";
 
 import type { AutomationApproval, AutomationRunPhase } from "@blogmaatic/automation";
-import type {
-  ManualAutomationCommand,
-  PublicationAutomationEvent,
+import {
+  stableJson,
+  type ManualAutomationCommand,
+  type PublicationAutomationEvent,
 } from "@blogmaatic/control-plane";
 
 import {
@@ -15,7 +18,7 @@ import {
   type OperatorPermission,
   type OperatorPrincipal,
 } from "./auth.js";
-import type { OperatorApiListenOptions, OperatorApiOptions } from "./types.js";
+import type { ManualRunBody, OperatorApiListenOptions, OperatorApiOptions } from "./types.js";
 import {
   OperatorRequestError,
   parseActivationBody,
@@ -52,6 +55,19 @@ function errorBody(request: FastifyRequest, code: string, message: string) {
   return { error: { code, message, requestId: request.id } };
 }
 
+function manualCommandId(principalId: string, idempotencyKey: string, body: ManualRunBody): string {
+  const requestFingerprint = stableJson({
+    automationId: body.automationId,
+    automationVersion: body.automationVersion ?? null,
+    publication: body.publication,
+    groups: body.groups,
+  });
+  const digest = createHash("sha256")
+    .update(stableJson([principalId, idempotencyKey, requestFingerprint]))
+    .digest("hex");
+  return `api_${digest.slice(0, 40)}`;
+}
+
 async function domainCall<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
@@ -59,11 +75,7 @@ async function domainCall<T>(fn: () => Promise<T>): Promise<T> {
     if (error instanceof OperatorApiError || error instanceof OperatorRequestError || error instanceof OperatorAuthError) {
       throw error;
     }
-    throw new OperatorApiError(
-      422,
-      "DOMAIN_REJECTED",
-      error instanceof Error && error.message.trim() ? error.message : "The requested operation was rejected",
-    );
+    throw new OperatorApiError(422, "DOMAIN_REJECTED", "The requested operation was rejected");
   }
 }
 
@@ -172,9 +184,9 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
   app.post("/v1/runs/manual", async (request, reply) => {
     const principal = await authorize(request, "runs:write");
     const body = parseManualRunBody(request.body);
-    const commandId = requireIdempotencyKey(request.headers["idempotency-key"]);
+    const idempotencyKey = requireIdempotencyKey(request.headers["idempotency-key"]);
     const command: ManualAutomationCommand = {
-      id: commandId,
+      id: manualCommandId(principal.id, idempotencyKey, body),
       automationId: body.automationId,
       ...(body.automationVersion === undefined ? {} : { automationVersion: body.automationVersion }),
       initiatedBy: principal.id,
