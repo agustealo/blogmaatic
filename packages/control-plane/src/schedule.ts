@@ -39,6 +39,10 @@ function localDateTimeToInstant(
   return local.toZonedDateTime(timezone, { disambiguation: "compatible" }).toInstant().toString();
 }
 
+export function canonicalInstant(value: string): string {
+  return Temporal.Instant.from(value).toString();
+}
+
 export function validateScheduleInput(input: AutomationScheduleInput): void {
   if (!input.id.trim()) throw new Error("Schedule id is required");
   if (!input.automationId.trim()) throw new Error("Schedule automation id is required");
@@ -58,7 +62,7 @@ export function validateScheduleInput(input: AutomationScheduleInput): void {
 
 export function createScheduleSnapshot(input: AutomationScheduleInput, now: string): AutomationSchedule {
   validateScheduleInput(input);
-  Temporal.Instant.from(now);
+  const canonicalNow = canonicalInstant(now);
   const firstFireAt = localDateTimeToInstant(
     parseLocalDate(input.localDate),
     parseLocalTime(input.localTime),
@@ -69,8 +73,8 @@ export function createScheduleSnapshot(input: AutomationScheduleInput, now: stri
     enabled: input.enabled ?? true,
     misfireGraceMs: input.misfireGraceMs ?? DEFAULT_MISFIRE_GRACE_MS,
     nextFireAt: firstFireAt,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: canonicalNow,
+    updatedAt: canonicalNow,
   };
 }
 
