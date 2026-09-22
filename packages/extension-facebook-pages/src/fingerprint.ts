@@ -41,5 +41,9 @@ export function encodeRemoteVersion(projectionFingerprint: string, remoteHash: s
 export function parseRemoteVersion(value: string | undefined): { desired: string; remote: string } | undefined {
   if (!value) return undefined;
   const match = /^bm1:([a-f0-9]{64}):([a-f0-9]{64})$/.exec(value);
-  return match ? { desired: match[1], remote: match[2] } : undefined;
+  if (!match) return undefined;
+  const desired = match[1];
+  const remote = match[2];
+  if (!desired || !remote) return undefined;
+  return { desired, remote };
 }
