@@ -28,6 +28,10 @@ function assertRecurrence(recurrence: ScheduleRecurrence): void {
   }
 }
 
+function fixedWidthInstant(instant: Temporal.Instant): string {
+  return new Date(instant.epochMilliseconds).toISOString();
+}
+
 function localDateTimeToInstant(
   date: Temporal.PlainDate,
   time: Temporal.PlainTime,
@@ -36,11 +40,13 @@ function localDateTimeToInstant(
   const local = date.toPlainDateTime(time);
   // "compatible" mirrors common calendar behavior: use the earlier instant on
   // overlaps and move forward across spring-forward gaps.
-  return local.toZonedDateTime(timezone, { disambiguation: "compatible" }).toInstant().toString();
+  return fixedWidthInstant(
+    local.toZonedDateTime(timezone, { disambiguation: "compatible" }).toInstant(),
+  );
 }
 
 export function canonicalInstant(value: string): string {
-  return Temporal.Instant.from(value).toString();
+  return fixedWidthInstant(Temporal.Instant.from(value));
 }
 
 export function validateScheduleInput(input: AutomationScheduleInput): void {
@@ -120,5 +126,5 @@ export function addMilliseconds(instant: string, milliseconds: number): string {
   if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) {
     throw new Error("Milliseconds must be a non-negative safe integer");
   }
-  return Temporal.Instant.from(instant).add({ milliseconds }).toString();
+  return fixedWidthInstant(Temporal.Instant.from(instant).add({ milliseconds }));
 }
