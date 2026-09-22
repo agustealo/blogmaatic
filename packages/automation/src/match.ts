@@ -4,8 +4,17 @@ import type { AutomationDefinition, AutomationRunTrigger } from "./types.js";
 
 function triggerMatches(definition: AutomationDefinition, trigger: AutomationRunTrigger): boolean {
   if (definition.trigger.kind !== trigger.kind) return false;
-  if (definition.trigger.kind === "manual") return true;
-  return trigger.kind === "event" && definition.trigger.eventType === trigger.eventType;
+  switch (definition.trigger.kind) {
+    case "manual":
+      return true;
+    case "event":
+      return trigger.kind === "event" && definition.trigger.eventType === trigger.eventType;
+    case "schedule":
+      return (
+        trigger.kind === "schedule" &&
+        (definition.trigger.scheduleId === undefined || definition.trigger.scheduleId === trigger.scheduleId)
+      );
+  }
 }
 
 export function automationMatchesPublication(
