@@ -5,6 +5,7 @@ import {
 } from "@blogmaatic/automation";
 import {
   canonicalInstant,
+  decodeCursor,
   type AuditLedgerPhase,
   type AuditListQuery,
   type AutomationListQuery,
@@ -23,6 +24,7 @@ import {
 } from "@blogmaatic/core";
 
 import type { OperatorOperationKind, OperatorOperationsQuery } from "./operations.js";
+import type { OperatorRunListQuery } from "./runs.js";
 import type {
   ActivationBody,
   ApprovalBody,
@@ -112,9 +114,20 @@ function optionalQueryInstant(record: Record<string, unknown>, key: string): str
   }
 }
 
-function pagination(record: Record<string, unknown>): { readonly limit?: number; readonly cursor?: string } {
+function pagination(
+  record: Record<string, unknown>,
+  kind: string,
+  valueCount: number,
+): { readonly limit?: number; readonly cursor?: string } {
   const limit = optionalQueryLimit(record);
   const cursor = optionalQueryString(record, "cursor");
+  if (cursor !== undefined) {
+    try {
+      decodeCursor(kind, cursor, valueCount);
+    } catch {
+      throw new OperatorRequestError("cursor is invalid for this resource");
+    }
+  }
   return {
     ...(limit === undefined ? {} : { limit }),
     ...(cursor === undefined ? {} : { cursor }),
@@ -266,18 +279,26 @@ export function parseScheduleDispatchBody(body: unknown): ScheduleDispatchBody {
 export function parseAutomationListQuery(value: unknown): AutomationListQuery {
   const record = queryRecord(value);
   const enabled = optionalQueryBoolean(record, "enabled");
-  return { ...pagination(record), ...(enabled === undefined ? {} : { enabled }) };
+  return { ...pagination(record, "automations", 1), ...(enabled === undefined ? {} : { enabled }) };
 }
 
 export function parseAutomationVersionListQuery(value: unknown): AutomationVersionListQuery {
-  return pagination(queryRecord(value));
+  const record = queryRecord(value);
+  const page = pagination(record, "automation-versions", 1);
+  if (page.cursor) {
+    const values = decodeCursor("automation-versions", page.cursor, 1)!;
+    const version = Number(values[0]);
+    if (!Number.isSafeInteger(version) || version < 1) {
+      throw new OperatorRequestError("cursor is invalid for automation versions");
+    }
+  }
+  return page;
 }
 
 const dispatchStates = new Set<ControlPlaneRunDispatchState>(["prepared", "started", "launch_failed"]);
 const runPhases = new Set<AutomationRunPhase>(["running", "waiting_approval", "delaying", "completed", "stopped", "rejected"]);
 
-export function parseRunListQuery(value: unknown): RunListQuery {
-  const record = queryRecord(value);
+function parseRunFilters(record: Record<string, unknown>): Omit<OperatorRunListQuery, "limit" | "cursor"> {
   const automationId = optionalQueryString(record, "automationId");
   const publicationId = optionalQueryString(record, "publicationId");
   const dispatchState = optionalQueryString(record, "dispatchState");
@@ -291,13 +312,20 @@ export function parseRunListQuery(value: unknown): RunListQuery {
   const createdFrom = optionalQueryInstant(record, "createdFrom");
   const createdTo = optionalQueryInstant(record, "createdTo");
   return {
-    ...pagination(record),
     ...(automationId ? { automationId } : {}),
     ...(publicationId ? { publicationId } : {}),
     ...(dispatchState ? { dispatchState: dispatchState as ControlPlaneRunDispatchState } : {}),
     ...(runtimePhase ? { runtimePhase: runtimePhase as AutomationRunPhase } : {}),
     ...(createdFrom ? { createdFrom } : {}),
     ...(createdTo ? { createdTo } : {}),
+  };
+}
+
+export function parseRunListQuery(value: unknown): OperatorRunListQuery {
+  const record = queryRecord(value);
+  return {
+    ...pagination(record, "runs", 2),
+    ...parseRunFilters(record),
   };
 }
 
@@ -308,7 +336,7 @@ export function parseScheduleListQuery(value: unknown): ScheduleListQuery {
   const nextFireFrom = optionalQueryInstant(record, "nextFireFrom");
   const nextFireTo = optionalQueryInstant(record, "nextFireTo");
   return {
-    ...pagination(record),
+    ...pagination(record, "schedules", 2),
     ...(automationId ? { automationId } : {}),
     ...(enabled === undefined ? {} : { enabled }),
     ...(nextFireFrom ? { nextFireFrom } : {}),
@@ -332,7 +360,7 @@ export function parseAuditListQuery(value: unknown): AuditListQuery {
   const occurredFrom = optionalQueryInstant(record, "occurredFrom");
   const occurredTo = optionalQueryInstant(record, "occurredTo");
   return {
-    ...pagination(record),
+    ...pagination(record, "audit", 2),
     ...(actorId ? { actorId } : {}),
     ...(action ? { action } : {}),
     ...(resourceType ? { resourceType } : {}),
@@ -362,7 +390,8 @@ export function parseOperationsQuery(value: unknown): OperatorOperationsQuery {
     throw new OperatorRequestError("kind is invalid");
   }
   return {
-    ...parseRunListQuery(record),
+    ...pagination(record, "operations", 3),
+    ...parseRunFilters(record),
     ...(kind ? { kind: kind as OperatorOperationKind } : {}),
   };
 }
