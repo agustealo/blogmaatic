@@ -7,14 +7,28 @@ import type {
 
 export type AutomationTriggerDefinition =
   | { readonly kind: "manual" }
-  | { readonly kind: "event"; readonly eventType: string };
+  | { readonly kind: "event"; readonly eventType: string }
+  | { readonly kind: "schedule"; readonly scheduleId?: string };
 
 export type AutomationRunTrigger =
-  | { readonly kind: "manual"; readonly initiatedBy: string }
+  | {
+      readonly kind: "manual";
+      readonly initiatedBy: string;
+      readonly commandId?: string;
+      readonly occurredAt?: string;
+    }
   | {
       readonly kind: "event";
       readonly eventType: string;
       readonly eventId: string;
+      readonly occurredAt: string;
+    }
+  | {
+      readonly kind: "schedule";
+      readonly scheduleId: string;
+      readonly fireId: string;
+      readonly scheduledFor: string;
+      readonly timezone: string;
       readonly occurredAt: string;
     };
 

@@ -13,6 +13,10 @@ function assertNonEmpty(value: string, label: string): void {
   if (!value.trim()) throw new Error(`${label} is required`);
 }
 
+function assertIsoInstant(value: string, label: string): void {
+  if (!Number.isFinite(Date.parse(value))) throw new Error(`${label} must be an ISO date-time`);
+}
+
 function validateCondition(condition: AutomationCondition | undefined): void {
   if (!condition) return;
   for (const status of condition.statuses ?? []) {
@@ -50,6 +54,9 @@ export function validateAutomationDefinition(definition: AutomationDefinition): 
   if (definition.trigger.kind === "event") {
     assertNonEmpty(definition.trigger.eventType, "Automation event trigger type");
   }
+  if (definition.trigger.kind === "schedule" && definition.trigger.scheduleId !== undefined) {
+    assertNonEmpty(definition.trigger.scheduleId, "Automation schedule trigger id");
+  }
   validateCondition(definition.conditions);
   if (definition.steps.length === 0) throw new Error("Automation requires at least one step");
 
@@ -73,6 +80,26 @@ function groupsById(groups: readonly PublicationGroup[]): Map<string, Publicatio
 export function validateAutomationRunRequest(request: AutomationRunRequest): void {
   assertNonEmpty(request.runId, "Automation run id");
   validateAutomationDefinition(request.definition);
+  switch (request.trigger.kind) {
+    case "manual":
+      assertNonEmpty(request.trigger.initiatedBy, "Automation manual initiator");
+      if (request.trigger.commandId !== undefined) assertNonEmpty(request.trigger.commandId, "Automation manual command id");
+      if (request.trigger.occurredAt !== undefined) assertIsoInstant(request.trigger.occurredAt, "Automation manual occurredAt");
+      break;
+    case "event":
+      assertNonEmpty(request.trigger.eventId, "Automation event id");
+      assertNonEmpty(request.trigger.eventType, "Automation event type");
+      assertIsoInstant(request.trigger.occurredAt, "Automation event occurredAt");
+      break;
+    case "schedule":
+      assertNonEmpty(request.trigger.scheduleId, "Automation schedule id");
+      assertNonEmpty(request.trigger.fireId, "Automation schedule fire id");
+      assertNonEmpty(request.trigger.timezone, "Automation schedule timezone");
+      assertIsoInstant(request.trigger.scheduledFor, "Automation scheduledFor");
+      assertIsoInstant(request.trigger.occurredAt, "Automation schedule occurredAt");
+      break;
+  }
+
   const groups = groupsById(request.groups);
   for (const step of request.definition.steps) {
     if (step.kind === "publish_group" && !groups.has(step.groupId)) {

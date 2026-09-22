@@ -1,5 +1,5 @@
 {
-  "name": "@blogmaatic/automation-restate",
+  "name": "@blogmaatic/control-plane",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,10 +13,6 @@
   "dependencies": {
     "@blogmaatic/automation": "0.1.0",
     "@blogmaatic/core": "0.1.0",
-    "@restatedev/restate-sdk": "1.17.0",
-    "@restatedev/restate-sdk-clients": "1.17.0"
-  },
-  "devDependencies": {
-    "@restatedev/restate-sdk-testcontainers": "1.17.0"
+    "@js-temporal/polyfill": "0.5.1"
   }
 }
