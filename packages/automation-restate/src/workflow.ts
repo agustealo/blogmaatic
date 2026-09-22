@@ -21,6 +21,12 @@ const WORKFLOW_NAME = "BlogmaaticPublicationAutomation";
 export interface PublicationAutomationWorkflowOptions {
   readonly publisher: AutomationPublisher;
   readonly workflowName?: string;
+  /**
+   * Publisher exceptions fail terminal by default so permanent auth/configuration
+   * errors are not retried forever. Return true only for errors known to be transient.
+   * Explicit `unreachable` delivery receipts remain retryable regardless.
+   */
+  readonly isRetryablePublisherError?: (error: unknown) => boolean;
 }
 
 function approvalPromiseKey(stepId: string): string {
@@ -218,11 +224,19 @@ export function createPublicationAutomationWorkflow(options: PublicationAutomati
 
           const grants = approvalGrantsForGroup(group, request.publication, approvals);
           const receipts = await ctx.run(`publish:${step.id}`, async () => {
-            const result = await options.publisher.publishGroup({
-              publication: request.publication,
-              group,
-              approvals: grants,
-            });
+            let result: readonly DeliveryReceipt[];
+            try {
+              result = await options.publisher.publishGroup({
+                publication: request.publication,
+                group,
+                approvals: grants,
+              });
+            } catch (error) {
+              if (options.isRetryablePublisherError?.(error)) throw error;
+              throw new restate.TerminalError(
+                `Publisher step ${step.id} failed and was not classified as retryable`,
+              );
+            }
             if (transientFailure(result)) {
               throw new Error(`Transient publication failure in group ${group.id}`);
             }
