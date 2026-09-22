@@ -3,7 +3,12 @@ import type {
   AutomationScheduleInput,
   PublicationAutomationEvent,
 } from "@blogmaatic/control-plane";
-import type { Publication, PublicationGroup } from "@blogmaatic/core";
+import {
+  validatePublication,
+  validatePublicationGroups,
+  type Publication,
+  type PublicationGroup,
+} from "@blogmaatic/core";
 
 import type {
   ActivationBody,
@@ -52,21 +57,23 @@ function optionalPositiveInteger(record: Record<string, unknown>, key: string): 
 }
 
 function publicationField(record: Record<string, unknown>): Publication {
-  const publication = asRecord(record.publication, "publication");
-  stringField(publication, "id", "publication.id");
-  const current = asRecord(publication.current, "publication.current");
-  stringField(current, "id", "publication.current.id");
-  return record.publication as Publication;
+  const publication = record.publication as Publication;
+  try {
+    validatePublication(publication);
+  } catch (error) {
+    throw new OperatorRequestError(error instanceof Error ? error.message : "Invalid publication snapshot");
+  }
+  return publication;
 }
 
 function groupsField(record: Record<string, unknown>): readonly PublicationGroup[] {
-  const groups = record.groups;
-  if (!Array.isArray(groups)) throw new OperatorRequestError("groups must be an array");
-  for (const [index, group] of groups.entries()) {
-    const value = asRecord(group, `groups[${index}]`);
-    stringField(value, "id", `groups[${index}].id`);
+  const groups = record.groups as readonly PublicationGroup[];
+  try {
+    validatePublicationGroups(groups);
+  } catch (error) {
+    throw new OperatorRequestError(error instanceof Error ? error.message : "Invalid publication groups");
   }
-  return groups as unknown as readonly PublicationGroup[];
+  return groups;
 }
 
 export function parseAutomationRegistration(body: unknown): AutomationDefinition {
