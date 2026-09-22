@@ -241,8 +241,8 @@ test("operator lists automations and versions with opaque stable cursors", async
     assert.deepEqual(versions.json().items.map((entry) => entry.definition.version), [2, 1]);
 
     const badCursor = await app.inject({ method: "GET", url: "/v1/automations?cursor=not-a-cursor", headers: bearer() });
-    assert.equal(badCursor.statusCode, 422);
-    assert.equal(badCursor.json().error.code, "DOMAIN_REJECTED");
+    assert.equal(badCursor.statusCode, 400);
+    assert.equal(badCursor.json().error.code, "INVALID_REQUEST");
   });
 });
 
@@ -260,6 +260,16 @@ test("run queries and operations expose current approval and delivery drift trut
     });
     const approvalRun = await manual(app, "needs-review", "approval-1");
     const driftRun = await manual(app, "drift-release", "drift-1");
+
+    const phaseFiltered = await app.inject({
+      method: "GET",
+      url: "/v1/runs?runtimePhase=waiting_approval",
+      headers: bearer(),
+    });
+    assert.equal(phaseFiltered.statusCode, 200, phaseFiltered.body);
+    assert.equal(phaseFiltered.json().items.length, 1);
+    assert.equal(phaseFiltered.json().items[0].runId, approvalRun.runId);
+    assert.equal(phaseFiltered.json().items[0].runtimePhase, "waiting_approval");
 
     const filtered = await app.inject({
       method: "GET",
