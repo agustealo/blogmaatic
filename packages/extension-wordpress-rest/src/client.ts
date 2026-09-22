@@ -45,7 +45,8 @@ export class WordPressRestClient {
       "Content-Type": contentType,
       "Content-Disposition": `attachment; filename=${JSON.stringify(filename)}`,
     });
-    return this.#request<T>(path, { method: "POST", headers, body: bytes }, true);
+    const body = new Uint8Array(bytes).buffer;
+    return this.#request<T>(path, { method: "POST", headers, body }, true);
   }
 
   async #request<T>(path: string, init: RequestInit, authenticated: boolean): Promise<T> {
