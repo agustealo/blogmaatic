@@ -95,7 +95,9 @@ export function parseEventBody(body: unknown): EventIngestBody {
     occurredAt: stringField(record, "occurredAt"),
     publication: publicationField(record),
     groups: groupsField(record),
-    ...(attributes === undefined ? {} : { attributes: attributes as PublicationAutomationEvent["attributes"] }),
+    ...(attributes === undefined
+      ? {}
+      : { attributes: attributes as NonNullable<PublicationAutomationEvent["attributes"]> }),
   };
 }
 
@@ -171,7 +173,7 @@ export function parseScheduleBody(body: unknown): AutomationScheduleInput {
     recurrence,
     missedRunPolicy,
     ...(misfireGraceMs === undefined ? {} : { misfireGraceMs: misfireGraceMs as number }),
-    ...(record.enabled === undefined ? {} : { enabled: record.enabled }),
+    ...(record.enabled === undefined ? {} : { enabled: record.enabled as boolean }),
   };
 }
 
