@@ -1,3 +1,7 @@
+import type {
+  RestateWorkflowContext,
+  RestateWorkflowSharedContext,
+} from "@restatedev/restate-sdk";
 import * as clients from "@restatedev/restate-sdk-clients";
 
 import type {
@@ -9,9 +13,15 @@ import type {
 } from "@blogmaatic/automation";
 
 interface PublicationAutomationClientHandlers {
-  run(ctx: unknown, request: AutomationRunRequest): Promise<AutomationRunResult>;
-  approve(ctx: unknown, approval: AutomationApproval): Promise<AutomationApprovalResponse>;
-  status(ctx: unknown): Promise<AutomationRunStatus | null>;
+  run(
+    ctx: RestateWorkflowContext,
+    request: AutomationRunRequest,
+  ): Promise<AutomationRunResult>;
+  approve(
+    ctx: RestateWorkflowSharedContext,
+    approval: AutomationApproval,
+  ): Promise<AutomationApprovalResponse>;
+  status(ctx: RestateWorkflowSharedContext): Promise<AutomationRunStatus | null>;
 }
 
 export interface RestateAutomationLauncherOptions {
