@@ -128,6 +128,12 @@ export interface RunListQuery extends PageRequest {
   readonly automationId?: string;
   readonly publicationId?: string;
   readonly dispatchState?: ControlPlaneRunDispatchState;
+  /**
+   * Cache-only storage filter. It must not be used to promise current runtime
+   * truth at an operator boundary. Live operator filtering refreshes Restate
+   * status before applying this criterion.
+   */
+  readonly runtimePhase?: AutomationRunStatus["phase"];
   readonly createdFrom?: string;
   readonly createdTo?: string;
 }
