@@ -12,7 +12,9 @@ The executable authority chain is:
 
 Slice 1 established the platform-neutral publication kernel.
 
-Slice 2 adds the extension runtime and connection authority plus the first real publisher: `@blogmaatic/extension-jekyll-git`. That extension writes real Jekyll Markdown/front matter, manages approved local assets, commits through Git, can push to a configured Git remote, verifies observed state, detects committed drift, refuses to overwrite uncommitted human edits, and rolls back pre-commit mutations when build verification fails.
+Slice 2 added the managed extension runtime and connection authority plus the first real publisher: `@blogmaatic/extension-jekyll-git`.
+
+Slice 3 adds `@blogmaatic/secrets` and the second real publisher: `@blogmaatic/extension-wordpress-rest`. WordPress credentials are resolved from secret references at request time, while the extension uses the native REST API for authenticated posts, media, categories, tags, drafts, scheduling, inspection, and update-in-place reconciliation.
 
 The original 2017 Django prototype remains in the repository for deliberate migration analysis; it is not an authority for the new architecture.
 
@@ -20,9 +22,11 @@ The original 2017 Django prototype remains in the repository for deliberate migr
 
 - `@blogmaatic/core` — publication domain, policy, projection, delivery, verification, reconciliation.
 - `@blogmaatic/extension-sdk` — managed extension manifest, connection authority, health and lifecycle runtime.
-- `@blogmaatic/extension-jekyll-git` — real Jekyll/Git publisher extension.
+- `@blogmaatic/secrets` — provider-neutral secret-reference resolution with scoped plaintext exposure.
+- `@blogmaatic/extension-jekyll-git` — real Jekyll/Git repository publisher.
+- `@blogmaatic/extension-wordpress-rest` — real WordPress REST publisher using Application Password authentication.
 
-See [`docs/architecture/publication-kernel.md`](docs/architecture/publication-kernel.md) and [`docs/architecture/extensions.md`](docs/architecture/extensions.md).
+See [`docs/architecture/publication-kernel.md`](docs/architecture/publication-kernel.md), [`docs/architecture/extensions.md`](docs/architecture/extensions.md), and [`docs/architecture/wordpress-rest.md`](docs/architecture/wordpress-rest.md).
 
 ## Development
 
