@@ -345,10 +345,11 @@ test("failed authenticated mutation retains intent plus failed evidence without 
       headers: bearer(),
     });
     assert.equal(audit.statusCode, 200);
-    const latestCorrelation = audit.json().items[0].correlationId;
-    const failedPair = audit.json().items.filter((entry) => entry.correlationId === latestCorrelation);
+    const entries = audit.json().items;
+    const failed = entries.find((entry) => entry.phase === "failed");
+    assert.ok(failed);
+    const failedPair = entries.filter((entry) => entry.correlationId === failed.correlationId);
     assert.deepEqual(new Set(failedPair.map((entry) => entry.phase)), new Set(["intent", "failed"]));
-    const failed = failedPair.find((entry) => entry.phase === "failed");
     assert.equal(failed.evidence.errorType, "OperatorApiError");
     assert.equal(JSON.stringify(failed).includes("immutable"), true);
     assert.equal(JSON.stringify(failed).includes("same version"), false);
