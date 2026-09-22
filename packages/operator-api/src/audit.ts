@@ -33,7 +33,6 @@ function mergeEvidence(
 export async function auditedMutation<T>(options: AuditedMutationOptions<T>): Promise<T> {
   const correlationId = randomUUID();
   const actor = { id: options.principal.id, kind: options.principal.kind } as const;
-  const intentAt = options.now();
   await options.store.appendAudit({
     correlationId,
     phase: "intent",
@@ -42,37 +41,49 @@ export async function auditedMutation<T>(options: AuditedMutationOptions<T>): Pr
     resource: options.resource,
     requestId: options.requestId,
     evidence: options.evidence ?? {},
-    occurredAt: intentAt,
+    occurredAt: options.now(),
   });
 
+  let result: T;
   try {
-    const result = await options.execute();
-    const success = options.success?.(result);
-    await options.store.appendAudit({
-      correlationId,
-      phase: "succeeded",
-      actor,
-      action: options.action,
-      resource: options.resource,
-      requestId: options.requestId,
-      ...(success?.runId ? { runId: success.runId } : {}),
-      evidence: mergeEvidence(options.evidence, success?.evidence),
-      occurredAt: options.now(),
-    });
-    return result;
+    result = await options.execute();
   } catch (error) {
-    await options.store.appendAudit({
-      correlationId,
-      phase: "failed",
-      actor,
-      action: options.action,
-      resource: options.resource,
-      requestId: options.requestId,
-      evidence: mergeEvidence(options.evidence, {
-        errorType: error instanceof Error ? error.name : "UnknownError",
-      }),
-      occurredAt: options.now(),
-    });
+    try {
+      await options.store.appendAudit({
+        correlationId,
+        phase: "failed",
+        actor,
+        action: options.action,
+        resource: options.resource,
+        requestId: options.requestId,
+        evidence: mergeEvidence(options.evidence, {
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        }),
+        occurredAt: options.now(),
+      });
+    } catch {
+      // The original business failure remains authoritative. The existing
+      // intent record deliberately represents an outcome whose audit evidence
+      // could not be completed; never replace the original error with a ledger error.
+    }
     throw error;
   }
+
+  const success = options.success?.(result);
+  // This write intentionally sits outside the execution catch. If execution
+  // succeeded but persistence of the success evidence fails, the ledger remains
+  // intent-only (unknown/incomplete evidence) rather than falsely recording a
+  // business failure after the side effect already happened.
+  await options.store.appendAudit({
+    correlationId,
+    phase: "succeeded",
+    actor,
+    action: options.action,
+    resource: options.resource,
+    requestId: options.requestId,
+    ...(success?.runId ? { runId: success.runId } : {}),
+    evidence: mergeEvidence(options.evidence, success?.evidence),
+    occurredAt: options.now(),
+  });
+  return result;
 }
