@@ -26,6 +26,16 @@ export interface InspectProjectionInput {
   readonly remote?: RemoteIdentity;
 }
 
+export interface DriftReconciliationInput {
+  readonly projection: CompiledProjection;
+  readonly observed: ObservedProjection;
+}
+
+export interface DriftReconciliationPlan {
+  readonly action: "update" | "blocked";
+  readonly reason: string;
+}
+
 export interface PublisherExtension {
   readonly manifest: PublisherExtensionManifest;
 
@@ -34,6 +44,10 @@ export interface PublisherExtension {
   deliver(request: DeliveryRequest): Promise<DeliveryResult>;
 
   inspect(input: InspectProjectionInput): Promise<ObservedProjection>;
+
+  planDriftReconciliation?(
+    input: DriftReconciliationInput,
+  ): Promise<DriftReconciliationPlan> | DriftReconciliationPlan;
 }
 
 export class ExtensionRegistry {
