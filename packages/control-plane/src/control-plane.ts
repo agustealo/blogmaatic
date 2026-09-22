@@ -7,9 +7,10 @@ import {
   type AutomationRunTrigger,
 } from "@blogmaatic/automation";
 
-import { deterministicRunId, safeErrorMessage } from "./json.js";
+import { deterministicId, deterministicRunId, safeErrorMessage } from "./json.js";
 import {
   addMilliseconds,
+  canonicalInstant,
   createScheduleSnapshot,
   nextScheduleFireAfterNow,
   scheduleLatenessMs,
@@ -41,7 +42,11 @@ function assertNonEmpty(value: string, label: string): void {
 }
 
 function assertInstant(value: string, label: string): void {
-  if (!Number.isFinite(Date.parse(value))) throw new Error(`${label} must be an ISO date-time`);
+  try {
+    canonicalInstant(value);
+  } catch {
+    throw new Error(`${label} must be an ISO date-time with an offset or Z suffix`);
+  }
 }
 
 function eventTrigger(event: PublicationAutomationEvent): AutomationRunTrigger {
@@ -49,7 +54,7 @@ function eventTrigger(event: PublicationAutomationEvent): AutomationRunTrigger {
     kind: "event",
     eventType: event.type,
     eventId: event.id,
-    occurredAt: event.occurredAt,
+    occurredAt: canonicalInstant(event.occurredAt),
   };
 }
 
@@ -94,14 +99,18 @@ export class AutomationControlPlane {
     }
   }
 
+  #now(): string {
+    return canonicalInstant(this.#clock.now());
+  }
+
   async registerAutomation(definition: AutomationDefinition): Promise<void> {
     validateAutomationDefinition(definition);
-    await this.#store.registerAutomation(definition, this.#clock.now());
+    await this.#store.registerAutomation(definition, this.#now());
   }
 
   async activateAutomation(automationId: string, version: number, enabled = true): Promise<void> {
     assertNonEmpty(automationId, "Automation id");
-    await this.#store.activateAutomation(automationId, version, enabled, this.#clock.now());
+    await this.#store.activateAutomation(automationId, version, enabled, this.#now());
   }
 
   async routeEvent(event: PublicationAutomationEvent): Promise<readonly ControlPlaneRunRecord[]> {
@@ -111,7 +120,7 @@ export class AutomationControlPlane {
     assertInstant(event.occurredAt, "Publication event occurredAt");
 
     const trigger = eventTrigger(event);
-    const triggerKey = `event:${event.id}`;
+    const triggerKey = deterministicId("evt", [event.source, event.id]);
     const candidates = await this.#store.listActiveEventAutomations(event.type);
     const requests = candidates
       .map((entry) => entry.definition)
@@ -125,12 +134,12 @@ export class AutomationControlPlane {
         id: event.id,
         type: event.type,
         source: event.source,
-        occurredAt: event.occurredAt,
+        occurredAt: trigger.occurredAt,
         publicationId: event.publication.id,
         revisionId: event.publication.current.id,
       },
     };
-    const reserved = await this.#store.reserveRuns(evidence, requests, this.#clock.now());
+    const reserved = await this.#store.reserveRuns(evidence, requests, this.#now());
     return this.#launchReserved(reserved);
   }
 
@@ -152,13 +161,13 @@ export class AutomationControlPlane {
       kind: "manual",
       initiatedBy: command.initiatedBy,
       commandId: command.id,
-      occurredAt: command.occurredAt,
+      occurredAt: canonicalInstant(command.occurredAt),
     };
     if (!automationMatchesPublication(entry.definition, command.publication, trigger)) {
       throw new Error(`Automation ${command.automationId} conditions do not match publication ${command.publication.id}`);
     }
 
-    const triggerKey = `manual:${command.id}`;
+    const triggerKey = deterministicId("cmd", [command.automationId, command.id]);
     const request = requestFor(entry.definition, triggerKey, trigger, command.publication, command.groups);
     const evidence: ControlPlaneTriggerEvidence = {
       key: triggerKey,
@@ -168,12 +177,12 @@ export class AutomationControlPlane {
         automationId: command.automationId,
         automationVersion: entry.definition.version,
         initiatedBy: command.initiatedBy,
-        occurredAt: command.occurredAt,
+        occurredAt: trigger.occurredAt ?? command.occurredAt,
         publicationId: command.publication.id,
         revisionId: command.publication.current.id,
       },
     };
-    const records = await this.#store.reserveRuns(evidence, [request], this.#clock.now());
+    const records = await this.#store.reserveRuns(evidence, [request], this.#now());
     const launched = await this.#launchReserved(records);
     const record = launched[0];
     if (!record) throw new Error("Manual automation run was not reserved");
@@ -195,7 +204,7 @@ export class AutomationControlPlane {
       throw new Error(`Automation ${input.automationId} is bound to schedule ${entry.definition.trigger.scheduleId}`);
     }
 
-    const schedule = createScheduleSnapshot(input, this.#clock.now());
+    const schedule = createScheduleSnapshot(input, this.#now());
     if (!schedule.nextFireAt) throw new Error("Schedule must have an initial fire time");
     const trigger: AutomationRunTrigger = {
       kind: "schedule",
@@ -210,7 +219,7 @@ export class AutomationControlPlane {
     }
     requestFor(
       entry.definition,
-      `schedule:${schedule.id}:${schedule.nextFireAt}`,
+      deterministicId("sch", [schedule.id, schedule.nextFireAt]),
       trigger,
       schedule.publication,
       schedule.groups,
@@ -220,8 +229,9 @@ export class AutomationControlPlane {
   }
 
   async dispatchDueSchedules(options: { readonly now?: string; readonly limit?: number } = {}): Promise<readonly ScheduleDispatchResult[]> {
-    const now = options.now ?? this.#clock.now();
-    assertInstant(now, "Scheduler now");
+    const rawNow = options.now ?? this.#clock.now();
+    assertInstant(rawNow, "Scheduler now");
+    const now = canonicalInstant(rawNow);
     const limit = options.limit ?? 50;
     const claimExpiresAt = addMilliseconds(now, this.#scheduleClaimLeaseMs);
     const claims = await this.#store.claimDueSchedules(now, claimExpiresAt, limit);
@@ -271,7 +281,7 @@ export class AutomationControlPlane {
         timezone: schedule.timezone,
         occurredAt: now,
       };
-      const triggerKey = `schedule:${schedule.id}:${scheduledFor}`;
+      const triggerKey = deterministicId("sch", [schedule.id, scheduledFor]);
       const request = requestFor(entry.definition, triggerKey, trigger, schedule.publication, schedule.groups);
       const evidence: ControlPlaneTriggerEvidence = {
         key: triggerKey,
@@ -319,7 +329,7 @@ export class AutomationControlPlane {
     if (!record || !this.#launcher.status) return record;
     const status = await this.#launcher.status(runId);
     if (!status) return record;
-    await this.#store.updateRunPhase(runId, status.phase, this.#clock.now());
+    await this.#store.updateRunPhase(runId, status.phase, this.#now());
     return this.#store.getRun(runId);
   }
 
@@ -332,9 +342,9 @@ export class AutomationControlPlane {
       }
       try {
         const receipt = await this.#launcher.start(record.request);
-        await this.#store.markRunStarted(record.runId, receipt.runtimeId, this.#clock.now());
+        await this.#store.markRunStarted(record.runId, receipt.runtimeId, this.#now());
       } catch (error) {
-        await this.#store.markRunLaunchFailed(record.runId, safeErrorMessage(error), this.#clock.now());
+        await this.#store.markRunLaunchFailed(record.runId, safeErrorMessage(error), this.#now());
       }
       const updated = await this.#store.getRun(record.runId);
       if (!updated) throw new Error(`Automation run ${record.runId} disappeared after launch`);
