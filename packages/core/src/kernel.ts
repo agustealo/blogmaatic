@@ -1,5 +1,9 @@
 import { ExtensionRegistry } from "./extension.js";
 import { PolicyEngine } from "./policy.js";
+import {
+  InMemoryProjectionStateStore,
+  type ProjectionStateStore,
+} from "./projection-state.js";
 import type {
   ApprovalGrant,
   CompiledProjection,
@@ -13,6 +17,7 @@ import type {
   ReconciliationAction,
   ReconciliationItem,
   ReconciliationReport,
+  RemoteIdentity,
 } from "./types.js";
 
 export interface KernelClock {
@@ -82,15 +87,49 @@ export class PublicationKernel {
   readonly #extensions: ExtensionRegistry;
   readonly #policies: PolicyEngine;
   readonly #clock: KernelClock;
+  readonly #projectionState: ProjectionStateStore;
 
   constructor(
     extensions: ExtensionRegistry,
     policies: PolicyEngine,
     clock: KernelClock = systemClock,
+    projectionState: ProjectionStateStore = new InMemoryProjectionStateStore(),
   ) {
     this.#extensions = extensions;
     this.#policies = policies;
     this.#clock = clock;
+    this.#projectionState = projectionState;
+  }
+
+  async #knownRemote(publication: Publication, route: PublicationRoute): Promise<RemoteIdentity | undefined> {
+    const record = await this.#projectionState.get(publication.id, route.id);
+    if (!record) return undefined;
+    if (
+      record.extensionId !== route.destination.extensionId ||
+      record.connectionId !== route.destination.connectionId
+    ) {
+      return undefined;
+    }
+    return record.remote;
+  }
+
+  async #remember(
+    publication: Publication,
+    route: PublicationRoute,
+    projection: CompiledProjection,
+    remote: RemoteIdentity,
+  ): Promise<void> {
+    await this.#projectionState.put({
+      publicationId: publication.id,
+      routeId: route.id,
+      projectionId: projection.projectionId,
+      extensionId: route.destination.extensionId,
+      connectionId: route.destination.connectionId,
+      sourceRevisionId: publication.current.id,
+      desiredFingerprint: projection.fingerprint,
+      remote,
+      updatedAt: this.#clock.now(),
+    });
   }
 
   async reconcile(publication: Publication, group: PublicationGroup): Promise<ReconciliationReport> {
@@ -120,7 +159,16 @@ export class PublicationKernel {
       }
 
       const projection = await extension.compile({ publication, route });
-      const observed = await extension.inspect({ projection });
+      const knownRemote = await this.#knownRemote(publication, route);
+      const observed = await extension.inspect({
+        projection,
+        ...(knownRemote ? { remote: knownRemote } : {}),
+      });
+      if (observed.state === "missing" && knownRemote) {
+        await this.#projectionState.delete(publication.id, route.id);
+      } else if (observed.remote) {
+        await this.#remember(publication, route, projection, observed.remote);
+      }
       const action = actionForObservation(observed, projection.fingerprint);
 
       items.push({
@@ -190,7 +238,17 @@ export class PublicationKernel {
 
       const projection = await extension.compile({ publication: input.publication, route });
       const idempotencyKey = deliveryIdempotencyKey(input.publication, route, projection);
-      const before = await extension.inspect({ projection });
+      const knownRemote = await this.#knownRemote(input.publication, route);
+      const before = await extension.inspect({
+        projection,
+        ...(knownRemote ? { remote: knownRemote } : {}),
+      });
+
+      if (before.state === "missing" && knownRemote) {
+        await this.#projectionState.delete(input.publication.id, route.id);
+      } else if (before.remote) {
+        await this.#remember(input.publication, route, projection, before.remote);
+      }
 
       if (before.state === "unreachable") {
         receipts.push({
@@ -210,6 +268,7 @@ export class PublicationKernel {
       }
 
       if (before.state === "synchronized" && before.fingerprint === projection.fingerprint) {
+        if (before.remote) await this.#remember(input.publication, route, projection, before.remote);
         receipts.push({
           publicationId: input.publication.id,
           revisionId: input.publication.current.id,
@@ -238,7 +297,9 @@ export class PublicationKernel {
         ...(before.remote ? { existingRemote: before.remote } : {}),
       };
       const delivered = await extension.deliver(request);
+      await this.#remember(input.publication, route, projection, delivered.remote);
       const observed = await extension.inspect({ projection, remote: delivered.remote });
+      if (observed.remote) await this.#remember(input.publication, route, projection, observed.remote);
 
       const status =
         observed.state === "unreachable"
