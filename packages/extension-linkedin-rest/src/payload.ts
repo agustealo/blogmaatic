@@ -59,7 +59,7 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
       exact,
       sourceBlockCount,
       representedBlockCount,
-      issues: issues as LinkedInProjectionPayload["fidelity"]["issues"],
+      issues: issues as unknown as LinkedInProjectionPayload["fidelity"]["issues"],
     },
   };
 }
