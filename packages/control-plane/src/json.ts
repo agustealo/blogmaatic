@@ -16,9 +16,14 @@ export function stableJson(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 
-export function deterministicRunId(parts: readonly unknown[]): string {
+export function deterministicId(prefix: string, parts: readonly unknown[]): string {
+  if (!/^[a-z][a-z0-9_]*$/i.test(prefix)) throw new Error("Deterministic id prefix is invalid");
   const digest = createHash("sha256").update(stableJson(parts)).digest("hex");
-  return `run_${digest.slice(0, 40)}`;
+  return `${prefix}_${digest.slice(0, 40)}`;
+}
+
+export function deterministicRunId(parts: readonly unknown[]): string {
+  return deterministicId("run", parts);
 }
 
 export function safeErrorMessage(error: unknown): string {
