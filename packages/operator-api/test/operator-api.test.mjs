@@ -66,6 +66,7 @@ class RecordingRuntime {
   approvals = [];
   statuses = new Map();
   results = new Map();
+  statusError = null;
 
   async start(request) {
     this.starts.push(request);
@@ -92,6 +93,7 @@ class RecordingRuntime {
   }
 
   async status(runId) {
+    if (this.statusError) throw this.statusError;
     return this.statuses.get(runId) ?? null;
   }
 
@@ -182,7 +184,7 @@ function authorizer() {
   ]);
 }
 
-async function withApi(fn) {
+async function withApi(fn, apiOptions = {}) {
   const directory = await mkdtemp(join(tmpdir(), "blogmaatic-operator-api-"));
   const store = new SqliteControlPlaneStore(join(directory, "control.sqlite"));
   const runtime = new RecordingRuntime();
@@ -194,9 +196,10 @@ async function withApi(fn) {
     runtime,
     authorizer: authorizer(),
     clock,
+    ...apiOptions,
   });
   try {
-    await fn({ app, store, runtime, controlPlane });
+    await fn({ app, store, runtime, controlPlane, clock });
   } finally {
     await app.close();
     store.close();
@@ -206,6 +209,16 @@ async function withApi(fn) {
 
 function bearer(token) {
   return { authorization: `Bearer ${token}` };
+}
+
+async function register(app, definition) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/automations",
+    headers: bearer(TOKENS.operator),
+    payload: definition,
+  });
+  assert.equal(response.statusCode, 201, response.body);
 }
 
 test("health is public while operator resources fail closed without bearer authority", async () => {
@@ -231,13 +244,7 @@ test("manual-run and approval audit identities are derived from authenticated pr
       trigger: { kind: "manual" },
       steps: [{ id: "editor-approval", kind: "approval", role: "editor", prompt: "Approve release" }],
     };
-    const registered = await app.inject({
-      method: "POST",
-      url: "/v1/automations",
-      headers: bearer(TOKENS.operator),
-      payload: definition,
-    });
-    assert.equal(registered.statusCode, 201);
+    await register(app, definition);
 
     const manualPayload = {
       automationId: definition.id,
@@ -329,13 +336,7 @@ test("event source identity comes from the integration credential and prevents c
       trigger: { kind: "event", eventType: "publication.approved" },
       steps: [{ id: "publish", kind: "publish_group", groupId: group.id }],
     };
-    const registered = await app.inject({
-      method: "POST",
-      url: "/v1/automations",
-      headers: bearer(TOKENS.operator),
-      payload: definition,
-    });
-    assert.equal(registered.statusCode, 201);
+    await register(app, definition);
 
     const payload = {
       id: "provider-event-42",
@@ -371,5 +372,158 @@ test("event source identity comes from the integration credential and prevents c
     assert.equal(replay.statusCode, 202);
     assert.equal(replay.json().runs[0].runId, first.json().runs[0].runId);
     assert.equal(runtime.starts.length, 2);
+  });
+});
+
+test("incomplete publication and group snapshots are rejected before durable launch", async () => {
+  await withApi(async ({ app, runtime }) => {
+    const definition = {
+      id: "snapshot-validation",
+      version: 1,
+      name: "Snapshot validation",
+      enabled: true,
+      trigger: { kind: "manual" },
+      steps: [{ id: "approval", kind: "approval", role: "editor" }],
+    };
+    await register(app, definition);
+
+    const invalidPublication = await app.inject({
+      method: "POST",
+      url: "/v1/runs/manual",
+      headers: { ...bearer(TOKENS.operator), "idempotency-key": "invalid-publication" },
+      payload: {
+        automationId: definition.id,
+        publication: { id: publication.id, current: { id: publication.current.id } },
+        groups: [group],
+      },
+    });
+    assert.equal(invalidPublication.statusCode, 400);
+    assert.equal(invalidPublication.json().error.code, "INVALID_REQUEST");
+
+    const invalidGroup = await app.inject({
+      method: "POST",
+      url: "/v1/runs/manual",
+      headers: { ...bearer(TOKENS.operator), "idempotency-key": "invalid-group" },
+      payload: {
+        automationId: definition.id,
+        publication,
+        groups: [{ id: group.id }],
+      },
+    });
+    assert.equal(invalidGroup.statusCode, 400);
+    assert.equal(invalidGroup.json().error.code, "INVALID_REQUEST");
+    assert.equal(runtime.starts.length, 0);
+  });
+});
+
+test("Fastify parser errors preserve client status codes", async () => {
+  await withApi(async ({ app }) => {
+    const malformed = await app.inject({
+      method: "POST",
+      url: "/v1/runs/manual",
+      headers: {
+        ...bearer(TOKENS.operator),
+        "content-type": "application/json",
+      },
+      payload: '{"automationId":',
+    });
+    assert.equal(malformed.statusCode, 400);
+    assert.equal(malformed.json().error.code, "INVALID_REQUEST");
+  });
+
+  await withApi(async ({ app }) => {
+    const oversized = await app.inject({
+      method: "POST",
+      url: "/v1/runs/manual",
+      headers: bearer(TOKENS.operator),
+      payload: { padding: "x".repeat(2048) },
+    });
+    assert.equal(oversized.statusCode, 413);
+    assert.equal(oversized.json().error.code, "PAYLOAD_TOO_LARGE");
+  }, { bodyLimit: 1024 });
+});
+
+test("run inspection maps durable runtime transport failures to opaque 503", async () => {
+  await withApi(async ({ app, runtime }) => {
+    const definition = {
+      id: "runtime-outage",
+      version: 1,
+      name: "Runtime outage",
+      enabled: true,
+      trigger: { kind: "manual" },
+      steps: [{ id: "pause", kind: "delay", durationMs: 1 }],
+    };
+    await register(app, definition);
+    const started = await app.inject({
+      method: "POST",
+      url: "/v1/runs/manual",
+      headers: { ...bearer(TOKENS.operator), "idempotency-key": "runtime-outage-1" },
+      payload: { automationId: definition.id, publication, groups: [group] },
+    });
+    assert.equal(started.statusCode, 202);
+
+    runtime.statusError = new Error("internal Restate endpoint http://secret-runtime:8080 unavailable");
+    const inspection = await app.inject({
+      method: "GET",
+      url: `/v1/runs/${started.json().runId}`,
+      headers: bearer(TOKENS.operator),
+    });
+    assert.equal(inspection.statusCode, 503);
+    assert.equal(inspection.json().error.code, "RUNTIME_UNAVAILABLE");
+    assert.equal(inspection.body.includes("secret-runtime"), false);
+  });
+});
+
+test("schedule replacement is rejected while the current fire is actively leased", async () => {
+  await withApi(async ({ app, store }) => {
+    const definition = {
+      id: "scheduled-release",
+      version: 1,
+      name: "Scheduled release",
+      enabled: true,
+      trigger: { kind: "schedule", scheduleId: "morning-release" },
+      steps: [{ id: "publish", kind: "publish_group", groupId: group.id }],
+    };
+    await register(app, definition);
+
+    const schedulePayload = {
+      id: "morning-release",
+      automationId: definition.id,
+      automationVersion: 1,
+      publication,
+      groups: [group],
+      timezone: "UTC",
+      localDate: "2026-09-22",
+      localTime: "21:00",
+      recurrence: { kind: "once" },
+      missedRunPolicy: "catch_up_once",
+    };
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/schedules",
+      headers: bearer(TOKENS.operator),
+      payload: schedulePayload,
+    });
+    assert.equal(created.statusCode, 201, created.body);
+
+    const claims = await store.claimDueSchedules(
+      "2026-09-22T21:30:00Z",
+      "2026-09-22T21:35:00Z",
+      1,
+    );
+    assert.equal(claims.length, 1);
+
+    const replacement = await app.inject({
+      method: "POST",
+      url: "/v1/schedules",
+      headers: bearer(TOKENS.operator),
+      payload: { ...schedulePayload, localTime: "22:00" },
+    });
+    assert.equal(replacement.statusCode, 422);
+    assert.equal(replacement.json().error.code, "DOMAIN_REJECTED");
+
+    const unchanged = await store.getSchedule(schedulePayload.id);
+    assert.equal(unchanged.localTime, "21:00");
+    await store.releaseScheduleClaim(schedulePayload.id, claims[0].token, "2026-09-22T21:30:00Z");
   });
 });
