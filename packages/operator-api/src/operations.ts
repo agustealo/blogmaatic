@@ -1,8 +1,16 @@
-import type { AutomationRunResult, AutomationRunStatus } from "@blogmaatic/automation";
 import type {
-  ControlPlaneRunRecord,
-  ControlPlaneStore,
-  RunListQuery,
+  AutomationRunPhase,
+  AutomationRunResult,
+  AutomationRunStatus,
+} from "@blogmaatic/automation";
+import {
+  decodeCursor,
+  encodeCursor,
+  normalizePageLimit,
+  type ControlPlaneRunRecord,
+  type ControlPlaneStore,
+  type PageRequest,
+  type RunListQuery,
 } from "@blogmaatic/control-plane";
 import type { DeliveryReceipt, JsonValue } from "@blogmaatic/core";
 
@@ -35,13 +43,24 @@ export interface OperatorOperation {
   readonly evidence?: JsonValue;
 }
 
-export interface OperatorOperationsQuery extends RunListQuery {
+export interface OperatorOperationsQuery extends PageRequest {
   readonly kind?: OperatorOperationKind;
+  readonly automationId?: string;
+  readonly publicationId?: string;
+  readonly dispatchState?: RunListQuery["dispatchState"];
+  readonly runtimePhase?: AutomationRunPhase;
+  readonly createdFrom?: string;
+  readonly createdTo?: string;
 }
 
 export interface OperatorOperationsPage {
   readonly items: readonly OperatorOperation[];
   readonly nextCursor?: string;
+}
+
+interface OperationCandidate {
+  readonly operation: OperatorOperation;
+  readonly runCreatedAt: string;
 }
 
 function base(run: ControlPlaneRunRecord) {
@@ -116,31 +135,50 @@ function statusOperation(run: ControlPlaneRunRecord, status: AutomationRunStatus
   return undefined;
 }
 
-export async function listOperatorOperations(
+function storageQuery(
+  query: OperatorOperationsQuery,
+  cursor: string | undefined,
+): RunListQuery {
+  return {
+    limit: 200,
+    ...(cursor === undefined ? {} : { cursor }),
+    ...(query.automationId ? { automationId: query.automationId } : {}),
+    ...(query.publicationId ? { publicationId: query.publicationId } : {}),
+    ...(query.dispatchState ? { dispatchState: query.dispatchState } : {}),
+    ...(query.createdFrom ? { createdFrom: query.createdFrom } : {}),
+    ...(query.createdTo ? { createdTo: query.createdTo } : {}),
+  };
+}
+
+function storedRunMatches(run: ControlPlaneRunRecord, query: OperatorOperationsQuery): boolean {
+  if (query.automationId && run.request.definition.id !== query.automationId) return false;
+  if (query.publicationId && run.request.publication.id !== query.publicationId) return false;
+  if (query.dispatchState && run.dispatchState !== query.dispatchState) return false;
+  if (query.createdFrom && Date.parse(run.createdAt) < Date.parse(query.createdFrom)) return false;
+  if (query.createdTo && Date.parse(run.createdAt) > Date.parse(query.createdTo)) return false;
+  return true;
+}
+
+async function operationsForRun(
   store: ControlPlaneStore,
   runtime: OperatorAutomationRuntime,
-  query: OperatorOperationsQuery = {},
-): Promise<OperatorOperationsPage> {
-  const { kind, ...runQuery } = query;
-  const runs = await store.listRuns(runQuery);
-  const operations: OperatorOperation[] = [];
-
-  for (const run of runs.items) {
-    if (run.dispatchState === "launch_failed") {
-      operations.push({
-        id: `${run.runId}:launch_failed`,
-        kind: "launch_failed",
-        severity: "error",
-        ...base(run),
-        occurredAt: run.updatedAt,
-        ...(run.lastError ? { detail: run.lastError } : {}),
-      });
-      continue;
-    }
-    if (run.dispatchState !== "started") continue;
-
+  run: ControlPlaneRunRecord,
+  query: OperatorOperationsQuery,
+): Promise<OperatorOperation[]> {
+  let operations: OperatorOperation[] = [];
+  if (run.dispatchState === "launch_failed") {
+    if (query.runtimePhase !== undefined) return [];
+    operations = [{
+      id: `${run.runId}:launch_failed`,
+      kind: "launch_failed",
+      severity: "error",
+      ...base(run),
+      occurredAt: run.updatedAt,
+      ...(run.lastError ? { detail: run.lastError } : {}),
+    }];
+  } else if (run.dispatchState === "started") {
     const status = await runtime.status(run.runId);
-    if (!status) continue;
+    if (!status || (query.runtimePhase !== undefined && status.phase !== query.runtimePhase)) return [];
     if (run.runtimePhase !== status.phase) {
       await store.updateRunPhase(run.runId, status.phase, status.updatedAt);
     }
@@ -153,9 +191,58 @@ export async function listOperatorOperations(
     }
   }
 
-  const filtered = kind ? operations.filter((operation) => operation.kind === kind) : operations;
+  if (query.kind) operations = operations.filter((operation) => operation.kind === query.kind);
+  return operations.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function resultPage(candidates: readonly OperationCandidate[], limit: number): OperatorOperationsPage {
+  const items = candidates.slice(0, limit);
+  if (candidates.length <= limit) return { items: items.map((candidate) => candidate.operation) };
+  const tail = items.at(-1)!;
   return {
-    items: filtered,
-    ...(runs.nextCursor ? { nextCursor: runs.nextCursor } : {}),
+    items: items.map((candidate) => candidate.operation),
+    nextCursor: encodeCursor("operations", [
+      tail.runCreatedAt,
+      tail.operation.runId,
+      tail.operation.id,
+    ]),
   };
+}
+
+export async function listOperatorOperations(
+  store: ControlPlaneStore,
+  runtime: OperatorAutomationRuntime,
+  query: OperatorOperationsQuery = {},
+): Promise<OperatorOperationsPage> {
+  const limit = normalizePageLimit(query.limit);
+  const cursor = decodeCursor("operations", query.cursor, 3);
+  const candidates: OperationCandidate[] = [];
+  let sourceCursor: string | undefined;
+
+  if (cursor) {
+    const [createdAt, runId, operationId] = cursor;
+    const run = await store.getRun(runId!);
+    if (!run || run.createdAt !== createdAt || !storedRunMatches(run, query)) {
+      throw new Error("Operations cursor no longer identifies a valid run for this query");
+    }
+    const sameRun = await operationsForRun(store, runtime, run, query);
+    for (const operation of sameRun) {
+      if (operation.id > operationId!) candidates.push({ operation, runCreatedAt: run.createdAt });
+      if (candidates.length > limit) return resultPage(candidates, limit);
+    }
+    sourceCursor = encodeCursor("runs", [run.createdAt, run.runId]);
+  }
+
+  while (true) {
+    const source = await store.listRuns(storageQuery(query, sourceCursor));
+    for (const run of source.items) {
+      const operations = await operationsForRun(store, runtime, run, query);
+      for (const operation of operations) {
+        candidates.push({ operation, runCreatedAt: run.createdAt });
+        if (candidates.length > limit) return resultPage(candidates, limit);
+      }
+    }
+    if (!source.nextCursor) return resultPage(candidates, limit);
+    sourceCursor = source.nextCursor;
+  }
 }
