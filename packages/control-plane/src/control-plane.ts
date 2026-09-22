@@ -30,6 +30,8 @@ import type {
 
 const systemClock: Clock = { now: () => new Date().toISOString() };
 
+type EventRunTrigger = Extract<AutomationRunTrigger, { readonly kind: "event" }>;
+
 export interface AutomationControlPlaneOptions {
   readonly store: ControlPlaneStore;
   readonly launcher: AutomationLauncher;
@@ -49,7 +51,7 @@ function assertInstant(value: string, label: string): void {
   }
 }
 
-function eventTrigger(event: PublicationAutomationEvent): AutomationRunTrigger {
+function eventTrigger(event: PublicationAutomationEvent): EventRunTrigger {
   return {
     kind: "event",
     eventType: event.type,
