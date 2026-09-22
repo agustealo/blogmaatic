@@ -117,7 +117,7 @@ async function waitForStatus(baseUrl, runId, phase, timeoutMs = 10_000) {
 test("durably pauses for approval and resumes the same run without repeating completed steps", { timeout: 30_000 }, async () => {
   const publisher = new RecordingPublisher();
   const workflow = createPublicationAutomationWorkflow({ publisher });
-  const environment = await RestateTestEnvironment.start((server) => server.bind(workflow));
+  const environment = await RestateTestEnvironment.start({ services: [workflow] });
 
   try {
     const baseUrl = environment.baseUrl();
@@ -176,7 +176,7 @@ test("durably pauses for approval and resumes the same run without repeating com
 test("human rejection is a durable business outcome and prevents later publication", { timeout: 30_000 }, async () => {
   const publisher = new RecordingPublisher();
   const workflow = createPublicationAutomationWorkflow({ publisher });
-  const environment = await RestateTestEnvironment.start((server) => server.bind(workflow));
+  const environment = await RestateTestEnvironment.start({ services: [workflow] });
 
   try {
     const baseUrl = environment.baseUrl();
