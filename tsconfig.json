@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/extension-sdk" },
-    { "path": "./packages/extension-jekyll-git" }
+    { "path": "./packages/extension-jekyll-git" },
+    { "path": "./packages/secrets" }
   ]
 }
