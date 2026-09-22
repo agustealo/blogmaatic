@@ -16,13 +16,15 @@ Slice 2 added the managed extension runtime and connection authority plus the fi
 
 Slice 3 added `@blogmaatic/secrets` and `@blogmaatic/extension-wordpress-rest`, proving authenticated remote CMS publishing, media/taxonomy management, scheduling, ownership-safe inspection, and update-in-place reconciliation.
 
-Slice 4 adds provider-neutral social adaptation, durable projection identity, and `@blogmaatic/extension-linkedin-rest`. Rich Publication IR can now be projected into constrained destinations with an explicit fidelity report instead of silently pretending every hub supports the same content model. Server-generated remote identities are persisted through the core projection-state contract, with a file-backed SQLite adapter for restart-safe reconciliation.
+Slice 4 added provider-neutral social adaptation, durable projection identity, and `@blogmaatic/extension-linkedin-rest`. Rich Publication IR can be projected into constrained destinations with an explicit fidelity report instead of silently pretending every hub supports the same content model. Server-generated remote identities are persisted through the core projection-state contract, with a file-backed SQLite adapter for restart-safe reconciliation.
+
+Slice 5 adds `@blogmaatic/extension-facebook-pages` plus a provider-neutral drift-reconciliation plan. Facebook Page text, link, image, multi-image, and scheduled projections publish through pinned Graph API semantics, while remote edits are detected and fail closed instead of being silently deleted/recreated.
 
 The original 2017 Django prototype remains in the repository for deliberate migration analysis; it is not an authority for the new architecture.
 
 ## Packages
 
-- `@blogmaatic/core` — publication domain, policy, projection state, delivery, verification, reconciliation.
+- `@blogmaatic/core` — publication domain, policy, projection state, delivery, verification, reconciliation, and provider-directed drift planning.
 - `@blogmaatic/extension-sdk` — managed extension manifest, connection authority, health and lifecycle runtime.
 - `@blogmaatic/secrets` — provider-neutral secret-reference resolution with scoped plaintext exposure.
 - `@blogmaatic/variants` — destination capability profiles, social adaptation, fidelity reporting, and minimum-fidelity gates.
@@ -30,8 +32,9 @@ The original 2017 Django prototype remains in the repository for deliberate migr
 - `@blogmaatic/extension-jekyll-git` — real Jekyll/Git repository publisher.
 - `@blogmaatic/extension-wordpress-rest` — real WordPress REST publisher using Application Password authentication.
 - `@blogmaatic/extension-linkedin-rest` — versioned LinkedIn organization-post publisher with drift-aware commentary updates and fail-closed structural reconciliation.
+- `@blogmaatic/extension-facebook-pages` — pinned Graph API Page publisher for text, link, image, multi-image, and scheduled projections with immutable-drift protection.
 
-See [`docs/architecture/publication-kernel.md`](docs/architecture/publication-kernel.md), [`docs/architecture/extensions.md`](docs/architecture/extensions.md), [`docs/architecture/wordpress-rest.md`](docs/architecture/wordpress-rest.md), and [`docs/architecture/social-projections.md`](docs/architecture/social-projections.md).
+See [`docs/architecture/publication-kernel.md`](docs/architecture/publication-kernel.md), [`docs/architecture/extensions.md`](docs/architecture/extensions.md), [`docs/architecture/wordpress-rest.md`](docs/architecture/wordpress-rest.md), [`docs/architecture/social-projections.md`](docs/architecture/social-projections.md), and [`docs/architecture/facebook-pages.md`](docs/architecture/facebook-pages.md).
 
 ## Development
 

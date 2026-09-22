@@ -8,6 +8,7 @@
     { "path": "./packages/extension-wordpress-rest" },
     { "path": "./packages/variants" },
     { "path": "./packages/state-sqlite" },
-    { "path": "./packages/extension-linkedin-rest" }
+    { "path": "./packages/extension-linkedin-rest" },
+    { "path": "./packages/extension-facebook-pages" }
   ]
 }

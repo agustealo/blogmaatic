@@ -1,4 +1,4 @@
-import { ExtensionRegistry } from "./extension.js";
+import { ExtensionRegistry, type PublisherExtension } from "./extension.js";
 import { PolicyEngine } from "./policy.js";
 import {
   InMemoryProjectionStateStore,
@@ -70,17 +70,34 @@ function approvalSatisfied(
   );
 }
 
-function actionForObservation(observed: ObservedProjection, desiredFingerprint: string): ReconciliationAction {
+async function actionForObservation(
+  extension: PublisherExtension,
+  projection: CompiledProjection,
+  observed: ObservedProjection,
+): Promise<{ action: ReconciliationAction; reason: string }> {
   if (observed.state === "missing") {
-    return "create";
+    return { action: "create", reason: "Remote projection is missing" };
   }
   if (observed.state === "unreachable") {
-    return "blocked";
+    return {
+      action: "blocked",
+      reason: observed.detail ?? "Remote projection cannot currently be reconciled",
+    };
   }
-  if (observed.fingerprint === desiredFingerprint && observed.state === "synchronized") {
-    return "none";
+  if (observed.fingerprint === projection.fingerprint && observed.state === "synchronized") {
+    return {
+      action: "none",
+      reason: "Remote projection matches the desired source revision",
+    };
   }
-  return "update";
+  if (extension.planDriftReconciliation) {
+    const plan = await extension.planDriftReconciliation({ projection, observed });
+    return { action: plan.action, reason: plan.reason };
+  }
+  return {
+    action: "update",
+    reason: "Remote projection differs from the desired source revision",
+  };
 }
 
 export class PublicationKernel {
@@ -169,23 +186,16 @@ export class PublicationKernel {
       } else if (observed.remote) {
         await this.#remember(publication, route, projection, observed.remote);
       }
-      const action = actionForObservation(observed, projection.fingerprint);
+      const plan = await actionForObservation(extension, projection, observed);
 
       items.push({
         routeId: route.id,
         projectionId: projection.projectionId,
-        action,
+        action: plan.action,
         policy,
         observed,
         desiredFingerprint: projection.fingerprint,
-        reason:
-          action === "none"
-            ? "Remote projection matches the desired source revision"
-            : action === "create"
-              ? "Remote projection is missing"
-              : action === "update"
-                ? "Remote projection differs from the desired source revision"
-                : observed.detail ?? "Remote projection cannot currently be reconciled",
+        reason: plan.reason,
       });
     }
 
@@ -288,6 +298,24 @@ export class PublicationKernel {
       if (before.state === "missing") {
         this.#extensions.assertCapabilities(route.destination.extensionId, ["article.create"]);
       } else {
+        const plan = await actionForObservation(extension, projection, before);
+        if (plan.action === "blocked") {
+          receipts.push({
+            publicationId: input.publication.id,
+            revisionId: input.publication.current.id,
+            groupId: input.group.id,
+            routeId: route.id,
+            projectionId: projection.projectionId,
+            idempotencyKey,
+            status: "blocked",
+            policy,
+            ...(before.remote ? { remote: before.remote } : {}),
+            observed: before,
+            evidence: { reason: plan.reason },
+            completedAt: this.#clock.now(),
+          });
+          continue;
+        }
         this.#extensions.assertCapabilities(route.destination.extensionId, ["article.update"]);
       }
 
