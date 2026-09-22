@@ -4,6 +4,7 @@
     { "path": "./packages/core" },
     { "path": "./packages/extension-sdk" },
     { "path": "./packages/extension-jekyll-git" },
-    { "path": "./packages/secrets" }
+    { "path": "./packages/secrets" },
+    { "path": "./packages/extension-wordpress-rest" }
   ]
 }
