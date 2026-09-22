@@ -20,6 +20,7 @@ import {
   type OperatorPrincipal,
 } from "./auth.js";
 import { listOperatorOperations } from "./operations.js";
+import { listOperatorRuns } from "./runs.js";
 import type { ManualRunBody, OperatorApiListenOptions, OperatorApiOptions } from "./types.js";
 import {
   OperatorRequestError,
@@ -242,7 +243,7 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       principal,
       requestId: request.id,
       action: "event.ingest",
-      resource: { type: "event", id: body.id },
+      resource: { type: "event", id: `${event.source}/${body.id}` },
       evidence: { type: body.type, source: event.source, publicationId: body.publication.id },
       now: () => clock.now(),
       execute: () => domainCall(() => options.controlPlane.routeEvent(event)),
@@ -253,7 +254,10 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
 
   app.get("/v1/runs", async (request) => {
     await authorize(request, "runs:read");
-    return domainCall(() => options.store.listRuns(parseRunListQuery(query(request))));
+    const parsed = parseRunListQuery(query(request));
+    return parsed.runtimePhase === undefined
+      ? domainCall(() => options.store.listRuns(parsed))
+      : runtimeCall(() => listOperatorRuns(options.store, options.runtime, parsed));
   });
 
   app.post("/v1/runs/manual", async (request, reply) => {
@@ -420,12 +424,11 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
 
   app.get("/v1/operations", async (request) => {
     await authorize(request, "operations:read");
-    const operations = await runtimeCall(() => listOperatorOperations(
+    return runtimeCall(() => listOperatorOperations(
       options.store,
       options.runtime,
       parseOperationsQuery(query(request)),
     ));
-    return operations;
   });
 
   app.get("/v1/audit", async (request) => {
