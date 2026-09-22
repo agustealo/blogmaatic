@@ -54,6 +54,7 @@ const group = {
 
 const TOKENS = {
   operator: "operator-main-0123456789-abcdefghijklmnopqrstuvwxyz",
+  operator2: "operator-second-0123456789-abcdefghijklmnopqrstuvwxyz",
   reviewer: "reviewer-editor-0123456789-abcdefghijklmnopqrstuvwxyz",
   outsider: "reviewer-outsider-0123456789-abcdefghijklmnopqrstuvwxyz",
   sourceA: "integration-a-0123456789-abcdefghijklmnopqrstuvwxyz",
@@ -147,6 +148,12 @@ function authorizer() {
       roles: ["publisher"],
     },
     {
+      id: "operator-2",
+      token: TOKENS.operator2,
+      permissions: ["runs:read", "runs:write"],
+      roles: ["publisher"],
+    },
+    {
       id: "reviewer-1",
       token: TOKENS.reviewer,
       permissions: ["approvals:write", "runs:read"],
@@ -232,6 +239,12 @@ test("manual-run and approval audit identities are derived from authenticated pr
     });
     assert.equal(registered.statusCode, 201);
 
+    const manualPayload = {
+      automationId: definition.id,
+      publication,
+      groups: [group],
+      initiatedBy: "spoofed-client-value",
+    };
     const manual = await app.inject({
       method: "POST",
       url: "/v1/runs/manual",
@@ -239,17 +252,41 @@ test("manual-run and approval audit identities are derived from authenticated pr
         ...bearer(TOKENS.operator),
         "idempotency-key": "manual-release-1",
       },
-      payload: {
-        automationId: definition.id,
-        publication,
-        groups: [group],
-        initiatedBy: "spoofed-client-value",
-      },
+      payload: manualPayload,
     });
     assert.equal(manual.statusCode, 202);
     const run = manual.json();
     assert.equal(run.request.trigger.initiatedBy, "operator-1");
-    assert.equal(run.request.trigger.commandId, "manual-release-1");
+    assert.match(run.request.trigger.commandId, /^api_[0-9a-f]{40}$/);
+    assert.notEqual(run.request.trigger.commandId, "manual-release-1");
+    assert.equal(runtime.starts.length, 1);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/v1/runs/manual",
+      headers: {
+        ...bearer(TOKENS.operator),
+        "idempotency-key": "manual-release-1",
+      },
+      payload: manualPayload,
+    });
+    assert.equal(replay.statusCode, 202);
+    assert.equal(replay.json().runId, run.runId);
+    assert.equal(runtime.starts.length, 1);
+
+    const otherPrincipal = await app.inject({
+      method: "POST",
+      url: "/v1/runs/manual",
+      headers: {
+        ...bearer(TOKENS.operator2),
+        "idempotency-key": "manual-release-1",
+      },
+      payload: manualPayload,
+    });
+    assert.equal(otherPrincipal.statusCode, 202);
+    assert.notEqual(otherPrincipal.json().runId, run.runId);
+    assert.equal(otherPrincipal.json().request.trigger.initiatedBy, "operator-2");
+    assert.equal(runtime.starts.length, 2);
 
     const wrongRole = await app.inject({
       method: "POST",
