@@ -119,6 +119,17 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       void reply.code(error.statusCode).send(errorBody(request, error.code, error.message));
       return;
     }
+    const clientStatus = typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 500
+      ? error.statusCode
+      : undefined;
+    if (clientStatus !== undefined) {
+      const code = clientStatus === 413 ? "PAYLOAD_TOO_LARGE" : "INVALID_REQUEST";
+      const message = clientStatus === 413
+        ? "Request payload exceeds the configured limit"
+        : "Request could not be parsed";
+      void reply.code(clientStatus).send(errorBody(request, code, message));
+      return;
+    }
     request.log.error({ err: error }, "operator API request failed");
     void reply.code(500).send(errorBody(request, "INTERNAL_ERROR", "Internal server error"));
   });
@@ -201,7 +212,7 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
   app.get("/v1/runs/:runId", async (request) => {
     await authorize(request, "runs:read");
     const runId = requirePathString(params(request).runId, "runId");
-    const run = await domainCall(() => options.controlPlane.inspectRun(runId));
+    const run = await runtimeCall(() => options.controlPlane.inspectRun(runId));
     if (!run) throw new OperatorApiError(404, "RUN_NOT_FOUND", "Automation run was not found");
     return run;
   });
