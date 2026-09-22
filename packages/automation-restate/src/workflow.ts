@@ -268,7 +268,7 @@ export function createPublicationAutomationWorkflow(options: PublicationAutomati
         return finish(ctx, request, "completed", stepResults, completedStepIds);
       },
 
-      approve: async (
+      approve: restate.handlers.workflow.shared(async (
         ctx: restate.WorkflowSharedContext,
         approval: AutomationApproval,
       ): Promise<AutomationApprovalResponse> => {
@@ -293,10 +293,11 @@ export function createPublicationAutomationWorkflow(options: PublicationAutomati
 
         await ctx.promise<AutomationApproval>(approvalPromiseKey(approval.stepId)).resolve(approval);
         return { accepted: true };
-      },
+      }),
 
-      status: async (ctx: restate.WorkflowSharedContext): Promise<AutomationRunStatus | null> =>
-        ctx.get<AutomationRunStatus>(STATUS_KEY),
+      status: restate.handlers.workflow.shared(async (
+        ctx: restate.WorkflowSharedContext,
+      ): Promise<AutomationRunStatus | null> => ctx.get<AutomationRunStatus>(STATUS_KEY)),
     },
   });
 }
