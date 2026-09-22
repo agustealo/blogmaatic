@@ -12,7 +12,7 @@ import type {
   AutomationRunStatus,
 } from "@blogmaatic/automation";
 
-interface PublicationAutomationClientHandlers {
+type PublicationAutomationClientHandlers = {
   run(
     ctx: RestateWorkflowContext,
     request: AutomationRunRequest,
@@ -22,7 +22,7 @@ interface PublicationAutomationClientHandlers {
     approval: AutomationApproval,
   ): Promise<AutomationApprovalResponse>;
   status(ctx: RestateWorkflowSharedContext): Promise<AutomationRunStatus | null>;
-}
+};
 
 export interface RestateAutomationLauncherOptions {
   readonly url: string;
