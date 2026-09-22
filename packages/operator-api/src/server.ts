@@ -55,6 +55,13 @@ function errorBody(request: FastifyRequest, code: string, message: string) {
   return { error: { code, message, requestId: request.id } };
 }
 
+function clientErrorStatus(error: unknown): number | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  if (typeof statusCode !== "number" || statusCode < 400 || statusCode >= 500) return undefined;
+  return statusCode;
+}
+
 function manualCommandId(principalId: string, idempotencyKey: string, body: ManualRunBody): string {
   const requestFingerprint = stableJson({
     automationId: body.automationId,
@@ -119,9 +126,7 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       void reply.code(error.statusCode).send(errorBody(request, error.code, error.message));
       return;
     }
-    const clientStatus = typeof error.statusCode === "number" && error.statusCode >= 400 && error.statusCode < 500
-      ? error.statusCode
-      : undefined;
+    const clientStatus = clientErrorStatus(error);
     if (clientStatus !== undefined) {
       const code = clientStatus === 413 ? "PAYLOAD_TOO_LARGE" : "INVALID_REQUEST";
       const message = clientStatus === 413
