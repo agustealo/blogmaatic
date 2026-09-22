@@ -128,7 +128,6 @@ export interface RunListQuery extends PageRequest {
   readonly automationId?: string;
   readonly publicationId?: string;
   readonly dispatchState?: ControlPlaneRunDispatchState;
-  readonly runtimePhase?: AutomationRunStatus["phase"];
   readonly createdFrom?: string;
   readonly createdTo?: string;
 }
