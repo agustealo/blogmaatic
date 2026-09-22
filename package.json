@@ -1,7 +1,7 @@
 {
   "name": "blogmaatic",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Publication automation control plane",
   "type": "module",
   "workspaces": [
