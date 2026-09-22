@@ -57,6 +57,8 @@ export interface PublicationRevision {
 
 export interface Publication {
   readonly id: string;
+  readonly createdAt: string;
+  readonly slug?: string;
   readonly status: PublicationStatus;
   readonly current: PublicationRevision;
   readonly canonicalUrl?: string;

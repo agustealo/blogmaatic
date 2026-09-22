@@ -1,7 +1,7 @@
 {
   "name": "blogmaatic",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Publication automation control plane",
   "type": "module",
   "workspaces": [
@@ -17,6 +17,7 @@
     "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
+    "@types/node": "24.13.6",
     "typescript": "7.0.2"
   }
 }

@@ -1,7 +1,10 @@
 *.pyc
 *~
-__pycache__
-myvenv
+__pycache__/
+myvenv/
 db.sqlite3
-/static
+/static/
 .DS_Store
+node_modules/
+packages/*/dist/
+*.tsbuildinfo
