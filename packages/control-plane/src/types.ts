@@ -108,6 +108,75 @@ export interface ControlPlaneTriggerEvidence {
   readonly payload: JsonValue;
 }
 
+export interface PageRequest {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor?: string;
+}
+
+export interface AutomationListQuery extends PageRequest {
+  readonly enabled?: boolean;
+}
+
+export interface AutomationVersionListQuery extends PageRequest {}
+
+export interface RunListQuery extends PageRequest {
+  readonly automationId?: string;
+  readonly publicationId?: string;
+  readonly dispatchState?: ControlPlaneRunDispatchState;
+  readonly runtimePhase?: AutomationRunStatus["phase"];
+  readonly createdFrom?: string;
+  readonly createdTo?: string;
+}
+
+export interface ScheduleListQuery extends PageRequest {
+  readonly automationId?: string;
+  readonly enabled?: boolean;
+  readonly nextFireFrom?: string;
+  readonly nextFireTo?: string;
+}
+
+export type AuditLedgerPhase = "intent" | "succeeded" | "failed";
+export type AuditActorKind = "operator" | "integration" | "system";
+
+export interface AuditLedgerEntry {
+  readonly id: string;
+  readonly correlationId: string;
+  readonly phase: AuditLedgerPhase;
+  readonly actor: {
+    readonly id: string;
+    readonly kind: AuditActorKind;
+  };
+  readonly action: string;
+  readonly resource: {
+    readonly type: string;
+    readonly id: string;
+  };
+  readonly requestId?: string;
+  readonly runId?: string;
+  readonly evidence: JsonValue;
+  readonly occurredAt: string;
+}
+
+export interface AuditLedgerInput extends Omit<AuditLedgerEntry, "id"> {
+  readonly id?: string;
+}
+
+export interface AuditListQuery extends PageRequest {
+  readonly actorId?: string;
+  readonly action?: string;
+  readonly resourceType?: string;
+  readonly resourceId?: string;
+  readonly phase?: AuditLedgerPhase;
+  readonly occurredFrom?: string;
+  readonly occurredTo?: string;
+  readonly correlationId?: string;
+}
+
 export interface Clock {
   now(): string;
 }
@@ -118,6 +187,11 @@ export interface ControlPlaneStore {
   getActiveAutomation(automationId: string): Promise<AutomationRegistryEntry | undefined>;
   getAutomationVersion(automationId: string, version: number): Promise<AutomationRegistryEntry | undefined>;
   listActiveEventAutomations(eventType: string): Promise<readonly AutomationRegistryEntry[]>;
+  listAutomations(query?: AutomationListQuery): Promise<Page<AutomationRegistryEntry>>;
+  listAutomationVersions(
+    automationId: string,
+    query?: AutomationVersionListQuery,
+  ): Promise<Page<AutomationRegistryEntry>>;
 
   reserveRuns(
     trigger: ControlPlaneTriggerEvidence,
@@ -125,12 +199,14 @@ export interface ControlPlaneStore {
     createdAt: string,
   ): Promise<readonly ControlPlaneRunRecord[]>;
   getRun(runId: string): Promise<ControlPlaneRunRecord | undefined>;
+  listRuns(query?: RunListQuery): Promise<Page<ControlPlaneRunRecord>>;
   markRunStarted(runId: string, runtimeId: string, updatedAt: string): Promise<void>;
   markRunLaunchFailed(runId: string, error: string, updatedAt: string): Promise<void>;
   updateRunPhase(runId: string, phase: AutomationRunStatus["phase"], updatedAt: string): Promise<void>;
 
   putSchedule(schedule: AutomationSchedule): Promise<void>;
   getSchedule(scheduleId: string): Promise<AutomationSchedule | undefined>;
+  listSchedules(query?: ScheduleListQuery): Promise<Page<AutomationSchedule>>;
   claimDueSchedules(
     now: string,
     claimExpiresAt: string,
@@ -147,4 +223,7 @@ export interface ControlPlaneStore {
     },
   ): Promise<void>;
   releaseScheduleClaim(scheduleId: string, token: string, updatedAt: string): Promise<void>;
+
+  appendAudit(entry: AuditLedgerInput): Promise<AuditLedgerEntry>;
+  listAudit(query?: AuditListQuery): Promise<Page<AuditLedgerEntry>>;
 }
