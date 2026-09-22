@@ -70,23 +70,19 @@ export class SqliteProjectionStateStore implements ProjectionStateStore {
       FROM projection_state
       WHERE publication_id = ? AND route_id = ?
     `);
-    try {
-      const row = statement.get(publicationId, routeId) as StateRow | undefined;
-      if (!row) return undefined;
-      return {
-        publicationId: row.publication_id,
-        routeId: row.route_id,
-        projectionId: row.projection_id,
-        extensionId: row.extension_id,
-        connectionId: row.connection_id,
-        sourceRevisionId: row.source_revision_id,
-        desiredFingerprint: row.desired_fingerprint,
-        remote: remoteFromRow(row),
-        updatedAt: row.updated_at,
-      };
-    } finally {
-      statement.close();
-    }
+    const row = statement.get(publicationId, routeId) as StateRow | undefined;
+    if (!row) return undefined;
+    return {
+      publicationId: row.publication_id,
+      routeId: row.route_id,
+      projectionId: row.projection_id,
+      extensionId: row.extension_id,
+      connectionId: row.connection_id,
+      sourceRevisionId: row.source_revision_id,
+      desiredFingerprint: row.desired_fingerprint,
+      remote: remoteFromRow(row),
+      updatedAt: row.updated_at,
+    };
   }
 
   async put(record: ProjectionStateRecord): Promise<void> {
@@ -108,23 +104,19 @@ export class SqliteProjectionStateStore implements ProjectionStateStore {
         remote_version = excluded.remote_version,
         updated_at = excluded.updated_at
     `);
-    try {
-      statement.run(
-        record.publicationId,
-        record.routeId,
-        record.projectionId,
-        record.extensionId,
-        record.connectionId,
-        record.sourceRevisionId,
-        record.desiredFingerprint,
-        record.remote.id,
-        record.remote.url ?? null,
-        record.remote.version ?? null,
-        record.updatedAt,
-      );
-    } finally {
-      statement.close();
-    }
+    statement.run(
+      record.publicationId,
+      record.routeId,
+      record.projectionId,
+      record.extensionId,
+      record.connectionId,
+      record.sourceRevisionId,
+      record.desiredFingerprint,
+      record.remote.id,
+      record.remote.url ?? null,
+      record.remote.version ?? null,
+      record.updatedAt,
+    );
   }
 
   async delete(publicationId: string, routeId: string): Promise<void> {
@@ -132,11 +124,7 @@ export class SqliteProjectionStateStore implements ProjectionStateStore {
     const statement = this.#database.prepare(
       "DELETE FROM projection_state WHERE publication_id = ? AND route_id = ?",
     );
-    try {
-      statement.run(publicationId, routeId);
-    } finally {
-      statement.close();
-    }
+    statement.run(publicationId, routeId);
   }
 
   close(): void {
