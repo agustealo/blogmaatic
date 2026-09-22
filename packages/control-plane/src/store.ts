@@ -380,33 +380,46 @@ export class SqliteControlPlaneStore implements ControlPlaneStore {
 
   async putSchedule(schedule: AutomationSchedule): Promise<void> {
     this.#assertOpen();
-    this.#database.prepare(`
-      INSERT INTO automation_schedules (
-        schedule_id, automation_id, automation_version, schedule_json,
-        enabled, next_fire_at, last_fire_at, claim_token, claim_expires_at,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
-      ON CONFLICT(schedule_id) DO UPDATE SET
-        automation_id = excluded.automation_id,
-        automation_version = excluded.automation_version,
-        schedule_json = excluded.schedule_json,
-        enabled = excluded.enabled,
-        next_fire_at = excluded.next_fire_at,
-        last_fire_at = excluded.last_fire_at,
-        claim_token = NULL,
-        claim_expires_at = NULL,
-        updated_at = excluded.updated_at
-    `).run(
-      schedule.id,
-      schedule.automationId,
-      schedule.automationVersion,
-      stableJson(schedule),
-      schedule.enabled ? 1 : 0,
-      schedule.nextFireAt,
-      schedule.lastFireAt ?? null,
-      schedule.createdAt,
-      schedule.updatedAt,
-    );
+    this.#transaction(() => {
+      const existing = this.#database.prepare(`
+        SELECT claim_token, claim_expires_at
+        FROM automation_schedules WHERE schedule_id = ?
+      `).get(schedule.id) as { claim_token: string | null; claim_expires_at: string | null } | undefined;
+      if (
+        existing?.claim_token &&
+        (existing.claim_expires_at === null || existing.claim_expires_at > schedule.updatedAt)
+      ) {
+        throw new Error(`Schedule ${schedule.id} is actively claimed and cannot be replaced`);
+      }
+
+      this.#database.prepare(`
+        INSERT INTO automation_schedules (
+          schedule_id, automation_id, automation_version, schedule_json,
+          enabled, next_fire_at, last_fire_at, claim_token, claim_expires_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+        ON CONFLICT(schedule_id) DO UPDATE SET
+          automation_id = excluded.automation_id,
+          automation_version = excluded.automation_version,
+          schedule_json = excluded.schedule_json,
+          enabled = excluded.enabled,
+          next_fire_at = excluded.next_fire_at,
+          last_fire_at = excluded.last_fire_at,
+          claim_token = NULL,
+          claim_expires_at = NULL,
+          updated_at = excluded.updated_at
+      `).run(
+        schedule.id,
+        schedule.automationId,
+        schedule.automationVersion,
+        stableJson(schedule),
+        schedule.enabled ? 1 : 0,
+        schedule.nextFireAt,
+        schedule.lastFireAt ?? null,
+        schedule.createdAt,
+        schedule.updatedAt,
+      );
+    });
   }
 
   async getSchedule(scheduleId: string): Promise<AutomationSchedule | undefined> {
