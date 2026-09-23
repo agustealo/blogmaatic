@@ -12,6 +12,7 @@ function VersionsPanel({ automationId, changeNonce, onChanged }: { readonly auto
   const { session } = useConnection();
   const [actionError, setActionError] = useState<Error | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const loader = useCallback((cursor?: string) => {
     if (!session) return Promise.resolve({ items: [] });
     return session.client.listAutomationVersions(automationId, {
@@ -27,6 +28,7 @@ function VersionsPanel({ automationId, changeNonce, onChanged }: { readonly auto
     setActionError(null);
     try {
       await session.client.activateAutomation(automationId, entry.definition.version, { enabled: true });
+      setPendingVersion(null);
       onChanged();
     } catch (cause) {
       setActionError(cause instanceof Error ? cause : new Error("Activation failed"));
@@ -45,7 +47,14 @@ function VersionsPanel({ automationId, changeNonce, onChanged }: { readonly auto
               <div><strong>v{entry.definition.version}</strong><small>{formatInstant(entry.registeredAt)}</small></div>
               <span>{entry.definition.steps.length} steps · {triggerLabel(entry.definition.trigger.kind)}</span>
               <StatusPill value={entry.isActiveVersion ? (entry.enabled ? "enabled" : "disabled") : "inactive"} />
-              {!entry.isActiveVersion ? <button className="button button--quiet" type="button" disabled={busy === entry.definition.version} onClick={() => void activate(entry)}>{busy === entry.definition.version ? "Activating…" : "Activate"}</button> : null}
+              {!entry.isActiveVersion ? (
+                pendingVersion === entry.definition.version ? (
+                  <div className="inline-confirm-actions" aria-label={`Confirm activation of version ${entry.definition.version}`}>
+                    <button className="button button--quiet" type="button" disabled={busy === entry.definition.version} onClick={() => setPendingVersion(null)}>Cancel</button>
+                    <button className="button button--primary" type="button" disabled={busy === entry.definition.version} onClick={() => void activate(entry)}>{busy === entry.definition.version ? "Activating…" : "Confirm"}</button>
+                  </div>
+                ) : <button className="button button--quiet" type="button" onClick={() => setPendingVersion(entry.definition.version)}>Activate</button>
+              ) : null}
             </div>
           ))}
           {collection.items.length === 0 ? <EmptyState title="No versions found">No immutable versions are available for this automation.</EmptyState> : null}
@@ -60,6 +69,7 @@ export function AutomationsPage() {
   const { automationId } = useParams();
   const { session } = useConnection();
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [actionError, setActionError] = useState<Error | null>(null);
   const [changeNonce, setChangeNonce] = useState(0);
   const loader = useCallback((cursor?: string) => {
@@ -74,6 +84,7 @@ export function AutomationsPage() {
     setActionError(null);
     try {
       await session.client.activateAutomation(entry.definition.id, entry.definition.version, { enabled: !entry.enabled });
+      setPendingToggle(null);
       setChangeNonce((value) => value + 1);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause : new Error("Automation update failed"));
@@ -100,7 +111,12 @@ export function AutomationsPage() {
                   <div><small>Version</small><span>v{entry.definition.version}</span></div>
                   <div><small>Steps</small><span>{entry.definition.steps.length}</span></div>
                   <StatusPill value={entry.enabled ? "enabled" : "disabled"} />
-                  <button className="button button--quiet" type="button" disabled={busy === entry.definition.id} onClick={() => void toggle(entry)}>{busy === entry.definition.id ? "Saving…" : entry.enabled ? "Disable" : "Enable"}</button>
+                  {pendingToggle === entry.definition.id ? (
+                    <div className="inline-confirm-actions" aria-label={`Confirm ${entry.enabled ? "disable" : "enable"} ${entry.definition.name}`}>
+                      <button className="button button--quiet" type="button" disabled={busy === entry.definition.id} onClick={() => setPendingToggle(null)}>Cancel</button>
+                      <button className={entry.enabled ? "button button--danger" : "button button--primary"} type="button" disabled={busy === entry.definition.id} onClick={() => void toggle(entry)}>{busy === entry.definition.id ? "Saving…" : `Confirm ${entry.enabled ? "disable" : "enable"}`}</button>
+                    </div>
+                  ) : <button className="button button--quiet" type="button" disabled={busy === entry.definition.id} onClick={() => setPendingToggle(entry.definition.id)}>{entry.enabled ? "Disable" : "Enable"}</button>}
                 </article>
               ))}
               {collection.items.length === 0 ? <EmptyState title="No automations registered">Register a real automation through the operator API before it can be managed here.</EmptyState> : null}
@@ -108,7 +124,7 @@ export function AutomationsPage() {
           )}
           <CollectionFooter hasMore={Boolean(collection.nextCursor)} busy={collection.loadingMore} onLoadMore={() => void collection.loadMore()} />
         </Panel>
-        {automationId ? <VersionsPanel automationId={automationId} changeNonce={changeNonce} onChanged={() => setChangeNonce((value) => value + 1)} /> : null}
+        {automationId ? <VersionsPanel key={automationId} automationId={automationId} changeNonce={changeNonce} onChanged={() => setChangeNonce((value) => value + 1)} /> : null}
       </div>
     </>
   );
