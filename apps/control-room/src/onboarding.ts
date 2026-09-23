@@ -28,6 +28,10 @@ export interface OnboardingReadiness {
   readonly runnableAutomations: readonly AutomationRegistryEntry[];
 }
 
+export interface OnboardingLoadOptions {
+  readonly probeConnections?: boolean;
+}
+
 type ReadinessClient = Pick<
   OperatorClient,
   | "listConnectionTypes"
@@ -44,14 +48,14 @@ function isUsableProbe(probe: ConnectionProbe): boolean {
     probe.result.health.state !== "unhealthy";
 }
 
-function groupUsesOnlyUsableConnections(
+function groupUsesOnlyActiveConnections(
   entry: PublicationGroupRegistryEntry,
-  usableConnectionIds: ReadonlySet<string>,
+  activeConnectionIds: ReadonlySet<string>,
 ): boolean {
   const enabledRoutes = entry.group.routes.filter((route) => route.enabled);
   return entry.enabled &&
     enabledRoutes.length > 0 &&
-    enabledRoutes.every((route) => usableConnectionIds.has(route.destination.connectionId));
+    enabledRoutes.every((route) => activeConnectionIds.has(route.destination.connectionId));
 }
 
 function automationPublishesRunnableGroup(
@@ -63,7 +67,10 @@ function automationPublishesRunnableGroup(
   );
 }
 
-export async function loadOnboardingReadiness(client: ReadinessClient): Promise<OnboardingReadiness> {
+export async function loadOnboardingReadiness(
+  client: ReadinessClient,
+  options: OnboardingLoadOptions = {},
+): Promise<OnboardingReadiness> {
   const [typeResponse, connectionResponse, groupOptions, groups, automations] = await Promise.all([
     client.listConnectionTypes(),
     client.listConnections(),
@@ -73,33 +80,37 @@ export async function loadOnboardingReadiness(client: ReadinessClient): Promise<
   ]);
 
   const activeConnections = connectionResponse.items.filter((connection) => connection.status === "active");
-  const connectionProbes = await Promise.all(activeConnections.map(async (connection): Promise<ConnectionProbe> => {
-    try {
-      return { connection, result: await client.testConnection(connection.id) };
-    } catch (error) {
-      return {
-        connection,
-        error: error instanceof Error ? error.message : "Connection health check failed",
-      };
-    }
-  }));
-
-  const usableConnectionIds = new Set(
-    connectionProbes.filter(isUsableProbe).map((probe) => probe.connection.id),
-  );
-  const runnableGroups = groups.items.filter((entry) => groupUsesOnlyUsableConnections(entry, usableConnectionIds));
+  const activeConnectionIds = new Set(activeConnections.map((connection) => connection.id));
+  const runnableGroups = groups.items.filter((entry) => groupUsesOnlyActiveConnections(entry, activeConnectionIds));
   const runnableGroupIds = new Set(runnableGroups.map((entry) => entry.group.id));
   const runnableAutomations = automations.items.filter(
     (entry) => automationPublishesRunnableGroup(entry, runnableGroupIds),
   );
 
-  const stage: OnboardingStage = usableConnectionIds.size === 0
-    ? "connection"
-    : runnableGroups.length === 0
-      ? "group"
-      : runnableAutomations.length === 0
-        ? "automation"
-        : "ready";
+  const shouldProbe = options.probeConnections !== false;
+  const connectionProbes = shouldProbe
+    ? await Promise.all(activeConnections.map(async (connection): Promise<ConnectionProbe> => {
+      try {
+        return { connection, result: await client.testConnection(connection.id) };
+      } catch (error) {
+        return {
+          connection,
+          error: error instanceof Error ? error.message : "Connection health check failed",
+        };
+      }
+    }))
+    : [];
+  const usableConnectionIds = new Set(
+    connectionProbes.filter(isUsableProbe).map((probe) => probe.connection.id),
+  );
+
+  const stage: OnboardingStage = runnableAutomations.length > 0
+    ? "ready"
+    : runnableGroups.length > 0
+      ? "automation"
+      : usableConnectionIds.size > 0
+        ? "group"
+        : "connection";
 
   return {
     stage,
