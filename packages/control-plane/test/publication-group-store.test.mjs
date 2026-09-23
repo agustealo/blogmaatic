@@ -76,7 +76,7 @@ test("publication groups are versioned, optimistic, and preserve immutable histo
   });
 });
 
-test("enabled route references block connection removal while disabled groups and routes do not", async () => {
+test("activation changes advance the version chain and stale toggles fail compare-and-swap", async () => {
   await withStore(async ({ store }) => {
     await store.createPublicationGroup(group(), true, "2026-09-23T17:20:00.000Z");
     assert.deepEqual(
@@ -91,23 +91,30 @@ test("enabled route references block connection removal while disabled groups an
       "2026-09-23T17:21:00.000Z",
     );
     assert.equal(disabled.enabled, false);
+    assert.equal(disabled.version, 2);
     assert.equal((await store.listEnabledPublicationGroupsByConnection("connection-primary")).length, 0);
+
+    await assert.rejects(
+      () => store.setPublicationGroupEnabled("primary", 1, true, "2026-09-23T17:21:30.000Z"),
+      /changed from version 1 to 2/,
+    );
 
     const reenabled = await store.setPublicationGroupEnabled(
       "primary",
-      1,
+      2,
       true,
       "2026-09-23T17:22:00.000Z",
     );
     assert.equal(reenabled.enabled, true);
+    assert.equal(reenabled.version, 3);
 
     const routeDisabled = await store.updatePublicationGroup(
       group("connection-primary", false, "Route disabled"),
-      1,
+      3,
       true,
       "2026-09-23T17:23:00.000Z",
     );
-    assert.equal(routeDisabled.version, 2);
+    assert.equal(routeDisabled.version, 4);
     assert.equal(routeDisabled.enabled, true);
     assert.equal((await store.listEnabledPublicationGroupsByConnection("connection-primary")).length, 0);
   });
