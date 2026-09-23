@@ -73,6 +73,7 @@ async function withApi(fn) {
     store: groupStore,
     connections,
     extensions,
+    policySetIds: ["default"],
     now: clock.now,
   });
   const launcher = {
@@ -193,11 +194,23 @@ test("publication group API owns identifiers, permissions, versions, and immutab
     });
     assert.equal(activation.statusCode, 200);
     assert.equal(activation.json().enabled, false);
+    assert.equal(activation.json().version, 3);
+
+    const staleActivation = await app.inject({
+      method: "POST",
+      url: `/v1/publication-groups/${encodeURIComponent(created.group.id)}/activation`,
+      headers: bearer(TOKENS.writer),
+      payload: { expectedVersion: 2, enabled: true },
+    });
+    assert.equal(staleActivation.statusCode, 409);
+    assert.equal(staleActivation.json().error.code, "PUBLICATION_GROUP_VERSION_CONFLICT");
 
     const audit = await store.listAudit({ resourceType: "publication-group", resourceId: created.group.id });
     assert.deepEqual(
       audit.items.map((entry) => `${entry.action}:${entry.phase}`).sort(),
       [
+        "publication-group.activate:failed",
+        "publication-group.activate:intent",
         "publication-group.activate:intent",
         "publication-group.activate:succeeded",
         "publication-group.create:intent",
@@ -211,7 +224,7 @@ test("publication group API owns identifiers, permissions, versions, and immutab
   });
 });
 
-test("publication group API rejects invalid live route capabilities and reports missing resources", async () => {
+test("publication group API rejects non-runnable policy and route configurations", async () => {
   await withApi(async ({ app }) => {
     const unsupported = await app.inject({
       method: "POST",
@@ -225,6 +238,33 @@ test("publication group API rejects invalid live route capabilities and reports 
     assert.equal(unsupported.statusCode, 422, unsupported.body);
     assert.equal(unsupported.json().error.code, "DOMAIN_REJECTED");
     assert.match(unsupported.json().error.message, /unsupported capabilities/);
+
+    const unknownPolicy = await app.inject({
+      method: "POST",
+      url: "/v1/publication-groups",
+      headers: bearer(TOKENS.writer),
+      payload: { ...createBody(), policySetId: "missing-policy" },
+    });
+    assert.equal(unknownPolicy.statusCode, 422, unknownPolicy.body);
+    assert.match(unknownPolicy.json().error.message, /unknown policy set/);
+
+    const emptyEnabledGroup = await app.inject({
+      method: "POST",
+      url: "/v1/publication-groups",
+      headers: bearer(TOKENS.writer),
+      payload: { ...createBody(), routes: [] },
+    });
+    assert.equal(emptyEnabledGroup.statusCode, 422, emptyEnabledGroup.body);
+    assert.match(emptyEnabledGroup.json().error.message, /at least one enabled route/);
+
+    const parked = await app.inject({
+      method: "POST",
+      url: "/v1/publication-groups",
+      headers: bearer(TOKENS.writer),
+      payload: { ...createBody("Parked"), routes: [], enabled: false },
+    });
+    assert.equal(parked.statusCode, 201, parked.body);
+    assert.equal(parked.json().enabled, false);
 
     const missing = await app.inject({
       method: "GET",
