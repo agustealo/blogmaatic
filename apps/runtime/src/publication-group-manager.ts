@@ -11,6 +11,7 @@ export interface PublicationGroupManagerOptions {
   readonly store: PublicationGroupStore;
   readonly connections: ConnectionAuthority;
   readonly extensions: ExtensionRuntime;
+  readonly policySetIds: readonly string[];
   readonly now?: () => string;
 }
 
@@ -29,13 +30,18 @@ export class PublicationGroupManager {
   readonly #store: PublicationGroupStore;
   readonly #connections: ConnectionAuthority;
   readonly #extensions: ExtensionRuntime;
+  readonly #policySetIds: ReadonlySet<string>;
   readonly #now: () => string;
 
   constructor(options: PublicationGroupManagerOptions) {
     this.#store = options.store;
     this.#connections = options.connections;
     this.#extensions = options.extensions;
+    this.#policySetIds = new Set(options.policySetIds);
     this.#now = options.now ?? (() => new Date().toISOString());
+    if (this.#policySetIds.size !== options.policySetIds.length) {
+      throw new Error("Publication group policySetIds must be unique");
+    }
   }
 
   list(query: PublicationGroupListQuery = {}) {
@@ -105,6 +111,12 @@ export class PublicationGroupManager {
 
   #validateGroup(group: PublicationGroup, enabled: boolean): void {
     validatePublicationGroup(group);
+    if (!this.#policySetIds.has(group.policySetId)) {
+      throw new Error(`Publication group ${group.id} references unknown policy set ${group.policySetId}`);
+    }
+    if (enabled && !group.routes.some((route) => route.enabled)) {
+      throw new Error(`Enabled publication group ${group.id} must contain at least one enabled route`);
+    }
     for (const route of group.routes) {
       const connection = this.#connections.get(route.destination.connectionId);
       if (connection.extensionId !== route.destination.extensionId) {
