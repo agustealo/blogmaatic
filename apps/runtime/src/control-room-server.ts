@@ -41,8 +41,9 @@ async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): P
   return Uint8Array.from(Buffer.concat(chunks));
 }
 
-function proxyHeaders(request: IncomingMessage, operatorToken: string): Headers {
-  const headers = new Headers({ authorization: `Bearer ${operatorToken}` });
+function proxyHeaders(request: IncomingMessage, operatorToken: string, authenticated: boolean): Headers {
+  const headers = new Headers();
+  if (authenticated) headers.set("authorization", `Bearer ${operatorToken}`);
   for (const name of ["accept", "content-type", "idempotency-key"] as const) {
     const value = request.headers[name];
     if (typeof value === "string") headers.set(name, value);
@@ -150,19 +151,20 @@ async function proxy(
   sessionToken: string,
   sessionProof: string,
 ): Promise<void> {
-  if (!sessionAuthorized(request, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof)) {
+  const incomingUrl = new URL(request.url ?? "/", "http://localhost");
+  const upstreamPath = incomingUrl.pathname.slice("/api".length) || "/";
+  const publicHealth = request.method === "GET" && upstreamPath === "/healthz";
+  if (!publicHealth && !sessionAuthorized(request, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof)) {
     forbiddenProxy(response);
     return;
   }
 
   try {
-    const incomingUrl = new URL(request.url ?? "/", "http://localhost");
-    const upstreamPath = incomingUrl.pathname.slice("/api".length) || "/";
     const target = `${operatorOrigin}${upstreamPath}${incomingUrl.search}`;
     const body = await requestBody(request);
     const upstream = await fetch(target, {
       method: request.method ?? "GET",
-      headers: proxyHeaders(request, operatorToken),
+      headers: proxyHeaders(request, operatorToken, !publicHealth),
       redirect: "manual",
       credentials: "omit",
       referrerPolicy: "no-referrer",
