@@ -10,7 +10,13 @@ import type {
   AutomationRunResult,
   AutomationVersionListQuery,
   AutomationVersionPage,
+  ConnectionCreateBody,
+  ConnectionTypesResponse,
+  ConnectionsResponse,
+  ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  OperatorConnectionTestResult,
+  OperatorConnectionView,
   OperatorErrorBody,
   OperatorHealth,
   OperatorOperationsPage,
@@ -109,7 +115,7 @@ export class OperatorClient {
   async #request<T>(
     path: string,
     options: {
-      readonly method?: "GET" | "POST";
+      readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
       readonly body?: unknown;
       readonly authenticated?: boolean;
     } = {},
@@ -148,6 +154,44 @@ export class OperatorClient {
 
   health(): Promise<OperatorHealth> {
     return this.#request<OperatorHealth>("/healthz", { authenticated: false });
+  }
+
+  listConnectionTypes(): Promise<ConnectionTypesResponse> {
+    return this.#request<ConnectionTypesResponse>("/v1/connection-types");
+  }
+
+  listConnections(): Promise<ConnectionsResponse> {
+    return this.#request<ConnectionsResponse>("/v1/connections");
+  }
+
+  getConnection(connectionId: string): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`);
+  }
+
+  createConnection(input: ConnectionCreateBody): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>("/v1/connections", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  updateConnection(connectionId: string, input: ConnectionUpdateBody): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`, {
+      method: "PATCH",
+      body: input,
+    });
+  }
+
+  removeConnection(connectionId: string): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
+    return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, {
+      method: "POST",
+    });
   }
 
   listAutomations(query: AutomationListQuery = {}): Promise<AutomationPage> {
