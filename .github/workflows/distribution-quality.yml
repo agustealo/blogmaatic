@@ -23,7 +23,7 @@ jobs:
           - target: macos-x64
             os: macos-15-intel
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,6 +49,9 @@ jobs:
       - name: Stage portable distribution
         run: npm run distribution:stage
 
+      - name: Build native installer
+        run: npm run distribution:native
+
       - name: Burn clean extracted distribution
         shell: bash
         run: |
@@ -57,12 +60,14 @@ jobs:
           test -n "$archive"
           npm run distribution:smoke -- "$archive"
 
-      - name: Upload verified distribution
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: blogmaatic-${{ matrix.target }}
-          path: |
-            artifacts/blogmaatic-*.tar.gz
-            artifacts/blogmaatic-*.tar.gz.sha256
-          if-no-files-found: error
-          compression-level: 0
+      - name: Burn installed native package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            package=$(find artifacts -maxdepth 1 -type f -name 'blogmaatic-*.deb' -print -quit)
+          else
+            package=$(find artifacts -maxdepth 1 -type f -name 'blogmaatic-*.pkg' -print -quit)
+          fi
+          test -n "$package"
+          npm run distribution:native:smoke -- "$package"
