@@ -26,6 +26,8 @@ export function usePagedCollection<T>(
   const reload = useCallback(async () => {
     const request = ++sequence.current;
     setLoading(true);
+    setLoadingMore(false);
+    setNextCursor(undefined);
     setError(null);
     try {
       const page = await loader();
@@ -48,7 +50,7 @@ export function usePagedCollection<T>(
   }, [reload]);
 
   const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
+    if (loading || !nextCursor || loadingMore) return;
     const request = ++sequence.current;
     setLoadingMore(true);
     setError(null);
@@ -63,7 +65,7 @@ export function usePagedCollection<T>(
     } finally {
       if (request === sequence.current) setLoadingMore(false);
     }
-  }, [loader, loadingMore, nextCursor]);
+  }, [loader, loading, loadingMore, nextCursor]);
 
   return {
     items,
