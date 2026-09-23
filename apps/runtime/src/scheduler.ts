@@ -6,6 +6,7 @@ export class SchedulerLoop {
   readonly #batchSize: number;
   readonly #onError: (error: Error) => void;
   #timer: NodeJS.Timeout | undefined;
+  #active: Promise<void> | undefined;
   #stopped = true;
 
   constructor(options: {
@@ -23,25 +24,38 @@ export class SchedulerLoop {
   start(): void {
     if (!this.#stopped) return;
     this.#stopped = false;
-    void this.#tick();
+    this.#beginTick();
   }
 
-  async #tick(): Promise<void> {
-    if (this.#stopped) return;
+  #beginTick(): void {
+    if (this.#stopped || this.#active) return;
+    const active = this.#dispatch();
+    this.#active = active;
+    void active.finally(() => {
+      if (this.#active === active) this.#active = undefined;
+      if (!this.#stopped) {
+        this.#timer = setTimeout(() => {
+          this.#timer = undefined;
+          this.#beginTick();
+        }, this.#pollMs);
+        this.#timer.unref();
+      }
+    });
+  }
+
+  async #dispatch(): Promise<void> {
     try {
       await this.#controlPlane.dispatchDueSchedules({ limit: this.#batchSize });
     } catch (error) {
       this.#onError(error instanceof Error ? error : new Error("Scheduler dispatch failed"));
     }
-    if (!this.#stopped) {
-      this.#timer = setTimeout(() => void this.#tick(), this.#pollMs);
-      this.#timer.unref();
-    }
   }
 
-  close(): void {
+  async close(): Promise<void> {
     this.#stopped = true;
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = undefined;
+    const active = this.#active;
+    if (active) await active;
   }
 }
