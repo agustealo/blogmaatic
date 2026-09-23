@@ -32,7 +32,15 @@ async function rawRequest(url, headers) {
   });
 }
 
-test("Control Room host owns proxy authentication and rejects cross-site or rebound origins", async () => {
+function sessionCookie(response) {
+  const header = response.headers.get("set-cookie");
+  assert.ok(header, "Control Room bootstrap did not set a session cookie");
+  assert.match(header, /HttpOnly/i);
+  assert.match(header, /SameSite=Strict/i);
+  return header.split(";", 1)[0];
+}
+
+test("Control Room exchanges a one-time launch capability for a scoped browser session", async () => {
   const root = await mkdtemp(join(tmpdir(), "blogmaatic-control-room-"));
   await writeFile(join(root, "index.html"), "<main>control room</main>");
   let receivedAuthorization;
@@ -58,9 +66,33 @@ test("Control Room host owns proxy authentication and rejects cross-site or rebo
     assert.match(page.headers.get("content-security-policy"), /default-src 'self'/);
     assert.equal(page.headers.get("cross-origin-resource-policy"), "same-origin");
 
+    const unauthenticated = await fetch(`${host.address}/api/v1/automations`, {
+      headers: {
+        origin: host.address,
+        "sec-fetch-site": "same-origin",
+      },
+    });
+    assert.equal(unauthenticated.status, 403);
+    assert.equal(upstreamRequests, 0);
+
+    const bootstrap = await fetch(host.launchAddress, {
+      redirect: "manual",
+      headers: { "sec-fetch-site": "none" },
+    });
+    assert.equal(bootstrap.status, 303);
+    assert.equal(bootstrap.headers.get("location"), "/");
+    const cookie = sessionCookie(bootstrap);
+
+    const reusedBootstrap = await fetch(host.launchAddress, {
+      redirect: "manual",
+      headers: { "sec-fetch-site": "none" },
+    });
+    assert.equal(reusedBootstrap.status, 410);
+
     const proxied = await fetch(`${host.address}/api/v1/automations`, {
       headers: {
         authorization: "Bearer browser-must-not-control-this",
+        cookie,
         origin: host.address,
         "sec-fetch-site": "same-origin",
       },
@@ -73,24 +105,24 @@ test("Control Room host owns proxy authentication and rejects cross-site or rebo
 
     const rejected = await fetch(`${host.address}/api/v1/automations`, {
       headers: {
+        cookie,
         origin: "https://attacker.example",
         "sec-fetch-site": "cross-site",
       },
     });
     assert.equal(rejected.status, 403);
     assert.equal(upstreamRequests, 1);
-    const body = await rejected.json();
-    assert.equal(body.error.code, "CONTROL_ROOM_ORIGIN_REJECTED");
 
     const boundPort = new URL(host.address).port;
     const rebound = await rawRequest(`${host.address}/api/v1/automations`, {
       host: `attacker.example:${boundPort}`,
       origin: `http://attacker.example:${boundPort}`,
+      cookie,
       "sec-fetch-site": "same-origin",
     });
     assert.equal(rebound.status, 403);
     assert.equal(upstreamRequests, 1);
-    assert.equal(JSON.parse(rebound.body).error.code, "CONTROL_ROOM_ORIGIN_REJECTED");
+    assert.equal(JSON.parse(rebound.body).error.code, "CONTROL_ROOM_SESSION_REQUIRED");
   } finally {
     await host.close();
     await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));

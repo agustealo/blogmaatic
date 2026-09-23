@@ -1,15 +1,19 @@
 # Local Runtime and First-Run Bootstrap
 
-Slice 11 turns the proven Blogmaatic components into one local application runtime without creating a second publishing or workflow authority. Slice 14 tightens the consumer authentication boundary so the bundled browser UI no longer handles the Operator API bearer credential.
+Slice 11 turns the proven Blogmaatic components into one local application runtime without creating a second publishing or workflow authority. Slice 14 tightens the consumer authentication boundary so the bundled browser UI never handles the Operator API bearer credential and the privileged proxy is not exposed as an unauthenticated loopback bridge.
 
 ## Runtime spine
 
 ```text
+one-time Control Room launch URL
+      ↓
+HttpOnly SameSite runtime session
+      ↓
 Control Room :4320
       |
-      | /api proxy (loopback only, runtime-authenticated)
+      | /api proxy (loopback only, session-gated)
       v
-Operator API :4317
+Operator API :4317 (bearer-authenticated)
       |
       v
 Automation Control Plane ---- SQLite control-plane facts
@@ -41,6 +45,8 @@ The local data directory contains separate authorities:
 
 The operator credential file is created with owner-only permissions on POSIX systems and is never copied into `runtime.json`, URLs, the Control Room bundle, browser state, local storage, or Git.
 
+The Control Room browser session is a separate, runtime-memory authority. At each runtime start, Blogmaatic creates a random one-time launch capability and a random session token. The launch capability is printed as the Control Room URL. Its first successful GET exchanges it for an `HttpOnly; SameSite=Strict` session cookie and permanently consumes that launch capability. The session token is never written to disk and is invalidated when the runtime stops.
+
 ## First run
 
 ```bash
@@ -52,7 +58,7 @@ npm run runtime:start
 
 For an existing Jekyll repository, initialization discovers its current Git branch and Git author identity. `--author-name` and `--author-email` may be supplied when the repository has no local Git identity. Publishing does not push by default. `--push` must be explicit.
 
-The bundled Control Room requires no credential-copy step. Once the runtime is running, the browser connects to the same-origin `/api` proxy. The proxy owns the local operator credential and injects it server-side only after origin/fetch-site validation.
+`runtime:start` prints a one-time Control Room launch URL. Open that URL in the browser. There is no Operator API token field and no credential-copy step.
 
 `npm run runtime:token` remains an advanced escape hatch for an explicit external Operator API client. It is not part of the normal Control Room flow.
 
@@ -80,18 +86,22 @@ Only one scheduler dispatch may be active at a time. Shutdown stops future timer
 
 The production Control Room bundle is served by a loopback-only static host. `/api/*` is a narrow reverse proxy to the Operator API.
 
-The browser never supplies or receives the Operator API bearer credential. The runtime proxy owns that credential and replaces any incoming `Authorization` header with its own server-side authority. Before doing so, it rejects browser requests whose `Sec-Fetch-Site` is not `same-origin`/`none` or whose explicit `Origin` does not match the Control Room host. Proxied API responses are marked `no-store`.
+The browser never supplies or receives the Operator API bearer credential. Instead, a one-time launch capability establishes a separate HttpOnly browser session. Every privileged `/api` request must carry that session cookie, target the exact bound Control Room `Host`, and satisfy browser origin/fetch-site checks. Requests without a valid runtime session fail before the Operator API is contacted.
 
-The proxy forwards only the non-secret headers the operator contract needs, does not forward cookies, does not follow redirects, and applies restrictive browser security headers including same-origin resource policy. Browser routing falls back to `index.html`; file traversal is rejected. IPv6 loopback origins are emitted with bracketed host syntax so `::1` configurations produce valid URLs.
+That session gate matters because `Origin`, `Host`, and `Sec-Fetch-Site` checks alone are browser-CSRF defenses, not local-process authentication: a non-browser local process can forge ordinary HTTP headers. The unguessable runtime-memory session capability prevents an arbitrary process that merely reaches the loopback port from borrowing the proxy's operator authority.
 
-Direct Operator API clients remain bearer-authenticated and may use the advanced token command deliberately. Removing bearer material from the bundled browser UI does not weaken the Operator API boundary.
+Incoming browser `Authorization` is ignored. Once the session gate succeeds, the proxy adds the real operator credential server-side, forwards only the non-secret headers the operator contract needs, never forwards cookies upstream, never follows redirects, and marks API responses `no-store`.
+
+The host applies restrictive browser security headers including same-origin resource policy. Browser routing falls back to `index.html`; file traversal is rejected. IPv6 loopback origins are emitted with bracketed host syntax so `::1` configurations produce valid URLs.
+
+Direct Operator API clients remain bearer-authenticated and may use the advanced token command deliberately. Removing bearer material from the bundled browser UI does not create a second unauthenticated API surface.
 
 ## Shutdown
 
 Shutdown order is intentional and reverses the active application surfaces before state is released:
 
 1. stop future scheduler work and await any active scheduler dispatch;
-2. stop the Control Room host;
+2. stop the Control Room host and destroy its in-memory browser session;
 3. stop the Operator API so no new mutations enter;
 4. close the Blogmaatic workflow endpoint;
 5. stop managed Restate;
@@ -103,9 +113,9 @@ The workflow endpoint is closed before managed Restate so no new local workflow 
 
 ## Production proof
 
-The runtime integration burn uses the real managed Restate server and a real temporary Git/Jekyll repository. It drives the path through the authenticated Operator API, durable Restate workflow, publication kernel, and Jekyll/Git extension, verifies the generated post and Git commit, reaches the same run through the Control Room proxy, shuts the runtime down, starts it again from the same SQLite and Restate state, and confirms the completed result is still available without creating another Git commit.
+The runtime integration burn uses the real managed Restate server and a real temporary Git/Jekyll repository. It drives the path through the authenticated Operator API, durable Restate workflow, publication kernel, and Jekyll/Git extension, verifies the generated post and Git commit, bootstraps a real Control Room browser session, reaches the same run through the tokenless Control Room client path, shuts the runtime down, starts it again from the same SQLite and Restate state, and confirms the completed result is still available without creating another Git commit.
 
-Distribution burns additionally require the packaged archive and the installed native package to call the Control Room `/api` surface without a browser bearer header. The request succeeds only when the runtime-owned proxy injects the real operator credential.
+Distribution burns additionally require the packaged archive and the installed native package to consume the one-time Control Room launch URL, receive the scoped session cookie, and call `/api` with no browser bearer header. The request succeeds only when the session is valid and the runtime-owned proxy injects the real operator credential.
 
 No fake publisher or in-memory workflow substitute is used for this proof.
 
@@ -113,4 +123,4 @@ No fake publisher or in-memory workflow substitute is used for this proof.
 
 Slice 11 wires the real Jekyll/Git publisher into first-run because it can be proven locally without provider credentials. Other publisher packages remain extensions and are not silently fabricated or auto-configured. A runtime configuration that references an extension not wired into the active runtime fails closed.
 
-Publisher credential storage is a separate authority from the local operator token. The existing `@blogmaatic/secrets` abstraction will be extended with a true OS credential-store adapter; this slice deliberately does not fake that boundary with shell commands that can expose secret material in process arguments.
+Publisher credential storage is a separate authority from both the local operator token and the ephemeral Control Room session. The existing `@blogmaatic/secrets` abstraction will be extended with a true OS credential-store adapter; this slice deliberately does not fake that boundary with shell commands that can expose secret material in process arguments.

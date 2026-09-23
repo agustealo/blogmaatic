@@ -87,6 +87,30 @@ async function waitForHttp(url, state, timeoutMs = 20_000) {
   throw new Error(`Timed out waiting for installed Blogmaatic at ${url}:\n${state.output}`);
 }
 
+async function controlRoomSession(state, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (state.exited) throw new Error(`Installed Blogmaatic exited before Control Room session bootstrap:\n${state.output}`);
+    const match = state.output.match(/Control Room: (http:\/\/[^\s]+)/);
+    if (match?.[1]) {
+      const launchAddress = match[1];
+      const response = await fetch(launchAddress, {
+        redirect: "manual",
+        headers: { "sec-fetch-site": "none" },
+      });
+      assert.equal(response.status, 303, `Control Room bootstrap returned ${response.status}: ${await response.text()}`);
+      const setCookie = response.headers.get("set-cookie");
+      assert.ok(setCookie, "Control Room bootstrap did not set a session cookie");
+      return {
+        origin: new URL(launchAddress).origin,
+        cookie: setCookie.split(";", 1)[0],
+      };
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`Timed out waiting for the Control Room launch URL:\n${state.output}`);
+}
+
 async function stopInstalledRuntime(handle) {
   if (!handle || handle.state.exited) return;
   handle.child.kill("SIGTERM");
@@ -139,9 +163,11 @@ try {
   const controlRoom = await waitForHttp("http://127.0.0.1:4320/", runtime.state);
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
-  const proxied = await fetch("http://127.0.0.1:4320/api/v1/automations?limit=1", {
+  const session = await controlRoomSession(runtime.state);
+  const proxied = await fetch(`${session.origin}/api/v1/automations?limit=1`, {
     headers: {
-      origin: "http://127.0.0.1:4320",
+      cookie: session.cookie,
+      origin: session.origin,
       "sec-fetch-site": "same-origin",
     },
   });

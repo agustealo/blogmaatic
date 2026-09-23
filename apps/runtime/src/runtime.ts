@@ -26,6 +26,7 @@ import { SchedulerLoop } from "./scheduler.js";
 export interface RunningRuntime {
   readonly operatorAddress: string;
   readonly controlRoomAddress: string;
+  readonly controlRoomLaunchAddress: string;
   readonly fatal: Promise<never>;
   close(): Promise<void>;
 }
@@ -173,6 +174,7 @@ export async function startRuntime(options: {
     return {
       operatorAddress: operator.address,
       controlRoomAddress: controlRoom.address,
+      controlRoomLaunchAddress: controlRoom.launchAddress,
       fatal,
       close: async () => {
         if (closed) return;

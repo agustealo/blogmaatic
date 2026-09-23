@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFile, stat } from "node:fs/promises";
@@ -5,6 +6,7 @@ import { extname, relative, resolve, sep } from "node:path";
 
 import { httpOrigin } from "./network.js";
 
+const SESSION_COOKIE = "blogmaatic_control_room_session";
 const MIME: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -47,18 +49,40 @@ function proxyHeaders(request: IncomingMessage, operatorToken: string): Headers 
   return headers;
 }
 
-function sameOriginProxyRequest(request: IncomingMessage, controlRoomOrigin: string): boolean {
-  const fetchSite = request.headers["sec-fetch-site"];
-  if (typeof fetchSite === "string" && fetchSite !== "same-origin" && fetchSite !== "none") return false;
-
+function requestMatchesBoundOrigin(request: IncomingMessage, controlRoomOrigin: string): boolean {
   if (!controlRoomOrigin) return false;
   const expected = new URL(controlRoomOrigin);
   const host = request.headers.host;
   if (!host || host !== expected.host) return false;
 
+  const fetchSite = request.headers["sec-fetch-site"];
+  if (typeof fetchSite === "string" && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+
   const origin = request.headers.origin;
   if (typeof origin === "string" && origin !== expected.origin) return false;
   return true;
+}
+
+function cookieValue(request: IncomingMessage, name: string): string | undefined {
+  const raw = request.headers.cookie;
+  if (!raw) return undefined;
+  for (const item of raw.split(";")) {
+    const [key, ...parts] = item.trim().split("=");
+    if (key === name) return parts.join("=");
+  }
+  return undefined;
+}
+
+function secretMatches(received: string | undefined, expected: string): boolean {
+  if (!received) return false;
+  const left = Buffer.from(received, "utf8");
+  const right = Buffer.from(expected, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function sessionAuthorized(request: IncomingMessage, controlRoomOrigin: string, sessionToken: string): boolean {
+  return requestMatchesBoundOrigin(request, controlRoomOrigin)
+    && secretMatches(cookieValue(request, SESSION_COOKIE), sessionToken);
 }
 
 function forbiddenProxy(response: ServerResponse): void {
@@ -67,10 +91,41 @@ function forbiddenProxy(response: ServerResponse): void {
   response.setHeader("cache-control", "no-store");
   response.end(JSON.stringify({
     error: {
-      code: "CONTROL_ROOM_ORIGIN_REJECTED",
-      message: "Control Room API requests must originate from the bound local Control Room origin",
+      code: "CONTROL_ROOM_SESSION_REQUIRED",
+      message: "Open the Control Room using the one-time launch URL printed by the Blogmaatic runtime",
     },
   }));
+}
+
+function bootstrapSession(
+  request: IncomingMessage,
+  response: ServerResponse,
+  controlRoomOrigin: string,
+  bootstrapToken: string,
+  sessionToken: string,
+  consume: () => boolean,
+): void {
+  if (request.method !== "GET" || !requestMatchesBoundOrigin(request, controlRoomOrigin)) {
+    forbiddenProxy(response);
+    return;
+  }
+  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  if (!secretMatches(pathname.slice("/session/".length), bootstrapToken)) {
+    forbiddenProxy(response);
+    return;
+  }
+  if (!consume()) {
+    response.statusCode = 410;
+    response.setHeader("cache-control", "no-store");
+    response.end("Control Room launch capability has already been consumed");
+    return;
+  }
+
+  response.statusCode = 303;
+  response.setHeader("location", "/");
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("set-cookie", `${SESSION_COOKIE}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict`);
+  response.end();
 }
 
 async function proxy(
@@ -79,8 +134,9 @@ async function proxy(
   operatorOrigin: string,
   operatorToken: string,
   controlRoomOrigin: string,
+  sessionToken: string,
 ): Promise<void> {
-  if (!sameOriginProxyRequest(request, controlRoomOrigin)) {
+  if (!sessionAuthorized(request, controlRoomOrigin, sessionToken)) {
     forbiddenProxy(response);
     return;
   }
@@ -166,10 +222,12 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, r
 export class ControlRoomServer {
   readonly #server: Server;
   readonly address: string;
+  readonly launchAddress: string;
 
-  private constructor(server: Server, address: string) {
+  private constructor(server: Server, address: string, launchAddress: string) {
     this.#server = server;
     this.address = address;
+    this.launchAddress = launchAddress;
   }
 
   static async start(options: {
@@ -188,13 +246,33 @@ export class ControlRoomServer {
     }
     if (!options.operatorToken.trim()) throw new Error("Control Room operator token is required");
 
+    const bootstrapToken = randomBytes(24).toString("base64url");
+    const sessionToken = randomBytes(32).toString("base64url");
+    let bootstrapAvailable = true;
     let controlRoomOrigin = "";
     const server = createServer((request, response) => {
       securityHeaders(response);
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-      const task = pathname === "/api" || pathname.startsWith("/api/")
-        ? proxy(request, response, options.operatorOrigin, options.operatorToken, controlRoomOrigin)
-        : serveStatic(request, response, root);
+      let task: Promise<void>;
+      if (pathname.startsWith("/session/")) {
+        bootstrapSession(
+          request,
+          response,
+          controlRoomOrigin,
+          bootstrapToken,
+          sessionToken,
+          () => {
+            if (!bootstrapAvailable) return false;
+            bootstrapAvailable = false;
+            return true;
+          },
+        );
+        task = Promise.resolve();
+      } else if (pathname === "/api" || pathname.startsWith("/api/")) {
+        task = proxy(request, response, options.operatorOrigin, options.operatorToken, controlRoomOrigin, sessionToken);
+      } else {
+        task = serveStatic(request, response, root);
+      }
       void task.catch((error: unknown) => {
         if (response.headersSent) return response.destroy(error instanceof Error ? error : undefined);
         response.statusCode = 500;
@@ -218,7 +296,11 @@ export class ControlRoomServer {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
       throw new Error("Control Room server did not establish its bound origin");
     }
-    return new ControlRoomServer(server, controlRoomOrigin);
+    return new ControlRoomServer(
+      server,
+      controlRoomOrigin,
+      `${controlRoomOrigin}/session/${bootstrapToken}`,
+    );
   }
 
   async close(): Promise<void> {

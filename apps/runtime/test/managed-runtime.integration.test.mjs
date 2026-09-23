@@ -131,6 +131,12 @@ async function expectStatus(response, expected) {
   }
 }
 
+function sessionCookie(response) {
+  const header = response.headers.get("set-cookie");
+  assert.ok(header, "Control Room bootstrap did not return a session cookie");
+  return header.split(";", 1)[0];
+}
+
 async function terminalResult(origin, token, runId) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
@@ -186,7 +192,14 @@ test("managed runtime publishes through Restate and survives a full restart", {
       logger: { info: () => undefined, error: () => undefined },
     });
 
-    const controlRoom = await fetch(first.controlRoomAddress);
+    const bootstrap = await fetch(first.controlRoomLaunchAddress, {
+      redirect: "manual",
+      headers: { "sec-fetch-site": "none" },
+    });
+    await expectStatus(bootstrap, 303);
+    const cookie = sessionCookie(bootstrap);
+
+    const controlRoom = await fetch(first.controlRoomAddress, { headers: { cookie } });
     await expectStatus(controlRoom, 200);
     assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
@@ -221,7 +234,13 @@ test("managed runtime publishes through Restate and survives a full restart", {
     assert.match(post, /Operator API to Restate to Jekyll/);
     assert.equal(await git(repository, ["rev-list", "--count", "HEAD"]), "2");
 
-    const proxiedRun = await api(first.controlRoomAddress, credential.token, `/api/v1/runs/${encodeURIComponent(run.runId)}`);
+    const proxiedRun = await fetch(`${first.controlRoomAddress}/api/v1/runs/${encodeURIComponent(run.runId)}`, {
+      headers: {
+        cookie,
+        origin: first.controlRoomAddress,
+        "sec-fetch-site": "same-origin",
+      },
+    });
     await expectStatus(proxiedRun, 200);
 
     await first.close();

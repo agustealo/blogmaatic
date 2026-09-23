@@ -91,7 +91,7 @@ blogmaatic doctor
 blogmaatic start
 ```
 
-Open the Control Room shown by `blogmaatic start`. The bundled browser UI does not ask for or store the local Operator API bearer credential. Its same-origin `/api` proxy keeps that authority inside the runtime and injects it server-side after origin checks.
+`blogmaatic start` prints a **one-time Control Room launch URL**. Open that URL in the browser. It exchanges the launch capability for a runtime-memory `HttpOnly; SameSite=Strict` session cookie, then the bundled browser UI uses the same-origin `/api` proxy without ever receiving or storing the Operator API bearer credential. The launch capability is consumed after first use and a new browser session is generated on the next runtime start.
 
 `blogmaatic token` remains an advanced command for an explicit external Operator API client. It is not part of the normal consumer Control Room flow.
 

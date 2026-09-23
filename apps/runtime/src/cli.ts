@@ -117,7 +117,7 @@ async function init(args: ParsedArgs): Promise<void> {
   console.log(`Local operator authority: ${credential.created ? "created" : "present"}`);
   if (config.connections.length === 0) console.log("No publisher connection was configured. Add a real extension connection before publishing.");
   else console.log(`Configured ${config.connections.length} real publisher connection(s).`);
-  console.log("Start Blogmaatic and open the Control Room; browser authentication is handled by the local runtime.");
+  console.log("Start Blogmaatic and open the one-time Control Room launch URL; browser authentication is handled by the local runtime.");
 }
 
 async function start(args: ParsedArgs): Promise<void> {
@@ -126,8 +126,8 @@ async function start(args: ParsedArgs): Promise<void> {
   const token = await readOperatorToken(paths.operatorTokenPath);
   const runtime = await startRuntime({ config, paths, operatorToken: token });
   console.log(`Operator API: ${runtime.operatorAddress}`);
-  console.log(`Control Room: ${runtime.controlRoomAddress}`);
-  console.log("Control Room authentication: runtime-managed");
+  console.log(`Control Room: ${runtime.controlRoomLaunchAddress}`);
+  console.log("Control Room authentication: one-time launch capability → HttpOnly runtime session");
 
   let resolveSignal!: () => void;
   const signal = new Promise<void>((resolveStop) => { resolveSignal = resolveStop; });

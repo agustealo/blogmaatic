@@ -116,7 +116,7 @@ export class OperatorClient {
     const response = await this.#fetch(joinBase(this.#baseUrl, path), {
       method: options.method ?? "GET",
       headers,
-      credentials: "omit",
+      credentials: this.#token ? "omit" : "same-origin",
       redirect: "error",
       referrerPolicy: "no-referrer",
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),

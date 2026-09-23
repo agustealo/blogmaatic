@@ -58,6 +58,30 @@ async function waitForHttp(url, processState, timeoutMs = 20_000) {
   throw new Error(`Timed out waiting for packaged runtime at ${url}:\n${processState.output}`);
 }
 
+async function controlRoomSession(processState, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (processState.exited) throw new Error(`Packaged runtime exited before Control Room session bootstrap:\n${processState.output}`);
+    const match = processState.output.match(/Control Room: (http:\/\/[^\s]+)/);
+    if (match?.[1]) {
+      const launchAddress = match[1];
+      const response = await fetch(launchAddress, {
+        redirect: "manual",
+        headers: { "sec-fetch-site": "none" },
+      });
+      assert.equal(response.status, 303, `Control Room bootstrap returned ${response.status}: ${await response.text()}`);
+      const setCookie = response.headers.get("set-cookie");
+      assert.ok(setCookie, "Control Room bootstrap did not set a session cookie");
+      return {
+        origin: new URL(launchAddress).origin,
+        cookie: setCookie.split(";", 1)[0],
+      };
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`Timed out waiting for the Control Room launch URL:\n${processState.output}`);
+}
+
 async function terminalResult(token, runId) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
@@ -172,14 +196,10 @@ try {
   const expectedVersion = String(packagedManifest.version ?? "");
   assert.match(expectedVersion, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/, "Packaged product version is not valid SemVer");
 
-  // Make host Node unusable for children unless the packaged launcher prepends
-  // its own bin directory to PATH. The launcher itself is still invoked by path.
   const poisonedNode = join(poisonBin, "node");
   await writeFile(poisonedNode, "#!/bin/sh\necho 'host node must not be used' >&2\nexit 86\n", { mode: 0o755 });
   await chmod(poisonedNode, 0o755);
 
-  // Plant incompatible caller-project helpers. Installed Blogmaatic must resolve
-  // its own pinned Restate binaries before consulting process.cwd().
   const callerBin = join(callerRoot, "node_modules", ".bin");
   await mkdir(callerBin, { recursive: true });
   for (const name of ["restate", "restate-server"]) {
@@ -222,9 +242,11 @@ try {
   const controlRoom = await waitForHttp("http://127.0.0.1:4320/", first.state);
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
-  const controlRoomApi = await fetch("http://127.0.0.1:4320/api/v1/automations?limit=1", {
+  const session = await controlRoomSession(first.state);
+  const controlRoomApi = await fetch(`${session.origin}/api/v1/automations?limit=1`, {
     headers: {
-      origin: "http://127.0.0.1:4320",
+      cookie: session.cookie,
+      origin: session.origin,
       "sec-fetch-site": "same-origin",
     },
   });
