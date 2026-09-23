@@ -5,6 +5,7 @@ import { AppShell } from "./shell";
 import { ApprovalsPage } from "./pages/approvals";
 import { AuditPage } from "./pages/audit";
 import { AutomationsPage } from "./pages/automations";
+import { ConnectionsPage } from "./pages/connections";
 import { OperationsPage } from "./pages/operations";
 import { OverviewPage } from "./pages/overview";
 import { RunDetailPage, RunsPage } from "./pages/runs";
@@ -18,6 +19,7 @@ export function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<OverviewPage />} />
+        <Route path="connections" element={<ConnectionsPage />} />
         <Route path="operations" element={<OperationsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="runs" element={<RunsPage />} />
