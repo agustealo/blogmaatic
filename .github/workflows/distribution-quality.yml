@@ -39,6 +39,26 @@ jobs:
       - name: Build production workspaces
         run: npm run build
 
+      - name: Burn macOS Keychain provider
+        if: runner.os == 'macOS'
+        run: node scripts/smoke-os-vault.mjs
+
+      - name: Burn Linux Secret Service provider
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libsecret-tools gnome-keyring dbus-x11
+          dbus-run-session -- bash -euo pipefail -c '
+            export HOME="$(mktemp -d)"
+            export XDG_RUNTIME_DIR="$(mktemp -d)"
+            chmod 700 "$XDG_RUNTIME_DIR"
+            trap '\''rm -rf "$HOME" "$XDG_RUNTIME_DIR"'\'' EXIT
+            eval "$(printf "%s" "blogmaatic-ci-keyring" | gnome-keyring-daemon --unlock --components=secrets)"
+            node scripts/smoke-os-vault.mjs
+          '
+
       - name: Reinstall locked production graph
         shell: bash
         run: |
@@ -48,12 +68,6 @@ jobs:
 
       - name: Stage portable distribution
         run: npm run distribution:stage
-
-      - name: Install Linux native runtime prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-tools
 
       - name: Build Linux native installer
         if: runner.os == 'Linux'
