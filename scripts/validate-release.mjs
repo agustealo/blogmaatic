@@ -28,7 +28,9 @@ if (packageJson.packageManager !== "npm@11.19.0") {
   fail(`packageManager must remain exactly npm@11.19.0, received ${packageJson.packageManager}`);
 }
 const expectedTag = `v${version}`;
-const requestedTag = process.env.BLOGMAATIC_RELEASE_TAG?.trim() || process.env.GITHUB_REF_NAME?.trim() || expectedTag;
+const requestedTag = contractOnly
+  ? process.env.BLOGMAATIC_RELEASE_TAG?.trim() || expectedTag
+  : process.env.BLOGMAATIC_RELEASE_TAG?.trim() || process.env.GITHUB_REF_NAME?.trim() || expectedTag;
 if (requestedTag !== expectedTag) fail(`tag ${requestedTag} must exactly match package version ${expectedTag}`);
 
 if (!contractOnly) {
