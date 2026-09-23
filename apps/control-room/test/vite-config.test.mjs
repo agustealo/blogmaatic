@@ -41,7 +41,7 @@ test("development proxy injects the runtime credential server-side and strips br
     });
     assert.equal(typeof proxyRequestHandler, "function");
 
-    const headers = new Map(["cookie", "browser-session=must-not-forward"]);
+    const headers = new Map([["cookie", "browser-session=must-not-forward"]]);
     const proxyRequest = {
       setHeader(name, value) { headers.set(String(name).toLowerCase(), String(value)); },
       removeHeader(name) { headers.delete(String(name).toLowerCase()); },
