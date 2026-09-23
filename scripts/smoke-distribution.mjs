@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { delimiter } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -15,11 +16,12 @@ async function git(root, args) {
   return result.stdout.trim();
 }
 
-function cleanEnv() {
+function cleanEnv(poisonBin) {
   const env = { ...process.env };
   delete env.NODE_PATH;
   delete env.npm_config_prefix;
   delete env.NPM_CONFIG_PREFIX;
+  env.PATH = `${poisonBin}${delimiter}${env.PATH ?? ""}`;
   return env;
 }
 
@@ -44,9 +46,7 @@ async function expectStatus(response, expected) {
 async function waitForHttp(url, processState, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (processState.exited) {
-      throw new Error(`Packaged runtime exited before readiness:\n${processState.output}`);
-    }
+    if (processState.exited) throw new Error(`Packaged runtime exited before readiness:\n${processState.output}`);
     try {
       const response = await fetch(url, { redirect: "manual" });
       if (response.ok) return response;
@@ -63,23 +63,20 @@ async function terminalResult(token, runId) {
   while (Date.now() < deadline) {
     const response = await api(token, `/v1/runs/${encodeURIComponent(runId)}/result`);
     if (response.status === 200) return response.json();
-    if (response.status !== 409) {
-      throw new Error(`Unexpected result status ${response.status}: ${await response.text()}`);
-    }
+    if (response.status !== 409) throw new Error(`Unexpected result status ${response.status}: ${await response.text()}`);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error(`Timed out waiting for ${runId}`);
 }
 
-function startPackagedRuntime(binary, dataDir) {
+function startPackagedRuntime(binary, dataDir, cwd, env) {
   const state = { exited: false, output: "" };
   const child = spawn(binary, ["start", "--data-dir", dataDir], {
-    env: cleanEnv(),
+    cwd,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const append = (chunk) => {
-    state.output = `${state.output}${chunk.toString("utf8")}`.slice(-128_000);
-  };
+  const append = (chunk) => { state.output = `${state.output}${chunk.toString("utf8")}`.slice(-128_000); };
   child.stdout.on("data", append);
   child.stderr.on("data", append);
   child.once("exit", () => { state.exited = true; });
@@ -139,11 +136,7 @@ function group() {
       id: "jekyll-distribution-proof",
       enabled: true,
       desiredState: "present",
-      destination: {
-        extensionId: "blogmaatic.jekyll-git",
-        connectionId: "jekyll-primary",
-        channel: "posts",
-      },
+      destination: { extensionId: "blogmaatic.jekyll-git", connectionId: "jekyll-primary", channel: "posts" },
       requiredCapabilities: ["article.create", "article.update", "article.inspect"],
       variant: { layout: "post", permalink: "/distribution-proof/" },
     }],
@@ -164,6 +157,8 @@ function automation() {
 const extractionRoot = await mkdtemp(join(tmpdir(), "blogmaatic-distribution-extract-"));
 const dataDir = await mkdtemp(join(tmpdir(), "blogmaatic-distribution-state-"));
 const repository = await mkdtemp(join(tmpdir(), "blogmaatic-distribution-jekyll-"));
+const callerRoot = await mkdtemp(join(tmpdir(), "blogmaatic-distribution-caller-"));
+const poisonBin = await mkdtemp(join(tmpdir(), "blogmaatic-distribution-poison-"));
 let first;
 let second;
 
@@ -174,9 +169,26 @@ try {
   const installRoot = join(extractionRoot, roots[0].name);
   const binary = join(installRoot, "bin", "blogmaatic");
 
-  const help = await execFileAsync(binary, ["help"], { cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8" });
+  // Make host Node unusable for children unless the packaged launcher prepends
+  // its own bin directory to PATH. The launcher itself is still invoked by path.
+  const poisonedNode = join(poisonBin, "node");
+  await writeFile(poisonedNode, "#!/bin/sh\necho 'host node must not be used' >&2\nexit 86\n", { mode: 0o755 });
+  await chmod(poisonedNode, 0o755);
+
+  // Plant incompatible caller-project helpers. Installed Blogmaatic must resolve
+  // its own pinned Restate binaries before consulting process.cwd().
+  const callerBin = join(callerRoot, "node_modules", ".bin");
+  await mkdir(callerBin, { recursive: true });
+  for (const name of ["restate", "restate-server"]) {
+    const fake = join(callerBin, name);
+    await writeFile(fake, `#!/bin/sh\necho 'caller ${name} must not be used' >&2\nexit 87\n`, { mode: 0o755 });
+    await chmod(fake, 0o755);
+  }
+  const env = cleanEnv(poisonBin);
+
+  const help = await execFileAsync(binary, ["help"], { cwd: callerRoot, env, encoding: "utf8" });
   assert.match(help.stdout, /Blogmaatic runtime/);
-  const version = await execFileAsync(binary, ["version"], { cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8" });
+  const version = await execFileAsync(binary, ["version"], { cwd: callerRoot, env, encoding: "utf8" });
   assert.equal(version.stdout.trim(), "0.11.0");
 
   await git(repository, ["init", "-b", "main"]);
@@ -187,40 +199,28 @@ try {
   await git(repository, ["commit", "-m", "seed"]);
 
   await execFileAsync(binary, [
-    "init",
-    "--data-dir", dataDir,
-    "--jekyll-repo", repository,
-    "--author-name", "Blogmaatic Distribution",
-    "--author-email", "distribution@example.test",
+    "init", "--data-dir", dataDir, "--jekyll-repo", repository,
+    "--author-name", "Blogmaatic Distribution", "--author-email", "distribution@example.test",
     "--site-base-url", "https://example.test",
-  ], { cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8" });
+  ], { cwd: callerRoot, env, encoding: "utf8" });
 
-  const doctorResult = await execFileAsync(binary, ["doctor", "--data-dir", dataDir, "--json"], {
-    cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8",
-  });
+  const doctorResult = await execFileAsync(binary, ["doctor", "--data-dir", dataDir, "--json"], { cwd: callerRoot, env, encoding: "utf8" });
   const doctor = JSON.parse(doctorResult.stdout);
   assert.equal(doctor.ok, true, JSON.stringify(doctor, null, 2));
   assert.ok(doctor.checks.some((check) => check.name === "restate-server" && check.ok));
   assert.ok(doctor.checks.some((check) => check.name === "control-room" && check.ok));
 
-  const tokenResult = await execFileAsync(binary, ["token", "--data-dir", dataDir], {
-    cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8",
-  });
+  const tokenResult = await execFileAsync(binary, ["token", "--data-dir", dataDir], { cwd: callerRoot, env, encoding: "utf8" });
   const token = tokenResult.stdout.trim();
   assert.ok(token.length >= 32, "Packaged runtime did not return its operator token");
 
-  first = startPackagedRuntime(binary, dataDir);
-  const health = await waitForHttp("http://127.0.0.1:4317/healthz", first.state);
-  assert.equal(health.status, 200);
+  first = startPackagedRuntime(binary, dataDir, callerRoot, env);
+  assert.equal((await waitForHttp("http://127.0.0.1:4317/healthz", first.state)).status, 200);
   const controlRoom = await waitForHttp("http://127.0.0.1:4320/", first.state);
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
-  const registration = await api(token, "/v1/automations", {
-    method: "POST",
-    body: JSON.stringify(automation()),
-  });
+  const registration = await api(token, "/v1/automations", { method: "POST", body: JSON.stringify(automation()) });
   await expectStatus(registration, 201);
-
   const launch = await api(token, "/v1/runs/manual", {
     method: "POST",
     headers: { "idempotency-key": "distribution-proof-1" },
@@ -241,7 +241,7 @@ try {
   await stopPackagedRuntime(first);
   first = undefined;
 
-  second = startPackagedRuntime(binary, dataDir);
+  second = startPackagedRuntime(binary, dataDir, callerRoot, env);
   await waitForHttp("http://127.0.0.1:4317/healthz", second.state);
   const restored = await api(token, `/v1/runs/${encodeURIComponent(run.runId)}`);
   await expectStatus(restored, 200);
@@ -253,7 +253,5 @@ try {
 } finally {
   if (second) await stopPackagedRuntime(second).catch(() => undefined);
   if (first) await stopPackagedRuntime(first).catch(() => undefined);
-  await rm(extractionRoot, { recursive: true, force: true });
-  await rm(dataDir, { recursive: true, force: true });
-  await rm(repository, { recursive: true, force: true });
+  await Promise.all([extractionRoot, dataDir, repository, callerRoot, poisonBin].map((path) => rm(path, { recursive: true, force: true })));
 }
