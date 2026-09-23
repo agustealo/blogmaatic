@@ -21,6 +21,14 @@ import type {
   OperatorHealth,
   OperatorOperationsPage,
   OperatorOperationsQuery,
+  PublicationGroupActivationBody,
+  PublicationGroupCreateBody,
+  PublicationGroupListQuery,
+  PublicationGroupPage,
+  PublicationGroupRegistryEntry,
+  PublicationGroupUpdateBody,
+  PublicationGroupVersionListQuery,
+  PublicationGroupVersionPage,
   RunListQuery,
   RunPage,
   ScheduleListQuery,
@@ -192,6 +200,54 @@ export class OperatorClient {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, {
       method: "POST",
     });
+  }
+
+  listPublicationGroups(query: PublicationGroupListQuery = {}): Promise<PublicationGroupPage> {
+    return this.#request<PublicationGroupPage>(pathWithQuery("/v1/publication-groups", query));
+  }
+
+  getPublicationGroup(groupId: string): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(`/v1/publication-groups/${encodeURIComponent(groupId)}`);
+  }
+
+  listPublicationGroupVersions(
+    groupId: string,
+    query: PublicationGroupVersionListQuery = {},
+  ): Promise<PublicationGroupVersionPage> {
+    return this.#request<PublicationGroupVersionPage>(pathWithQuery(
+      `/v1/publication-groups/${encodeURIComponent(groupId)}/versions`,
+      query,
+    ));
+  }
+
+  getPublicationGroupVersion(groupId: string, version: number): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(
+      `/v1/publication-groups/${encodeURIComponent(groupId)}/versions/${version}`,
+    );
+  }
+
+  createPublicationGroup(input: PublicationGroupCreateBody): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>("/v1/publication-groups", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  updatePublicationGroup(groupId: string, input: PublicationGroupUpdateBody): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(`/v1/publication-groups/${encodeURIComponent(groupId)}`, {
+      method: "PATCH",
+      body: input,
+    });
+  }
+
+  setPublicationGroupEnabled(
+    groupId: string,
+    input: PublicationGroupActivationBody,
+  ): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(
+      `/v1/publication-groups/${encodeURIComponent(groupId)}/activation`,
+      { method: "POST", body: input },
+    );
   }
 
   listAutomations(query: AutomationListQuery = {}): Promise<AutomationPage> {
