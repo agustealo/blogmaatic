@@ -1,0 +1,48 @@
+.confirmation-strip {
+  margin-top: 13px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.45;
+}
+
+.confirmation-strip strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.confirmation-strip--primary {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+}
+
+.confirmation-strip--danger {
+  border-color: color-mix(in srgb, var(--bad) 42%, var(--line));
+  background: color-mix(in srgb, var(--bad) 6%, var(--surface));
+}
+
+.confirmation-strip > div,
+.inline-confirm-actions {
+  display: flex !important;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.inline-confirm-actions .button {
+  min-height: 34px;
+  padding-inline: 10px;
+  font-size: .74rem;
+}
+
+@media (max-width: 780px) {
+  .confirmation-strip > div,
+  .inline-confirm-actions {
+    flex-wrap: wrap;
+  }
+}
