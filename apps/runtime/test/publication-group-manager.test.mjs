@@ -11,8 +11,13 @@ import {
   JekyllGitPublisher,
 } from "@blogmaatic/extension-jekyll-git";
 import { ConnectionAuthority, ExtensionRuntime } from "@blogmaatic/extension-sdk";
+import { SecretAuthority } from "@blogmaatic/secrets";
 
-import { PublicationGroupManager } from "../dist/index.js";
+import {
+  ConnectionManager,
+  PublicationGroupManager,
+  defaultRuntimeConfig,
+} from "../dist/index.js";
 
 function connection(id, status = "active") {
   return {
@@ -59,7 +64,7 @@ async function withManager(fn) {
     now: () => `2026-09-23T17:4${tick++}:00.000Z`,
   });
   try {
-    await fn({ manager, store });
+    await fn({ manager, store, connections, extensions });
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -126,5 +131,36 @@ test("connection removal is blocked only by enabled group routes", async () => {
       enabled: true,
     });
     await manager.assertConnectionRemovable("jekyll-active");
+  });
+});
+
+test("ConnectionManager removal guard prevents orphaning an enabled durable publication group", async () => {
+  await withManager(async ({ manager, connections, extensions }) => {
+    await manager.create({ group: group() });
+    const writes = [];
+    const connectionManager = new ConnectionManager({
+      config: { ...defaultRuntimeConfig(), connections: connections.list() },
+      configPath: "/runtime.json",
+      connections,
+      extensions,
+      secrets: new SecretAuthority(),
+      removalGuard: (record) => manager.assertConnectionRemovable(record.id),
+      writeConfig: async (_path, config) => { writes.push(config); },
+    });
+
+    await assert.rejects(
+      () => connectionManager.remove("jekyll-active"),
+      /referenced by enabled publication group: primary/,
+    );
+    assert.equal(connections.has("jekyll-active"), true);
+    assert.equal(writes.length, 0);
+
+    const disabled = await manager.setEnabled("primary", 1, false);
+    assert.equal(disabled.version, 2);
+    const removed = await connectionManager.remove("jekyll-active");
+    assert.equal(removed.id, "jekyll-active");
+    assert.equal(connections.has("jekyll-active"), false);
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].connections.some((entry) => entry.id === "jekyll-active"), false);
   });
 });
