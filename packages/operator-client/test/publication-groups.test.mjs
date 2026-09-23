@@ -38,6 +38,23 @@ test("publication group client preserves same-origin proof and encodes group ide
   assert.equal(calls[1].input, "/api/v1/publication-groups/group%2Fwith%20space/versions?limit=10");
 });
 
+test("publication group setup options come from the canonical operator boundary", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    calls.push({ input: String(input), init });
+    return response({ policySetIds: ["default", "strict"] });
+  };
+  const client = new OperatorClient({ baseUrl: "/api", token, fetchImpl });
+
+  const options = await client.getPublicationGroupOptions();
+
+  assert.deepEqual(options.policySetIds, ["default", "strict"]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].input, "/api/v1/publication-group-options");
+  assert.equal(calls[0].init.method ?? "GET", "GET");
+  assert.equal(new Headers(calls[0].init.headers).get("authorization"), `Bearer ${token}`);
+});
+
 test("publication group client emits bounded JSON mutation bodies without putting data in URLs", async () => {
   const calls = [];
   const fetchImpl = async (input, init = {}) => {
