@@ -176,6 +176,8 @@ try {
 
   const help = await execFileAsync(binary, ["help"], { cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8" });
   assert.match(help.stdout, /Blogmaatic runtime/);
+  const version = await execFileAsync(binary, ["version"], { cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8" });
+  assert.equal(version.stdout.trim(), "0.11.0");
 
   await git(repository, ["init", "-b", "main"]);
   await git(repository, ["config", "user.name", "Distribution Fixture"]);
@@ -192,6 +194,14 @@ try {
     "--author-email", "distribution@example.test",
     "--site-base-url", "https://example.test",
   ], { cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8" });
+
+  const doctorResult = await execFileAsync(binary, ["doctor", "--data-dir", dataDir, "--json"], {
+    cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8",
+  });
+  const doctor = JSON.parse(doctorResult.stdout);
+  assert.equal(doctor.ok, true, JSON.stringify(doctor, null, 2));
+  assert.ok(doctor.checks.some((check) => check.name === "restate-server" && check.ok));
+  assert.ok(doctor.checks.some((check) => check.name === "control-room" && check.ok));
 
   const tokenResult = await execFileAsync(binary, ["token", "--data-dir", dataDir], {
     cwd: dirname(installRoot), env: cleanEnv(), encoding: "utf8",
