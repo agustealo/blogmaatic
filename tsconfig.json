@@ -5,6 +5,7 @@
     { "path": "./packages/automation" },
     { "path": "./packages/control-plane" },
     { "path": "./packages/operator-api" },
+    { "path": "./packages/operator-client" },
     { "path": "./packages/automation-restate" },
     { "path": "./packages/extension-sdk" },
     { "path": "./packages/extension-jekyll-git" },
