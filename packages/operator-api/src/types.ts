@@ -10,8 +10,12 @@ import type {
   AutomationScheduleInput,
   ControlPlaneStore,
   PublicationAutomationEvent,
+  PublicationGroupListQuery,
+  PublicationGroupRegistryEntry,
+  PublicationGroupVersionListQuery,
+  Page,
 } from "@blogmaatic/control-plane";
-import type { JsonValue, Publication, PublicationGroup } from "@blogmaatic/core";
+import type { JsonValue, Publication, PublicationGroup, PublicationRoute } from "@blogmaatic/core";
 
 import type { OperatorAuthorizer } from "./auth.js";
 
@@ -127,11 +131,52 @@ export interface OperatorConnectionManager {
   test(connectionId: string): Promise<OperatorConnectionTestResult>;
 }
 
+export interface PublicationGroupCreateBody {
+  readonly name: string;
+  readonly policySetId: string;
+  readonly routes: readonly PublicationRoute[];
+  readonly enabled?: boolean;
+}
+
+export interface PublicationGroupUpdateBody extends PublicationGroupCreateBody {
+  readonly expectedVersion: number;
+}
+
+export interface PublicationGroupActivationBody {
+  readonly expectedVersion: number;
+  readonly enabled: boolean;
+}
+
+export interface OperatorPublicationGroupManager {
+  list(query?: PublicationGroupListQuery): Promise<Page<PublicationGroupRegistryEntry>>;
+  get(groupId: string): Promise<PublicationGroupRegistryEntry | undefined>;
+  listVersions(
+    groupId: string,
+    query?: PublicationGroupVersionListQuery,
+  ): Promise<Page<PublicationGroupRegistryEntry>>;
+  getVersion(groupId: string, version: number): Promise<PublicationGroupRegistryEntry | undefined>;
+  create(input: {
+    readonly group: PublicationGroup;
+    readonly enabled?: boolean;
+  }): Promise<PublicationGroupRegistryEntry>;
+  update(input: {
+    readonly group: PublicationGroup;
+    readonly expectedVersion: number;
+    readonly enabled?: boolean;
+  }): Promise<PublicationGroupRegistryEntry>;
+  setEnabled(
+    groupId: string,
+    expectedVersion: number,
+    enabled: boolean,
+  ): Promise<PublicationGroupRegistryEntry>;
+}
+
 export interface OperatorApiOptions {
   readonly controlPlane: AutomationControlPlane;
   readonly store: ControlPlaneStore;
   readonly runtime: OperatorAutomationRuntime;
   readonly connections?: OperatorConnectionManager;
+  readonly publicationGroups?: OperatorPublicationGroupManager;
   readonly authorizer: OperatorAuthorizer;
   readonly clock?: OperatorClock;
   readonly logger?: boolean;
