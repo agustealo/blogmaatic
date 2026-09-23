@@ -103,7 +103,7 @@ export class PublicationGroupManager {
         );
       }
       const publisher = this.#extensions.getPublisher(route.destination.extensionId);
-      const supported = new Set(publisher.manifest.capabilities);
+      const supported = new Set<string>(publisher.manifest.capabilities);
       const missing = route.requiredCapabilities.filter((capability) => !supported.has(capability));
       if (missing.length > 0) {
         throw new Error(
