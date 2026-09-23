@@ -17,6 +17,11 @@ export const LINKEDIN_CONNECTION_CONTRACT: ConnectionContract = {
   secretFields: [
     { key: "accessToken", label: "Access token", required: true, description: "Stored only in the OS credential vault." },
   ],
+  defaultRoute: {
+    channel: "posts",
+    requiredCapabilities: ["article.create", "article.inspect"],
+    variant: { mode: "text" },
+  },
 };
 
 function getString(record: Readonly<Record<string, JsonValue>>, key: string): string | undefined {
