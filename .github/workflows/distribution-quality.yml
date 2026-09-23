@@ -1,0 +1,68 @@
+name: Distribution Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: package-${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            os: ubuntu-24.04
+          - target: macos-arm64
+            os: macos-15
+          - target: macos-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+
+      - name: Install locked build graph
+        run: npm ci --ignore-scripts
+
+      - name: Build production workspaces
+        run: npm run build
+
+      - name: Reinstall locked production graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf node_modules
+          npm ci --omit=dev --ignore-scripts
+
+      - name: Stage portable distribution
+        run: npm run distribution:stage
+
+      - name: Burn clean extracted distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(find artifacts -maxdepth 1 -type f -name 'blogmaatic-*.tar.gz' -print -quit)
+          test -n "$archive"
+          npm run distribution:smoke -- "$archive"
+
+      - name: Upload verified distribution
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: blogmaatic-${{ matrix.target }}
+          path: |
+            artifacts/blogmaatic-*.tar.gz
+            artifacts/blogmaatic-*.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
