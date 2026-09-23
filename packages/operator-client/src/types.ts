@@ -17,6 +17,7 @@ import type {
 import type {
   ConnectionCreateBody,
   ConnectionUpdateBody,
+  OperatorConnectionSettingField,
   OperatorConnectionTestResult,
   OperatorConnectionType,
   OperatorConnectionView,
@@ -41,6 +42,7 @@ export type {
   ConnectionCreateBody,
   ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  OperatorConnectionSettingField,
   OperatorConnectionTestResult,
   OperatorConnectionType,
   OperatorConnectionView,
