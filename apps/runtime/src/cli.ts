@@ -55,17 +55,21 @@ async function init(args: ParsedArgs): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+  const jekyllRepository = value(args, "jekyll-repo");
+  const authorName = value(args, "author-name");
+  const authorEmail = value(args, "author-email");
+  const siteBaseUrl = value(args, "site-base-url");
   const buildVerification = value(args, "build-verification");
   if (buildVerification && buildVerification !== "none" && buildVerification !== "bundle") {
     throw new Error("--build-verification must be none or bundle");
   }
   const config = await configForFirstRun({
-    ...(value(args, "jekyll-repo") ? { jekyllRepository: value(args, "jekyll-repo") } : {}),
-    ...(value(args, "author-name") ? { authorName: value(args, "author-name") } : {}),
-    ...(value(args, "author-email") ? { authorEmail: value(args, "author-email") } : {}),
+    ...(jekyllRepository ? { jekyllRepository } : {}),
+    ...(authorName ? { authorName } : {}),
+    ...(authorEmail ? { authorEmail } : {}),
     ...(flag(args, "push") ? { push: true } : {}),
     ...(buildVerification ? { buildVerification } : {}),
-    ...(value(args, "site-base-url") ? { siteBaseUrl: value(args, "site-base-url") } : {}),
+    ...(siteBaseUrl ? { siteBaseUrl } : {}),
   });
   await writeRuntimeConfig(paths.configPath, config);
   const credential = await ensureOperatorToken(paths.operatorTokenPath);
