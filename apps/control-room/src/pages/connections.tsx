@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 
 import type {
   ConnectionCreateBody,
@@ -122,6 +123,10 @@ function preparedSecrets(
   return secrets;
 }
 
+function isUsable(result: OperatorConnectionTestResult): boolean {
+  return result.validation.valid && result.health !== undefined && result.health.state !== "unhealthy";
+}
+
 function healthTone(result: OperatorConnectionTestResult | undefined): "good" | "warn" | "bad" | "neutral" {
   if (!result) return "neutral";
   if (!result.validation.valid || result.health?.state === "unhealthy") return "bad";
@@ -195,6 +200,9 @@ function SettingField({
 export function ConnectionsPage() {
   const { session } = useConnection();
   const client = session!.client;
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const setupMode = searchParams.get("setup") === "1";
   const [types, setTypes] = useState<readonly OperatorConnectionType[]>([]);
   const [connections, setConnections] = useState<readonly OperatorConnectionView[]>([]);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -251,12 +259,13 @@ export function ConnectionsPage() {
     try {
       const result = await client.testConnection(connectionId);
       setHealth((current) => ({ ...current, [connectionId]: result }));
+      if (setupMode && isUsable(result)) navigate("/setup", { replace: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error("Connection test failed"));
     } finally {
       setBusy(null);
     }
-  }, [client]);
+  }, [client, navigate, setupMode]);
 
   const save = useCallback(async (event: FormEvent) => {
     event.preventDefault();
@@ -280,6 +289,7 @@ export function ConnectionsPage() {
         setEditor(null);
         const result = await client.testConnection(created.id);
         setHealth((current) => ({ ...current, [created.id]: result }));
+        if (setupMode && isUsable(result)) navigate("/setup", { replace: true });
       } else if (editor.connectionId) {
         const input: ConnectionUpdateBody = {
           displayName: editor.displayName.trim(),
@@ -290,13 +300,18 @@ export function ConnectionsPage() {
         const updated = await client.updateConnection(editor.connectionId, input);
         setConnections((current) => current.map((connection) => connection.id === updated.id ? updated : connection));
         setEditor(editorForConnection(selectedType, updated));
+        if (setupMode && updated.status === "active") {
+          const result = await client.testConnection(updated.id);
+          setHealth((current) => ({ ...current, [updated.id]: result }));
+          if (isUsable(result)) navigate("/setup", { replace: true });
+        }
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error("Connection could not be saved"));
     } finally {
       setBusy(null);
     }
-  }, [client, editor, selectedConnection, selectedType]);
+  }, [client, editor, navigate, selectedConnection, selectedType, setupMode]);
 
   const remove = useCallback(async (connection: OperatorConnectionView) => {
     if (!window.confirm(`Remove ${connection.displayName}? Enabled Publication Groups must be updated first.`)) return;
@@ -323,10 +338,15 @@ export function ConnectionsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Destinations"
+        eyebrow={setupMode ? "First run · Destination" : "Destinations"}
         title="Connections"
         description="Connect real publishing destinations. Credentials are written directly into the operating system vault and are never returned to this browser."
-        actions={<button className="button button--primary" type="button" onClick={() => startCreate()} disabled={types.length === 0}>New connection</button>}
+        actions={(
+          <div className="topbar__actions">
+            {setupMode ? <button className="button button--quiet" type="button" onClick={() => navigate("/setup")}>Back to setup</button> : null}
+            <button className="button button--primary" type="button" onClick={() => startCreate()} disabled={types.length === 0}>New connection</button>
+          </div>
+        )}
       />
       <ErrorBanner error={error} />
 
