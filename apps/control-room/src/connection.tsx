@@ -22,12 +22,30 @@ interface ConnectionContextValue {
 
 const ConnectionContext = createContext<ConnectionContextValue | null>(null);
 const localProxyBaseUrl = "/api";
+const sessionProofStorageKey = "blogmaatic.control-room.session-proof";
+
+function localSessionProof(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const parameters = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const fromLaunch = parameters.get("session")?.trim();
+  if (fromLaunch) {
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(fromLaunch)) throw new Error("Control Room launch proof is malformed");
+    window.sessionStorage.setItem(sessionProofStorageKey, fromLaunch);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    return fromLaunch;
+  }
+  const stored = window.sessionStorage.getItem(sessionProofStorageKey)?.trim();
+  return stored && /^[A-Za-z0-9_-]{32,128}$/.test(stored) ? stored : undefined;
+}
 
 export function ConnectionProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<OperatorSession | null>(null);
 
   const connect = useCallback(async () => {
-    const client = new OperatorClient({ baseUrl: localProxyBaseUrl });
+    const client = new OperatorClient({
+      baseUrl: localProxyBaseUrl,
+      ...(localSessionProof() ? { sessionProof: localSessionProof() } : {}),
+    });
     const health = await client.health();
     if (health.status !== "ok") throw new Error("Operator API health check did not return ok");
     await client.listAutomations({ limit: 1 });
@@ -78,7 +96,7 @@ export function ConnectScreen() {
         <div className="connect-copy">
           <p className="eyebrow">Local runtime</p>
           <h1 id="connect-title">{busy ? "Opening the control plane…" : error ? "The local runtime needs attention." : "Opening the control plane…"}</h1>
-          <p>The bundled Control Room authenticates through Blogmaatic's loopback runtime. No bearer token is copied into the browser, local storage, or form fields.</p>
+          <p>The bundled Control Room authenticates through Blogmaatic's loopback runtime. The Operator API bearer stays server-side; the browser keeps only an origin-scoped runtime session proof.</p>
         </div>
         {error ? (
           <>
@@ -88,7 +106,7 @@ export function ConnectScreen() {
             </button>
           </>
         ) : null}
-        <p className="security-note">Operator authority stays server-side inside the local runtime proxy and is added only after same-origin checks.</p>
+        <p className="security-note">Operator authority is injected only after the HttpOnly session cookie and the origin-bound browser proof both validate.</p>
       </section>
       <aside className="connect-aside" aria-label="Control Room capabilities">
         <div className="connect-aside__glow" />
