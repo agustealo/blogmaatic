@@ -1,4 +1,4 @@
-import type { AutomationApproval, AutomationRunResult } from "@blogmaatic/automation";
+import type { AutomationApproval, AutomationDefinition, AutomationRunResult } from "@blogmaatic/automation";
 import type {
   AuditLedgerEntry,
   AuditListQuery,
@@ -34,6 +34,7 @@ export type {
   AuditLedgerEntry,
   AuditListQuery,
   AutomationApproval,
+  AutomationDefinition,
   AutomationListQuery,
   AutomationRegistryEntry,
   AutomationRunResult,
