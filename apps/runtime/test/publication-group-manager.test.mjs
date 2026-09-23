@@ -61,6 +61,7 @@ async function withManager(fn) {
     store,
     connections,
     extensions,
+    policySetIds: ["default"],
     now: () => `2026-09-23T17:4${tick++}:00.000Z`,
   });
   try {
@@ -95,6 +96,30 @@ test("enabled publication groups require live connection ownership and supported
       }),
       /expects blogmaatic.wordpress-rest but connection jekyll-active belongs to blogmaatic.jekyll-git/,
     );
+  });
+});
+
+test("enabled publication groups reject missing policies and empty enabled routing", async () => {
+  await withManager(async ({ manager }) => {
+    await assert.rejects(
+      () => manager.create({
+        group: { ...group(), id: "unknown-policy", policySetId: "missing" },
+      }),
+      /references unknown policy set missing/,
+    );
+
+    await assert.rejects(
+      () => manager.create({
+        group: { ...group(), id: "empty", routes: [] },
+      }),
+      /must contain at least one enabled route/,
+    );
+
+    const parked = await manager.create({
+      group: { ...group(), id: "parked-empty", routes: [] },
+      enabled: false,
+    });
+    assert.equal(parked.enabled, false);
   });
 });
 
