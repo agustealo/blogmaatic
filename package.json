@@ -1,7 +1,7 @@
 {
   "name": "blogmaatic",
   "private": true,
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Publication automation control plane, local runtime, operator API, and Control Room",
   "type": "module",
   "packageManager": "npm@11.19.0",
