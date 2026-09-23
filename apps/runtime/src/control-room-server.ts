@@ -22,7 +22,7 @@ function securityHeaders(response: ServerResponse): void {
   response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
 }
 
-async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): Promise<Buffer | undefined> {
+async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): Promise<Uint8Array<ArrayBuffer> | undefined> {
   if (request.method === "GET" || request.method === "HEAD") return undefined;
   const chunks: Buffer[] = [];
   let size = 0;
@@ -32,7 +32,7 @@ async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): P
     if (size > limit) throw new Error("Request body exceeds the local proxy limit");
     chunks.push(buffer);
   }
-  return Buffer.concat(chunks);
+  return Uint8Array.from(Buffer.concat(chunks));
 }
 
 function proxyHeaders(request: IncomingMessage): Headers {
