@@ -21,6 +21,24 @@ async function git(args) {
   return (await exec("git", args, { cwd: repository })).stdout.trim();
 }
 
+async function api(token, path, options = {}) {
+  return fetch(`http://127.0.0.1:4317${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/json",
+      ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+      ...options.headers,
+    },
+  });
+}
+
+async function expectStatus(response, expected) {
+  if (response.status !== expected) {
+    throw new Error(`Expected HTTP ${expected}, received ${response.status}: ${await response.text()}`);
+  }
+}
+
 async function install() {
   if (process.platform === "linux") {
     assert.match(basename(packagePath), /\.deb$/);
@@ -47,6 +65,7 @@ function requireDoctorCheck(report, name) {
   const check = Array.isArray(report.checks) ? report.checks.find((candidate) => candidate?.name === name) : undefined;
   assert.ok(check, `Doctor report is missing ${name}: ${JSON.stringify(report)}`);
   assert.equal(check.ok, true, `${name} failed: ${check.detail ?? "no detail"}`);
+  return check;
 }
 
 async function verifyMacNodeSigning() {
@@ -117,6 +136,18 @@ async function controlRoomSession(state, timeoutMs = 20_000) {
   throw new Error(`Timed out waiting for the Control Room launch URL:\n${state.output}`);
 }
 
+async function controlRoomApi(session, path) {
+  return fetch(`${session.origin}/api${path}`, {
+    headers: {
+      cookie: session.cookie,
+      "x-blogmaatic-session-proof": session.proof,
+      origin: session.origin,
+      "sec-fetch-site": "same-origin",
+      accept: "application/json",
+    },
+  });
+}
+
 async function stopInstalledRuntime(handle) {
   if (!handle || handle.state.exited) return;
   handle.child.kill("SIGTERM");
@@ -131,6 +162,36 @@ async function stopInstalledRuntime(handle) {
       else reject(new Error(`Installed Blogmaatic stopped unexpectedly (${signal ?? `code ${code}`}):\n${handle.state.output}`));
     });
   });
+}
+
+function groupBody(connectionId) {
+  return {
+    name: "Native package publishing",
+    policySetId: "default",
+    enabled: true,
+    routes: [{
+      id: "native-jekyll",
+      enabled: true,
+      desiredState: "present",
+      destination: {
+        extensionId: "blogmaatic.jekyll-git",
+        connectionId,
+        channel: "posts",
+      },
+      requiredCapabilities: ["article.create", "article.inspect"],
+    }],
+  };
+}
+
+function automation(groupId) {
+  return {
+    id: "native-package-first-run",
+    version: 1,
+    name: "Native package first run",
+    enabled: true,
+    trigger: { kind: "manual" },
+    steps: [{ id: "publish", kind: "publish_group", groupId }],
+  };
 }
 
 try {
@@ -148,14 +209,8 @@ try {
   await git(["add", "_config.yml"]);
   await git(["commit", "-m", "seed"]);
 
-  await exec(binary, [
-    "init",
-    "--data-dir", dataDir,
-    "--jekyll-repo", repository,
-    "--author-name", "Blogmaatic Native Package",
-    "--author-email", "native-package@example.test",
-    "--site-base-url", "https://example.test",
-  ]);
+  // Start from empty publisher state, matching the consumer first-run path.
+  await exec(binary, ["init", "--data-dir", dataDir]);
 
   const doctor = await exec(binary, ["doctor", "--json", "--data-dir", dataDir]);
   const report = JSON.parse(doctor.stdout);
@@ -163,6 +218,10 @@ try {
   for (const name of ["product", "config", "operator-credential", "control-room", "restate-server", "restate-cli"]) {
     requireDoctorCheck(report, name);
   }
+  assert.match(requireDoctorCheck(report, "config").detail, /0 configured connection/);
+
+  const token = (await exec(binary, ["token", "--data-dir", dataDir])).stdout.trim();
+  assert.ok(token.length >= 32);
 
   runtime = startInstalledRuntime(binary);
   assert.equal((await waitForHttp("http://127.0.0.1:4317/healthz", runtime.state)).status, 200);
@@ -170,21 +229,78 @@ try {
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
   const session = await controlRoomSession(runtime.state);
-  const proxied = await fetch(`${session.origin}/api/v1/automations?limit=1`, {
-    headers: {
-      cookie: session.cookie,
-      "x-blogmaatic-session-proof": session.proof,
-      origin: session.origin,
-      "sec-fetch-site": "same-origin",
-    },
+  const emptyConnections = await controlRoomApi(session, "/v1/connections");
+  await expectStatus(emptyConnections, 200);
+  assert.equal((await emptyConnections.json()).items.length, 0);
+  assert.equal(emptyConnections.headers.get("cache-control"), "no-store");
+
+  const connectionResponse = await api(token, "/v1/connections", {
+    method: "POST",
+    body: JSON.stringify({
+      extensionId: "blogmaatic.jekyll-git",
+      displayName: "Native Jekyll",
+      status: "active",
+      settings: {
+        repositoryPath: repository,
+        branch: "main",
+        authorName: "Blogmaatic Native Package",
+        authorEmail: "native-package@example.test",
+        siteBaseUrl: "https://example.test",
+      },
+    }),
   });
-  assert.equal(proxied.status, 200, `Control Room proxy returned ${proxied.status}: ${await proxied.text()}`);
-  assert.equal(proxied.headers.get("cache-control"), "no-store");
+  await expectStatus(connectionResponse, 201);
+  const connection = await connectionResponse.json();
+
+  const connectionTest = await api(token, `/v1/connections/${encodeURIComponent(connection.id)}/test`, { method: "POST" });
+  await expectStatus(connectionTest, 200);
+  const health = await connectionTest.json();
+  assert.equal(health.validation.valid, true);
+  assert.notEqual(health.health?.state, "unhealthy");
+
+  const optionsResponse = await api(token, "/v1/publication-group-options");
+  await expectStatus(optionsResponse, 200);
+  assert.ok((await optionsResponse.json()).policySetIds.includes("default"));
+
+  const groupResponse = await api(token, "/v1/publication-groups", {
+    method: "POST",
+    body: JSON.stringify(groupBody(connection.id)),
+  });
+  await expectStatus(groupResponse, 201);
+  const group = await groupResponse.json();
+
+  const automationResponse = await api(token, "/v1/automations", {
+    method: "POST",
+    body: JSON.stringify(automation(group.group.id)),
+  });
+  await expectStatus(automationResponse, 201);
+
+  const proxiedGroups = await controlRoomApi(session, "/v1/publication-groups?enabled=true&limit=10");
+  await expectStatus(proxiedGroups, 200);
+  assert.equal((await proxiedGroups.json()).items[0].group.id, group.group.id);
+  const proxiedAutomations = await controlRoomApi(session, "/v1/automations?enabled=true&limit=10");
+  await expectStatus(proxiedAutomations, 200);
+  assert.equal((await proxiedAutomations.json()).items[0].definition.id, "native-package-first-run");
 
   await stopInstalledRuntime(runtime);
   runtime = undefined;
 
-  console.log(`Native installer smoke passed: ${basename(packagePath)}`);
+  runtime = startInstalledRuntime(binary);
+  await waitForHttp("http://127.0.0.1:4317/healthz", runtime.state);
+  const restoredConnection = await api(token, `/v1/connections/${encodeURIComponent(connection.id)}`);
+  await expectStatus(restoredConnection, 200);
+  assert.equal((await restoredConnection.json()).displayName, "Native Jekyll");
+  const restoredGroup = await api(token, `/v1/publication-groups/${encodeURIComponent(group.group.id)}`);
+  await expectStatus(restoredGroup, 200);
+  assert.equal((await restoredGroup.json()).enabled, true);
+  const restoredAutomations = await api(token, "/v1/automations?enabled=true&limit=10");
+  await expectStatus(restoredAutomations, 200);
+  assert.equal((await restoredAutomations.json()).items.some((entry) => entry.definition.id === "native-package-first-run"), true);
+
+  await stopInstalledRuntime(runtime);
+  runtime = undefined;
+
+  console.log(`Native installer first-run + restart smoke passed: ${basename(packagePath)}`);
 } finally {
   if (runtime) await stopInstalledRuntime(runtime).catch(() => undefined);
   await cleanupInstall();
