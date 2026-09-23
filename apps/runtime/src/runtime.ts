@@ -12,11 +12,23 @@ import {
 } from "@blogmaatic/automation-restate";
 import { AutomationControlPlane, SqliteControlPlaneStore } from "@blogmaatic/control-plane";
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
-import { FacebookPagesPublisher } from "@blogmaatic/extension-facebook-pages";
-import { JekyllGitPublisher } from "@blogmaatic/extension-jekyll-git";
-import { LinkedInRestPublisher } from "@blogmaatic/extension-linkedin-rest";
+import {
+  FACEBOOK_CONNECTION_CONTRACT,
+  FacebookPagesPublisher,
+} from "@blogmaatic/extension-facebook-pages";
+import {
+  JEKYLL_CONNECTION_CONTRACT,
+  JekyllGitPublisher,
+} from "@blogmaatic/extension-jekyll-git";
+import {
+  LINKEDIN_CONNECTION_CONTRACT,
+  LinkedInRestPublisher,
+} from "@blogmaatic/extension-linkedin-rest";
 import { ConnectionAuthority, ExtensionRuntime } from "@blogmaatic/extension-sdk";
-import { WordPressRestPublisher } from "@blogmaatic/extension-wordpress-rest";
+import {
+  WORDPRESS_CONNECTION_CONTRACT,
+  WordPressRestPublisher,
+} from "@blogmaatic/extension-wordpress-rest";
 import { StaticBearerAuthorizer, closeOperatorApi, startOperatorApi } from "@blogmaatic/operator-api";
 import {
   EnvironmentSecretProvider,
@@ -150,10 +162,19 @@ export async function startRuntime(options: {
     const connections = new ConnectionAuthority(config.connections);
     const secrets = createSecretAuthority();
     const extensions = new ExtensionRuntime(connections);
-    extensions.registerPublisher(new JekyllGitPublisher(connections));
-    extensions.registerPublisher(new WordPressRestPublisher(connections, secrets));
-    extensions.registerPublisher(new LinkedInRestPublisher(connections, secrets));
-    extensions.registerPublisher(new FacebookPagesPublisher(connections, secrets));
+    extensions.registerPublisher(new JekyllGitPublisher(connections), JEKYLL_CONNECTION_CONTRACT);
+    extensions.registerPublisher(
+      new WordPressRestPublisher(connections, secrets),
+      WORDPRESS_CONNECTION_CONTRACT,
+    );
+    extensions.registerPublisher(
+      new LinkedInRestPublisher(connections, secrets),
+      LINKEDIN_CONNECTION_CONTRACT,
+    );
+    extensions.registerPublisher(
+      new FacebookPagesPublisher(connections, secrets),
+      FACEBOOK_CONNECTION_CONTRACT,
+    );
     await inspectConfiguredConnections(extensions, connections, logger);
 
     projectionState = new SqliteProjectionStateStore(paths.projectionStatePath);
