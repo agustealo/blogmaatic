@@ -6,7 +6,8 @@ import { extname, relative, resolve, sep } from "node:path";
 
 import { httpOrigin } from "./network.js";
 
-const SESSION_COOKIE = "blogmaatic_control_room_session";
+const SESSION_COOKIE_PREFIX = "blogmaatic_control_room_session";
+const SESSION_PROOF_HEADER = "x-blogmaatic-session-proof";
 const MIME: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -80,9 +81,18 @@ function secretMatches(received: string | undefined, expected: string): boolean 
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function sessionAuthorized(request: IncomingMessage, controlRoomOrigin: string, sessionToken: string): boolean {
+function sessionAuthorized(
+  request: IncomingMessage,
+  controlRoomOrigin: string,
+  sessionCookieName: string,
+  sessionToken: string,
+  sessionProof: string,
+): boolean {
+  const proof = request.headers[SESSION_PROOF_HEADER];
   return requestMatchesBoundOrigin(request, controlRoomOrigin)
-    && secretMatches(cookieValue(request, SESSION_COOKIE), sessionToken);
+    && secretMatches(cookieValue(request, sessionCookieName), sessionToken)
+    && typeof proof === "string"
+    && secretMatches(proof, sessionProof);
 }
 
 function forbiddenProxy(response: ServerResponse): void {
@@ -101,8 +111,10 @@ function bootstrapSession(
   request: IncomingMessage,
   response: ServerResponse,
   controlRoomOrigin: string,
+  sessionCookieName: string,
   bootstrapToken: string,
   sessionToken: string,
+  sessionProof: string,
   consume: () => boolean,
 ): void {
   if (request.method !== "GET" || !requestMatchesBoundOrigin(request, controlRoomOrigin)) {
@@ -122,9 +134,9 @@ function bootstrapSession(
   }
 
   response.statusCode = 303;
-  response.setHeader("location", "/");
+  response.setHeader("location", `/#session=${sessionProof}`);
   response.setHeader("cache-control", "no-store");
-  response.setHeader("set-cookie", `${SESSION_COOKIE}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict`);
+  response.setHeader("set-cookie", `${sessionCookieName}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict`);
   response.end();
 }
 
@@ -134,9 +146,11 @@ async function proxy(
   operatorOrigin: string,
   operatorToken: string,
   controlRoomOrigin: string,
+  sessionCookieName: string,
   sessionToken: string,
+  sessionProof: string,
 ): Promise<void> {
-  if (!sessionAuthorized(request, controlRoomOrigin, sessionToken)) {
+  if (!sessionAuthorized(request, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof)) {
     forbiddenProxy(response);
     return;
   }
@@ -248,8 +262,10 @@ export class ControlRoomServer {
 
     const bootstrapToken = randomBytes(24).toString("base64url");
     const sessionToken = randomBytes(32).toString("base64url");
+    const sessionProof = randomBytes(32).toString("base64url");
     let bootstrapAvailable = true;
     let controlRoomOrigin = "";
+    let sessionCookieName = SESSION_COOKIE_PREFIX;
     const server = createServer((request, response) => {
       securityHeaders(response);
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -259,8 +275,10 @@ export class ControlRoomServer {
           request,
           response,
           controlRoomOrigin,
+          sessionCookieName,
           bootstrapToken,
           sessionToken,
+          sessionProof,
           () => {
             if (!bootstrapAvailable) return false;
             bootstrapAvailable = false;
@@ -269,7 +287,16 @@ export class ControlRoomServer {
         );
         task = Promise.resolve();
       } else if (pathname === "/api" || pathname.startsWith("/api/")) {
-        task = proxy(request, response, options.operatorOrigin, options.operatorToken, controlRoomOrigin, sessionToken);
+        task = proxy(
+          request,
+          response,
+          options.operatorOrigin,
+          options.operatorToken,
+          controlRoomOrigin,
+          sessionCookieName,
+          sessionToken,
+          sessionProof,
+        );
       } else {
         task = serveStatic(request, response, root);
       }
@@ -288,7 +315,9 @@ export class ControlRoomServer {
           reject(new Error("Control Room server did not expose a TCP address"));
           return;
         }
-        controlRoomOrigin = httpOrigin(options.host, (bound as AddressInfo).port);
+        const port = (bound as AddressInfo).port;
+        controlRoomOrigin = httpOrigin(options.host, port);
+        sessionCookieName = `${SESSION_COOKIE_PREFIX}_${port}`;
         resolveListen();
       });
     });
