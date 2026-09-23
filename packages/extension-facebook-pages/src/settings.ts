@@ -20,6 +20,10 @@ export const FACEBOOK_CONNECTION_CONTRACT: ConnectionContract = {
   secretFields: [
     { key: "pageAccessToken", label: "Page access token", required: true, description: "Stored only in the OS credential vault." },
   ],
+  defaultRoute: {
+    channel: "posts",
+    requiredCapabilities: ["article.create", "article.inspect"],
+  },
 };
 
 function getString(record: Readonly<Record<string, JsonValue>>, key: string): string | undefined {
