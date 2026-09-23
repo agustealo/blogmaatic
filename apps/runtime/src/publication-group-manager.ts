@@ -30,18 +30,24 @@ export class PublicationGroupManager {
   readonly #store: PublicationGroupStore;
   readonly #connections: ConnectionAuthority;
   readonly #extensions: ExtensionRuntime;
-  readonly #policySetIds: ReadonlySet<string>;
+  readonly #policySetIds: readonly string[];
+  readonly #policySetIdSet: ReadonlySet<string>;
   readonly #now: () => string;
 
   constructor(options: PublicationGroupManagerOptions) {
     this.#store = options.store;
     this.#connections = options.connections;
     this.#extensions = options.extensions;
-    this.#policySetIds = new Set(options.policySetIds);
+    this.#policySetIds = [...options.policySetIds].sort();
+    this.#policySetIdSet = new Set(this.#policySetIds);
     this.#now = options.now ?? (() => new Date().toISOString());
-    if (this.#policySetIds.size !== options.policySetIds.length) {
+    if (this.#policySetIdSet.size !== options.policySetIds.length) {
       throw new Error("Publication group policySetIds must be unique");
     }
+  }
+
+  listPolicySetIds(): readonly string[] {
+    return this.#policySetIds;
   }
 
   list(query: PublicationGroupListQuery = {}) {
@@ -111,7 +117,7 @@ export class PublicationGroupManager {
 
   #validateGroup(group: PublicationGroup, enabled: boolean): void {
     validatePublicationGroup(group);
-    if (!this.#policySetIds.has(group.policySetId)) {
+    if (!this.#policySetIdSet.has(group.policySetId)) {
       throw new Error(`Publication group ${group.id} references unknown policy set ${group.policySetId}`);
     }
     if (enabled && !group.routes.some((route) => route.enabled)) {
