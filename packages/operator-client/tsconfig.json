@@ -16,7 +16,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "composite": true,
-    "types": ["node"],
+    "types": [],
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts"],
