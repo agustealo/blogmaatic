@@ -61,7 +61,7 @@ function normalizeBaseUrl(input: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-function pathWithQuery(path: string, query: Readonly<Record<string, unknown>> | undefined): string {
+function pathWithQuery<T extends object>(path: string, query: T | undefined): string {
   if (!query) return path;
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
