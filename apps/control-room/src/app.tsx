@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router";
 
 import { ConnectScreen, useConnection } from "./connection";
@@ -12,7 +13,7 @@ import { RunDetailPage, RunsPage } from "./pages/runs";
 import { SchedulesPage } from "./pages/schedules";
 import { FirstRunEntry, SetupPage } from "./pages/setup";
 
-function gated(page: React.ReactNode) {
+function gated(page: ReactNode) {
   return <FirstRunEntry ready={page} />;
 }
 
