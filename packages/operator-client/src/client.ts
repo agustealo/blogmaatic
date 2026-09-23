@@ -4,17 +4,33 @@ import type {
   ApprovalDecisionResponse,
   AuditListQuery,
   AuditPage,
+  AutomationDefinition,
   AutomationListQuery,
   AutomationPage,
   AutomationRegistryEntry,
   AutomationRunResult,
   AutomationVersionListQuery,
   AutomationVersionPage,
+  ConnectionCreateBody,
+  ConnectionTypesResponse,
+  ConnectionsResponse,
+  ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  OperatorConnectionTestResult,
+  OperatorConnectionView,
   OperatorErrorBody,
   OperatorHealth,
   OperatorOperationsPage,
   OperatorOperationsQuery,
+  PublicationGroupActivationBody,
+  PublicationGroupCreateBody,
+  PublicationGroupListQuery,
+  PublicationGroupOptionsResponse,
+  PublicationGroupPage,
+  PublicationGroupRegistryEntry,
+  PublicationGroupUpdateBody,
+  PublicationGroupVersionListQuery,
+  PublicationGroupVersionPage,
   RunListQuery,
   RunPage,
   ScheduleListQuery,
@@ -109,7 +125,7 @@ export class OperatorClient {
   async #request<T>(
     path: string,
     options: {
-      readonly method?: "GET" | "POST";
+      readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
       readonly body?: unknown;
       readonly authenticated?: boolean;
     } = {},
@@ -150,8 +166,105 @@ export class OperatorClient {
     return this.#request<OperatorHealth>("/healthz", { authenticated: false });
   }
 
+  listConnectionTypes(): Promise<ConnectionTypesResponse> {
+    return this.#request<ConnectionTypesResponse>("/v1/connection-types");
+  }
+
+  listConnections(): Promise<ConnectionsResponse> {
+    return this.#request<ConnectionsResponse>("/v1/connections");
+  }
+
+  getConnection(connectionId: string): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`);
+  }
+
+  createConnection(input: ConnectionCreateBody): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>("/v1/connections", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  updateConnection(connectionId: string, input: ConnectionUpdateBody): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`, {
+      method: "PATCH",
+      body: input,
+    });
+  }
+
+  removeConnection(connectionId: string): Promise<OperatorConnectionView> {
+    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
+    return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, {
+      method: "POST",
+    });
+  }
+
+  getPublicationGroupOptions(): Promise<PublicationGroupOptionsResponse> {
+    return this.#request<PublicationGroupOptionsResponse>("/v1/publication-group-options");
+  }
+
+  listPublicationGroups(query: PublicationGroupListQuery = {}): Promise<PublicationGroupPage> {
+    return this.#request<PublicationGroupPage>(pathWithQuery("/v1/publication-groups", query));
+  }
+
+  getPublicationGroup(groupId: string): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(`/v1/publication-groups/${encodeURIComponent(groupId)}`);
+  }
+
+  listPublicationGroupVersions(
+    groupId: string,
+    query: PublicationGroupVersionListQuery = {},
+  ): Promise<PublicationGroupVersionPage> {
+    return this.#request<PublicationGroupVersionPage>(pathWithQuery(
+      `/v1/publication-groups/${encodeURIComponent(groupId)}/versions`,
+      query,
+    ));
+  }
+
+  getPublicationGroupVersion(groupId: string, version: number): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(
+      `/v1/publication-groups/${encodeURIComponent(groupId)}/versions/${version}`,
+    );
+  }
+
+  createPublicationGroup(input: PublicationGroupCreateBody): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>("/v1/publication-groups", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  updatePublicationGroup(groupId: string, input: PublicationGroupUpdateBody): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(`/v1/publication-groups/${encodeURIComponent(groupId)}`, {
+      method: "PATCH",
+      body: input,
+    });
+  }
+
+  setPublicationGroupEnabled(
+    groupId: string,
+    input: PublicationGroupActivationBody,
+  ): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(
+      `/v1/publication-groups/${encodeURIComponent(groupId)}/activation`,
+      { method: "POST", body: input },
+    );
+  }
+
   listAutomations(query: AutomationListQuery = {}): Promise<AutomationPage> {
     return this.#request<AutomationPage>(pathWithQuery("/v1/automations", query));
+  }
+
+  registerAutomation(input: AutomationDefinition): Promise<AutomationRegistryEntry> {
+    return this.#request<AutomationRegistryEntry>("/v1/automations", {
+      method: "POST",
+      body: input,
+    });
   }
 
   listAutomationVersions(

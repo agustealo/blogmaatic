@@ -1,4 +1,4 @@
-import type { AutomationApproval, AutomationRunResult } from "@blogmaatic/automation";
+import type { AutomationApproval, AutomationDefinition, AutomationRunResult } from "@blogmaatic/automation";
 import type {
   AuditLedgerEntry,
   AuditListQuery,
@@ -7,32 +7,57 @@ import type {
   AutomationSchedule,
   AutomationVersionListQuery,
   Page,
+  PublicationGroupListQuery,
+  PublicationGroupRegistryEntry,
+  PublicationGroupVersionListQuery,
   RunListQuery,
   ScheduleListQuery,
   ControlPlaneRunRecord,
 } from "@blogmaatic/control-plane";
 import type {
+  ConnectionCreateBody,
+  ConnectionUpdateBody,
+  OperatorConnectionSettingField,
+  OperatorConnectionTestResult,
+  OperatorConnectionType,
+  OperatorConnectionView,
   OperatorOperation,
   OperatorOperationKind,
   OperatorOperationsPage,
   OperatorOperationsQuery,
+  PublicationGroupActivationBody,
+  PublicationGroupCreateBody,
+  PublicationGroupUpdateBody,
 } from "@blogmaatic/operator-api";
 
 export type {
   AuditLedgerEntry,
   AuditListQuery,
   AutomationApproval,
+  AutomationDefinition,
   AutomationListQuery,
   AutomationRegistryEntry,
   AutomationRunResult,
   AutomationSchedule,
   AutomationVersionListQuery,
+  ConnectionCreateBody,
+  ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  OperatorConnectionSettingField,
+  OperatorConnectionTestResult,
+  OperatorConnectionType,
+  OperatorConnectionView,
   OperatorOperation,
   OperatorOperationKind,
   OperatorOperationsPage,
   OperatorOperationsQuery,
   Page,
+  PublicationGroupActivationBody,
+  PublicationGroupCreateBody,
+  PublicationGroupListQuery,
+  PublicationGroupRegistryEntry,
+  PublicationGroupUpdateBody,
+  PublicationGroupVersionListQuery,
   RunListQuery,
   ScheduleListQuery,
 };
@@ -40,6 +65,18 @@ export type {
 export interface OperatorHealth {
   readonly status: "ok";
   readonly service: string;
+}
+
+export interface ConnectionTypesResponse {
+  readonly items: readonly OperatorConnectionType[];
+}
+
+export interface ConnectionsResponse {
+  readonly items: readonly OperatorConnectionView[];
+}
+
+export interface PublicationGroupOptionsResponse {
+  readonly policySetIds: readonly string[];
 }
 
 export interface ApprovalDecisionInput {
@@ -83,6 +120,8 @@ export interface OperatorErrorBody {
 
 export type AutomationPage = Page<AutomationRegistryEntry>;
 export type AutomationVersionPage = Page<AutomationRegistryEntry>;
+export type PublicationGroupPage = Page<PublicationGroupRegistryEntry>;
+export type PublicationGroupVersionPage = Page<PublicationGroupRegistryEntry>;
 export type RunPage = Page<ControlPlaneRunRecord>;
 export type SchedulePage = Page<AutomationSchedule>;
 export type AuditPage = Page<AuditLedgerEntry>;

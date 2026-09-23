@@ -13,12 +13,12 @@ import {
   type AutomationVersionListQuery,
   type ControlPlaneRunDispatchState,
   type PublicationAutomationEvent,
-  type RunListQuery,
   type ScheduleListQuery,
 } from "@blogmaatic/control-plane";
 import {
   validatePublication,
   validatePublicationGroups,
+  type JsonValue,
   type Publication,
   type PublicationGroup,
 } from "@blogmaatic/core";
@@ -28,6 +28,8 @@ import type { OperatorRunListQuery } from "./runs.js";
 import type {
   ActivationBody,
   ApprovalBody,
+  ConnectionCreateBody,
+  ConnectionUpdateBody,
   EventIngestBody,
   ManualRunBody,
   ScheduleDispatchBody,
@@ -134,6 +136,53 @@ function pagination(
   };
 }
 
+function jsonValue(value: unknown, label: string): JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new OperatorRequestError(`${label} must contain finite JSON numbers`);
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item, index) => jsonValue(item, `${label}[${index}]`));
+  const input = asRecord(value, label);
+  const output: Record<string, JsonValue> = {};
+  for (const [key, item] of Object.entries(input)) output[key] = jsonValue(item, `${label}.${key}`);
+  return output;
+}
+
+function jsonObject(value: unknown, label: string): Readonly<Record<string, JsonValue>> {
+  const parsed = jsonValue(value, label);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new OperatorRequestError(`${label} must be a JSON object`);
+  }
+  return parsed;
+}
+
+function secretRecord(value: unknown, label: string): Readonly<Record<string, string>> {
+  const input = asRecord(value, label);
+  const output: Record<string, string> = {};
+  for (const [key, item] of Object.entries(input)) {
+    if (typeof item !== "string" || item.length === 0) {
+      throw new OperatorRequestError(`${label}.${key} must be a non-empty string`);
+    }
+    output[key] = item;
+  }
+  return output;
+}
+
+function rejectUnknownFields(record: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  const permitted = new Set(allowed);
+  const unknown = Object.keys(record).filter((key) => !permitted.has(key));
+  if (unknown.length > 0) throw new OperatorRequestError(`${label} contains unknown field: ${unknown[0]}`);
+}
+
+function connectionStatus(value: unknown): "active" | "disabled" | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "active" && value !== "disabled") {
+    throw new OperatorRequestError("status must be active or disabled");
+  }
+  return value;
+}
+
 function publicationField(record: Record<string, unknown>): Publication {
   const publication = record.publication as Publication;
   try {
@@ -152,6 +201,37 @@ function groupsField(record: Record<string, unknown>): readonly PublicationGroup
     throw new OperatorRequestError(error instanceof Error ? error.message : "Invalid publication groups");
   }
   return groups;
+}
+
+export function parseConnectionCreateBody(body: unknown): ConnectionCreateBody {
+  const record = asRecord(body, "request body");
+  rejectUnknownFields(record, ["extensionId", "displayName", "status", "settings", "secrets"], "request body");
+  const status = connectionStatus(record.status);
+  const secrets = record.secrets === undefined ? undefined : secretRecord(record.secrets, "secrets");
+  return {
+    extensionId: stringField(record, "extensionId"),
+    displayName: stringField(record, "displayName"),
+    ...(status === undefined ? {} : { status }),
+    settings: jsonObject(record.settings, "settings"),
+    ...(secrets === undefined ? {} : { secrets }),
+  };
+}
+
+export function parseConnectionUpdateBody(body: unknown): ConnectionUpdateBody {
+  const record = asRecord(body, "request body");
+  rejectUnknownFields(record, ["displayName", "status", "settings", "secrets"], "request body");
+  if (Object.keys(record).length === 0) throw new OperatorRequestError("request body must change at least one connection field");
+  const displayName = optionalStringField(record, "displayName");
+  if (displayName !== undefined && !displayName.trim()) throw new OperatorRequestError("displayName must be non-empty");
+  const status = connectionStatus(record.status);
+  const settings = record.settings === undefined ? undefined : jsonObject(record.settings, "settings");
+  const secrets = record.secrets === undefined ? undefined : secretRecord(record.secrets, "secrets");
+  return {
+    ...(displayName === undefined ? {} : { displayName }),
+    ...(status === undefined ? {} : { status }),
+    ...(settings === undefined ? {} : { settings }),
+    ...(secrets === undefined ? {} : { secrets }),
+  };
 }
 
 export function parseAutomationRegistration(body: unknown): AutomationDefinition {

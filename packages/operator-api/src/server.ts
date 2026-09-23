@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import fastify, {
   type FastifyInstance,
@@ -20,8 +20,18 @@ import {
   type OperatorPrincipal,
 } from "./auth.js";
 import { listOperatorOperations } from "./operations.js";
+import {
+  PublicationGroupApiError,
+  registerPublicationGroupRoutes,
+} from "./publication-groups.js";
 import { listOperatorRuns } from "./runs.js";
-import type { ManualRunBody, OperatorApiListenOptions, OperatorApiOptions } from "./types.js";
+import type {
+  ManualRunBody,
+  OperatorApiListenOptions,
+  OperatorApiOptions,
+  OperatorConnectionManager,
+  OperatorConnectionView,
+} from "./types.js";
 import {
   OperatorRequestError,
   parseActivationBody,
@@ -30,6 +40,8 @@ import {
   parseAutomationListQuery,
   parseAutomationRegistration,
   parseAutomationVersionListQuery,
+  parseConnectionCreateBody,
+  parseConnectionUpdateBody,
   parseEventBody,
   parseManualRunBody,
   parseOperationsQuery,
@@ -88,6 +100,21 @@ function manualCommandId(principalId: string, idempotencyKey: string, body: Manu
   return `api_${digest.slice(0, 40)}`;
 }
 
+function connectionManager(options: OperatorApiOptions): OperatorConnectionManager {
+  if (!options.connections) {
+    throw new OperatorApiError(503, "CONNECTION_MANAGEMENT_UNAVAILABLE", "Connection management is unavailable");
+  }
+  return options.connections;
+}
+
+function connectionOr404(manager: OperatorConnectionManager, connectionId: string): OperatorConnectionView {
+  try {
+    return manager.get(connectionId);
+  } catch {
+    throw new OperatorApiError(404, "CONNECTION_NOT_FOUND", "Connection was not found");
+  }
+}
+
 async function domainCall<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
@@ -135,6 +162,10 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       void reply.code(400).send(errorBody(request, "INVALID_REQUEST", error.message));
       return;
     }
+    if (error instanceof PublicationGroupApiError) {
+      void reply.code(error.statusCode).send(errorBody(request, error.code, error.message));
+      return;
+    }
     if (error instanceof OperatorApiError) {
       void reply.code(error.statusCode).send(errorBody(request, error.code, error.message));
       return;
@@ -159,6 +190,100 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
     status: "ok",
     service: "blogmaatic-operator-api",
   }));
+
+  app.get("/v1/connection-types", async (request) => {
+    await authorize(request, "connections:read");
+    return { items: connectionManager(options).listTypes() };
+  });
+
+  app.get("/v1/connections", async (request) => {
+    await authorize(request, "connections:read");
+    return { items: connectionManager(options).list() };
+  });
+
+  app.post("/v1/connections", async (request, reply) => {
+    const principal = await authorize(request, "connections:write");
+    const manager = connectionManager(options);
+    const body = parseConnectionCreateBody(request.body);
+    const connectionId = `connection_${randomUUID()}`;
+    const created = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "connection.create",
+      resource: { type: "connection", id: connectionId },
+      evidence: {
+        extensionId: body.extensionId,
+        status: body.status ?? "active",
+        configuredSecretFields: Object.keys(body.secrets ?? {}).sort(),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager.create({ ...body, id: connectionId })),
+      success: (result) => ({
+        evidence: {
+          configuredSecretFields: result.configuredSecrets,
+        },
+      }),
+    });
+    return reply.code(201).send(created);
+  });
+
+  app.get("/v1/connections/:connectionId", async (request) => {
+    await authorize(request, "connections:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    return connectionOr404(connectionManager(options), connectionId);
+  });
+
+  app.patch("/v1/connections/:connectionId", async (request) => {
+    const principal = await authorize(request, "connections:write");
+    const manager = connectionManager(options);
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const current = connectionOr404(manager, connectionId);
+    const body = parseConnectionUpdateBody(request.body);
+    return auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "connection.update",
+      resource: { type: "connection", id: connectionId },
+      evidence: {
+        extensionId: current.extensionId,
+        changedSettings: Object.keys(body.settings ?? {}).sort(),
+        changedSecretFields: Object.keys(body.secrets ?? {}).sort(),
+        displayNameChanged: body.displayName !== undefined,
+        ...(body.status === undefined ? {} : { status: body.status }),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager.update(connectionId, body)),
+    });
+  });
+
+  app.delete("/v1/connections/:connectionId", async (request) => {
+    const principal = await authorize(request, "connections:write");
+    const manager = connectionManager(options);
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const current = connectionOr404(manager, connectionId);
+    return auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "connection.remove",
+      resource: { type: "connection", id: connectionId },
+      evidence: { extensionId: current.extensionId },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager.remove(connectionId)),
+    });
+  });
+
+  app.post("/v1/connections/:connectionId/test", async (request) => {
+    await authorize(request, "connections:read");
+    const manager = connectionManager(options);
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    connectionOr404(manager, connectionId);
+    return domainCall(() => manager.test(connectionId));
+  });
+
+  registerPublicationGroupRoutes(app, options);
 
   app.get("/v1/automations", async (request) => {
     await authorize(request, "automations:read");

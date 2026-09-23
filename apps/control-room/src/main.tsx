@@ -6,6 +6,8 @@ import { App } from "./app";
 import { ConnectionProvider } from "./connection";
 import "./styles.css";
 import "./confirmations.css";
+import "./connections.css";
+import "./setup.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Control Room root element is missing");

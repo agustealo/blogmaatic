@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
-import { delimiter } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -84,6 +83,21 @@ async function controlRoomSession(processState, timeoutMs = 20_000) {
   throw new Error(`Timed out waiting for the Control Room launch URL:\n${processState.output}`);
 }
 
+async function controlRoomApi(session, path, options = {}) {
+  return fetch(`${session.origin}/api${path}`, {
+    ...options,
+    headers: {
+      cookie: session.cookie,
+      "x-blogmaatic-session-proof": session.proof,
+      origin: session.origin,
+      "sec-fetch-site": "same-origin",
+      accept: "application/json",
+      ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+      ...options.headers,
+    },
+  });
+}
+
 async function terminalResult(token, runId) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
@@ -149,30 +163,34 @@ function publication() {
   };
 }
 
-function group() {
+function groupCreateBody(connectionId) {
   return {
-    id: "group-distribution-proof",
     name: "Distribution proof",
     policySetId: "default",
+    enabled: true,
     routes: [{
       id: "jekyll-distribution-proof",
       enabled: true,
       desiredState: "present",
-      destination: { extensionId: "blogmaatic.jekyll-git", connectionId: "jekyll-primary", channel: "posts" },
-      requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+      destination: {
+        extensionId: "blogmaatic.jekyll-git",
+        connectionId,
+        channel: "posts",
+      },
+      requiredCapabilities: ["article.create", "article.inspect"],
       variant: { layout: "post", permalink: "/distribution-proof/" },
     }],
   };
 }
 
-function automation() {
+function automation(groupId) {
   return {
     id: "distribution-proof",
     version: 1,
     name: "Distribution proof",
     enabled: true,
     trigger: { kind: "manual" },
-    steps: [{ id: "publish", kind: "publish_group", groupId: "group-distribution-proof" }],
+    steps: [{ id: "publish", kind: "publish_group", groupId }],
   };
 }
 
@@ -219,17 +237,20 @@ try {
   await git(repository, ["add", "_config.yml"]);
   await git(repository, ["commit", "-m", "seed"]);
 
-  await execFileAsync(binary, [
-    "init", "--data-dir", dataDir, "--jekyll-repo", repository,
-    "--author-name", "Blogmaatic Distribution", "--author-email", "distribution@example.test",
-    "--site-base-url", "https://example.test",
-  ], { cwd: callerRoot, env, encoding: "utf8" });
+  // Initialize genuinely fresh app data. Publisher state is created later through
+  // the same Operator API used by the bundled first-run Control Room.
+  await execFileAsync(binary, ["init", "--data-dir", dataDir], {
+    cwd: callerRoot,
+    env,
+    encoding: "utf8",
+  });
 
   const doctorResult = await execFileAsync(binary, ["doctor", "--data-dir", dataDir, "--json"], { cwd: callerRoot, env, encoding: "utf8" });
   const doctor = JSON.parse(doctorResult.stdout);
   assert.equal(doctor.ok, true, JSON.stringify(doctor, null, 2));
   assert.ok(doctor.checks.some((check) => check.name === "restate-server" && check.ok));
   assert.ok(doctor.checks.some((check) => check.name === "control-room" && check.ok));
+  assert.ok(doctor.checks.some((check) => check.name === "config" && /0 configured connection/.test(check.detail)));
 
   const tokenResult = await execFileAsync(binary, ["token", "--data-dir", dataDir], { cwd: callerRoot, env, encoding: "utf8" });
   const token = tokenResult.stdout.trim();
@@ -241,23 +262,76 @@ try {
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
   const session = await controlRoomSession(first.state);
-  const controlRoomApi = await fetch(`${session.origin}/api/v1/automations?limit=1`, {
-    headers: {
-      cookie: session.cookie,
-      "x-blogmaatic-session-proof": session.proof,
-      origin: session.origin,
-      "sec-fetch-site": "same-origin",
-    },
-  });
-  await expectStatus(controlRoomApi, 200);
-  assert.equal(controlRoomApi.headers.get("cache-control"), "no-store");
+  const emptyConnections = await controlRoomApi(session, "/v1/connections");
+  await expectStatus(emptyConnections, 200);
+  assert.equal((await emptyConnections.json()).items.length, 0);
+  assert.equal(emptyConnections.headers.get("cache-control"), "no-store");
 
-  const registration = await api(token, "/v1/automations", { method: "POST", body: JSON.stringify(automation()) });
+  const connectionResponse = await api(token, "/v1/connections", {
+    method: "POST",
+    body: JSON.stringify({
+      extensionId: "blogmaatic.jekyll-git",
+      displayName: "Packaged Jekyll",
+      status: "active",
+      settings: {
+        repositoryPath: repository,
+        branch: "main",
+        authorName: "Blogmaatic Distribution",
+        authorEmail: "distribution@example.test",
+        siteBaseUrl: "https://example.test",
+      },
+    }),
+  });
+  await expectStatus(connectionResponse, 201);
+  const managedConnection = await connectionResponse.json();
+  assert.match(managedConnection.id, /^connection_[0-9a-f-]{36}$/);
+  assert.equal(managedConnection.extensionId, "blogmaatic.jekyll-git");
+
+  const connectionTest = await api(token, `/v1/connections/${encodeURIComponent(managedConnection.id)}/test`, { method: "POST" });
+  await expectStatus(connectionTest, 200);
+  const connectionHealth = await connectionTest.json();
+  assert.equal(connectionHealth.validation.valid, true);
+  assert.notEqual(connectionHealth.health?.state, "unhealthy");
+
+  const groupOptionsResponse = await api(token, "/v1/publication-group-options");
+  await expectStatus(groupOptionsResponse, 200);
+  const groupOptions = await groupOptionsResponse.json();
+  assert.ok(groupOptions.policySetIds.includes("default"));
+
+  const groupRegistration = await api(token, "/v1/publication-groups", {
+    method: "POST",
+    body: JSON.stringify(groupCreateBody(managedConnection.id)),
+  });
+  await expectStatus(groupRegistration, 201);
+  const managedGroup = await groupRegistration.json();
+  assert.match(managedGroup.group.id, /^group_[0-9a-f-]{36}$/);
+  assert.equal(managedGroup.enabled, true);
+  assert.equal(managedGroup.version, 1);
+
+  const registration = await api(token, "/v1/automations", {
+    method: "POST",
+    body: JSON.stringify(automation(managedGroup.group.id)),
+  });
   await expectStatus(registration, 201);
+
+  const setupConnections = await controlRoomApi(session, "/v1/connections");
+  await expectStatus(setupConnections, 200);
+  assert.equal((await setupConnections.json()).items.length, 1);
+  const setupGroups = await controlRoomApi(session, "/v1/publication-groups?enabled=true&limit=10");
+  await expectStatus(setupGroups, 200);
+  assert.equal((await setupGroups.json()).items[0].group.id, managedGroup.group.id);
+  const setupAutomations = await controlRoomApi(session, "/v1/automations?enabled=true&limit=10");
+  await expectStatus(setupAutomations, 200);
+  assert.equal((await setupAutomations.json()).items[0].definition.id, "distribution-proof");
+
   const launch = await api(token, "/v1/runs/manual", {
     method: "POST",
     headers: { "idempotency-key": "distribution-proof-1" },
-    body: JSON.stringify({ automationId: "distribution-proof", publication: publication(), groups: [group()] }),
+    body: JSON.stringify({
+      automationId: "distribution-proof",
+      publication: publication(),
+      groups: [managedGroup.group],
+    }),
   });
   await expectStatus(launch, 202);
   const run = await launch.json();
@@ -276,13 +350,24 @@ try {
 
   second = startPackagedRuntime(binary, dataDir, callerRoot, env);
   await waitForHttp("http://127.0.0.1:4317/healthz", second.state);
+
+  const restoredConnection = await api(token, `/v1/connections/${encodeURIComponent(managedConnection.id)}`);
+  await expectStatus(restoredConnection, 200);
+  assert.equal((await restoredConnection.json()).displayName, "Packaged Jekyll");
+  const restoredGroup = await api(token, `/v1/publication-groups/${encodeURIComponent(managedGroup.group.id)}`);
+  await expectStatus(restoredGroup, 200);
+  assert.equal((await restoredGroup.json()).version, 1);
+  const restoredAutomations = await api(token, "/v1/automations?enabled=true&limit=10");
+  await expectStatus(restoredAutomations, 200);
+  assert.equal((await restoredAutomations.json()).items.some((entry) => entry.definition.id === "distribution-proof"), true);
+
   const restored = await api(token, `/v1/runs/${encodeURIComponent(run.runId)}`);
   await expectStatus(restored, 200);
   assert.equal((await restored.json()).runtimePhase, "completed");
   assert.equal((await terminalResult(token, run.runId)).outcome, "completed");
   assert.equal(await git(repository, ["rev-list", "--count", "HEAD"]), "2");
 
-  console.log(`Distribution smoke passed: ${basename(archive)}`);
+  console.log(`Distribution first-run + restart smoke passed: ${basename(archive)}`);
 } finally {
   if (second) await stopPackagedRuntime(second).catch(() => undefined);
   if (first) await stopPackagedRuntime(first).catch(() => undefined);

@@ -1,0 +1,88 @@
+name: Product Media
+
+on:
+  push:
+    branches:
+      - feat/connection-manager-onboarding-slice-15
+    paths:
+      - ".github/workflows/product-media.yml"
+      - "apps/control-room/**"
+      - "apps/runtime/**"
+      - "packages/control-plane/**"
+      - "packages/extension-jekyll-git/**"
+      - "packages/extension-sdk/**"
+      - "packages/operator-api/**"
+      - "packages/operator-client/**"
+      - "scripts/capture-product-screenshots.mjs"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: product-media-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: real-control-room-screenshots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build production workspaces
+        run: npm run build
+
+      - name: Capture real Control Room product media
+        run: npm run product:screenshots
+
+      - name: Verify screenshot contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            01-first-run-setup.png
+            02-first-run-ready.png
+            03-connections.png
+            04-control-room-overview.png
+            05-automations.png
+            06-runs.png
+            07-run-detail.png
+            08-operations.png
+            capture-manifest.json
+          )
+          for asset in "${expected[@]}"; do
+            test -s "docs/screenshots/${asset}"
+          done
+          test "$(find docs/screenshots -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 8
+
+      - name: Commit captured product media
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "blogmaatic-product-media[bot]"
+          git config user.email "blogmaatic-product-media[bot]@users.noreply.github.com"
+          git add docs/screenshots/*.png docs/screenshots/capture-manifest.json
+          if git diff --cached --quiet; then
+            echo "Product screenshots already match this runtime/UI state."
+            exit 0
+          fi
+          git commit -m "docs: refresh real Control Room screenshots"
+          git push origin "HEAD:${BRANCH_NAME}"

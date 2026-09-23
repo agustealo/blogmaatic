@@ -1,0 +1,150 @@
+.connection-manager {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.connection-manager--editing {
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, .85fr);
+}
+
+.connection-list-panel,
+.connection-editor {
+  box-shadow: none;
+}
+
+.connection-editor {
+  position: sticky;
+  top: 84px;
+}
+
+.connection-list {
+  display: grid;
+}
+
+.connection-row {
+  min-height: 88px;
+  padding: 15px 18px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  gap: 12px 18px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.connection-row:last-child {
+  border-bottom: 0;
+}
+
+.connection-row__identity {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.connection-row__identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9rem;
+}
+
+.connection-row__identity small,
+.connection-row__detail {
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+.connection-row__state,
+.connection-row__actions,
+.connection-editor__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connection-row__actions {
+  justify-content: flex-end;
+}
+
+.connection-row__detail {
+  grid-column: 1 / -1;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  line-height: 1.5;
+}
+
+.connection-editor__form {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.form-section-title {
+  margin-top: 7px;
+  padding-top: 17px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: .72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+
+.field--checkbox {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.field--checkbox input {
+  width: 20px;
+  min-height: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+}
+
+.field--checkbox small {
+  grid-column: 1 / -1;
+}
+
+.connection-editor__actions {
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.connection-editor .security-note {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+
+@media (max-width: 1180px) {
+  .connection-manager--editing {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-editor {
+    position: static;
+  }
+}
+
+@media (max-width: 780px) {
+  .connection-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .connection-row__state,
+  .connection-row__actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .connection-row__detail {
+    grid-column: auto;
+  }
+}

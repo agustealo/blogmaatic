@@ -10,13 +10,30 @@ import {
   RestateAutomationLauncher,
   createPublicationAutomationWorkflow,
 } from "@blogmaatic/automation-restate";
-import { AutomationControlPlane, SqliteControlPlaneStore } from "@blogmaatic/control-plane";
+import {
+  AutomationControlPlane,
+  SqliteControlPlaneStore,
+  SqlitePublicationGroupStore,
+} from "@blogmaatic/control-plane";
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
-import { FacebookPagesPublisher } from "@blogmaatic/extension-facebook-pages";
-import { JekyllGitPublisher } from "@blogmaatic/extension-jekyll-git";
-import { LinkedInRestPublisher } from "@blogmaatic/extension-linkedin-rest";
+import {
+  FACEBOOK_CONNECTION_CONTRACT,
+  FacebookPagesPublisher,
+} from "@blogmaatic/extension-facebook-pages";
+import {
+  JEKYLL_CONNECTION_CONTRACT,
+  JEKYLL_GIT_EXTENSION_ID,
+  JekyllGitPublisher,
+} from "@blogmaatic/extension-jekyll-git";
+import {
+  LINKEDIN_CONNECTION_CONTRACT,
+  LinkedInRestPublisher,
+} from "@blogmaatic/extension-linkedin-rest";
 import { ConnectionAuthority, ExtensionRuntime } from "@blogmaatic/extension-sdk";
-import { WordPressRestPublisher } from "@blogmaatic/extension-wordpress-rest";
+import {
+  WORDPRESS_CONNECTION_CONTRACT,
+  WordPressRestPublisher,
+} from "@blogmaatic/extension-wordpress-rest";
 import { StaticBearerAuthorizer, closeOperatorApi, startOperatorApi } from "@blogmaatic/operator-api";
 import {
   EnvironmentSecretProvider,
@@ -27,9 +44,11 @@ import {
 import { SqliteProjectionStateStore } from "@blogmaatic/state-sqlite";
 
 import type { RuntimeConfig, RuntimePaths } from "./config.js";
+import { ConnectionManager } from "./connection-manager.js";
 import { ControlRoomServer } from "./control-room-server.js";
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
+import { PublicationGroupManager } from "./publication-group-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
 
 export interface RunningRuntime {
@@ -135,6 +154,7 @@ export async function startRuntime(options: {
   let controlRoom: ControlRoomServer | undefined;
   let scheduler: SchedulerLoop | undefined;
   let controlPlaneStore: SqliteControlPlaneStore | undefined;
+  let publicationGroupStore: SqlitePublicationGroupStore | undefined;
   let projectionState: SqliteProjectionStateStore | undefined;
 
   try {
@@ -150,11 +170,38 @@ export async function startRuntime(options: {
     const connections = new ConnectionAuthority(config.connections);
     const secrets = createSecretAuthority();
     const extensions = new ExtensionRuntime(connections);
-    extensions.registerPublisher(new JekyllGitPublisher(connections));
-    extensions.registerPublisher(new WordPressRestPublisher(connections, secrets));
-    extensions.registerPublisher(new LinkedInRestPublisher(connections, secrets));
-    extensions.registerPublisher(new FacebookPagesPublisher(connections, secrets));
+    extensions.registerPublisher(new JekyllGitPublisher(connections), JEKYLL_CONNECTION_CONTRACT);
+    extensions.registerPublisher(
+      new WordPressRestPublisher(connections, secrets),
+      WORDPRESS_CONNECTION_CONTRACT,
+    );
+    extensions.registerPublisher(
+      new LinkedInRestPublisher(connections, secrets),
+      LINKEDIN_CONNECTION_CONTRACT,
+    );
+    extensions.registerPublisher(
+      new FacebookPagesPublisher(connections, secrets),
+      FACEBOOK_CONNECTION_CONTRACT,
+    );
     await inspectConfiguredConnections(extensions, connections, logger);
+
+    controlPlaneStore = new SqliteControlPlaneStore(paths.controlPlanePath);
+    publicationGroupStore = new SqlitePublicationGroupStore(paths.controlPlanePath);
+    const publicationGroups = new PublicationGroupManager({
+      store: publicationGroupStore,
+      connections,
+      extensions,
+      policySetIds: config.policies.map((policy) => policy.id),
+    });
+    const connectionManager = new ConnectionManager({
+      config,
+      configPath: paths.configPath,
+      connections,
+      extensions,
+      secrets,
+      referenceGuard: (connection) => publicationGroups.assertConnectionRemovable(connection.id),
+      logger,
+    });
 
     projectionState = new SqliteProjectionStateStore(paths.projectionStatePath);
     const kernel = new PublicationKernel(
@@ -170,12 +217,13 @@ export async function startRuntime(options: {
     if (config.restate.mode === "managed-local") await registerManagedDeployment(config);
 
     const runtime = new RestateAutomationLauncher({ url: config.restate.ingressUrl });
-    controlPlaneStore = new SqliteControlPlaneStore(paths.controlPlanePath);
     const controlPlane = new AutomationControlPlane({ store: controlPlaneStore, launcher: runtime });
     operator = await startOperatorApi({
       controlPlane,
       store: controlPlaneStore,
       runtime,
+      connections: connectionManager,
+      publicationGroups,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
         token: options.operatorToken,
@@ -220,6 +268,7 @@ export async function startRuntime(options: {
         if (workflowServer) await closeHttp2(workflowServer);
         if (managedRestate) await managedRestate.close();
         projectionState?.close();
+        publicationGroupStore?.close();
         controlPlaneStore?.close();
       },
     };
@@ -230,6 +279,7 @@ export async function startRuntime(options: {
     if (workflowServer) await closeHttp2(workflowServer).catch(() => undefined);
     if (managedRestate) await managedRestate.close().catch(() => undefined);
     projectionState?.close();
+    publicationGroupStore?.close();
     controlPlaneStore?.close();
     throw error;
   }
