@@ -63,6 +63,11 @@ export class PublicationGroupManager {
   async update(input: UpdatePublicationGroupInput): Promise<PublicationGroupRegistryEntry> {
     const current = await this.#store.getActivePublicationGroup(input.group.id);
     if (!current) throw new Error(`Publication group is not registered: ${input.group.id}`);
+    if (current.version !== input.expectedVersion) {
+      throw new Error(
+        `Publication group ${input.group.id} changed from version ${input.expectedVersion} to ${current.version}`,
+      );
+    }
     const enabled = input.enabled ?? current.enabled;
     this.#validateGroup(input.group, enabled);
     return this.#store.updatePublicationGroup(
@@ -80,6 +85,11 @@ export class PublicationGroupManager {
   ): Promise<PublicationGroupRegistryEntry> {
     const current = await this.#store.getActivePublicationGroup(groupId);
     if (!current) throw new Error(`Publication group is not registered: ${groupId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(
+        `Publication group ${groupId} changed from version ${expectedVersion} to ${current.version}`,
+      );
+    }
     if (enabled) this.#validateGroup(current.group, true);
     return this.#store.setPublicationGroupEnabled(groupId, expectedVersion, enabled, this.#now());
   }
