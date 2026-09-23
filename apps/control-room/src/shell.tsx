@@ -5,6 +5,7 @@ import { useConnection } from "./connection";
 
 const nav = [
   ["/", "Overview"],
+  ["/connections", "Connections"],
   ["/operations", "Operations"],
   ["/approvals", "Approvals"],
   ["/runs", "Runs"],
