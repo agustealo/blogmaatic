@@ -159,11 +159,12 @@ export class ManagedRestateServer {
     child.stderr.on("data", (chunk: Buffer) => { log = rolling(log, chunk); });
     const managed = new ManagedRestateServer(child, () => log);
     try {
+      // Ingress and admin are the canonical readiness surfaces. The query-engine
+      // listener is explicitly loopback-bound above but may remain disabled.
       await Promise.race([
         Promise.all([
           waitForTcp(ingressHost, ingressPort),
           waitForTcp(adminHost, adminPort),
-          waitForTcp(queryHost, queryPort),
         ]),
         managed.fatal,
       ]);
