@@ -17,6 +17,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const signed = process.argv.includes("--signed");
+const adhocSigned = process.argv.includes("--adhoc-signed");
+if (signed && adhocSigned) throw new Error("Choose exactly one macOS signing mode: --signed or --adhoc-signed");
 
 async function exists(path) {
   try {
@@ -62,22 +64,26 @@ async function machoFiles(rootPath) {
   return results.sort((a, b) => b.length - a.length || b.localeCompare(a));
 }
 
-async function signMacPayload(payload) {
-  const applicationIdentity = process.env.APPLE_DEVELOPER_ID_APPLICATION?.trim();
-  if (!applicationIdentity) {
-    throw new Error("APPLE_DEVELOPER_ID_APPLICATION is required for signed macOS packaging");
-  }
+async function signMacPayload(payload, { identity, timestamp }) {
   const files = await machoFiles(payload);
   if (files.length === 0) throw new Error("No Mach-O executables were found in the macOS payload");
+  const nodePath = resolve(payload, "opt", "blogmaatic", "bin", "node");
+  const nodeEntitlements = resolve(root, "packaging", "macos", "node-entitlements.plist");
+  if (!(await exists(nodeEntitlements))) throw new Error(`Node entitlements are missing: ${nodeEntitlements}`);
+
   for (const path of files) {
-    await execFileAsync("codesign", [
-      "--force",
-      "--timestamp",
-      "--options", "runtime",
-      "--sign", applicationIdentity,
-      path,
-    ], { encoding: "utf8" });
+    const args = ["--force", "--options", "runtime"];
+    if (timestamp) args.push("--timestamp");
+    if (resolve(path) === nodePath) args.push("--entitlements", nodeEntitlements);
+    args.push("--sign", identity, path);
+    await execFileAsync("codesign", args, { encoding: "utf8" });
     await execFileAsync("codesign", ["--verify", "--strict", "--verbose=2", path], { encoding: "utf8" });
+  }
+
+  const nodeDetails = await execFileAsync("codesign", ["--display", "--verbose=4", "--entitlements", ":-", nodePath], { encoding: "utf8" });
+  const diagnostic = `${nodeDetails.stdout}\n${nodeDetails.stderr}`;
+  if (!diagnostic.includes("runtime") || !diagnostic.includes("com.apple.security.cs.allow-jit")) {
+    throw new Error(`Bundled Node is missing Hardened Runtime/JIT signing authority: ${diagnostic}`);
   }
 }
 
@@ -109,7 +115,7 @@ await chmod(nativeLauncher, 0o755);
 
 let output;
 if (process.platform === "linux") {
-  if (signed) throw new Error("--signed is only valid for macOS native packages");
+  if (signed || adhocSigned) throw new Error("macOS signing modes are not valid for Linux packages");
   const controlDir = join(payload, "DEBIAN");
   await mkdir(controlDir, { recursive: true });
   const architecture = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : null;
@@ -131,7 +137,14 @@ if (process.platform === "linux") {
   await rm(output, { force: true });
   await execFileAsync("dpkg-deb", ["--build", "--root-owner-group", payload, output], { encoding: "utf8" });
 } else if (process.platform === "darwin") {
-  if (signed) await signMacPayload(payload);
+  if (signed) {
+    const applicationIdentity = process.env.APPLE_DEVELOPER_ID_APPLICATION?.trim();
+    if (!applicationIdentity) throw new Error("APPLE_DEVELOPER_ID_APPLICATION is required for signed macOS packaging");
+    await signMacPayload(payload, { identity: applicationIdentity, timestamp: true });
+  } else if (adhocSigned) {
+    await signMacPayload(payload, { identity: "-", timestamp: false });
+  }
+
   output = join(artifactRoot, `blogmaatic-${version}-macos-${process.arch}.pkg`);
   await rm(output, { force: true });
   const args = [
@@ -160,4 +173,9 @@ if (process.platform === "linux") {
 const digest = await sha256(output);
 await writeFile(`${output}.sha256`, `${digest}  ${basename(output)}\n`, { mode: 0o644 });
 await rm(payload, { recursive: true, force: true });
-console.log(JSON.stringify({ output, sha256: digest, signed: process.platform === "darwin" && signed }));
+console.log(JSON.stringify({
+  output,
+  sha256: digest,
+  payloadSigning: signed ? "developer-id" : adhocSigned ? "adhoc-hardened" : "none",
+  installerSigned: process.platform === "darwin" && signed,
+}));
