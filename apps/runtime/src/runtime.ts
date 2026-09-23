@@ -22,6 +22,7 @@ import {
 } from "@blogmaatic/extension-facebook-pages";
 import {
   JEKYLL_CONNECTION_CONTRACT,
+  JEKYLL_GIT_EXTENSION_ID,
   JekyllGitPublisher,
 } from "@blogmaatic/extension-jekyll-git";
 import {
@@ -198,7 +199,7 @@ export async function startRuntime(options: {
       connections,
       extensions,
       secrets,
-      removalGuard: (connection) => publicationGroups.assertConnectionRemovable(connection.id),
+      referenceGuard: (connection) => publicationGroups.assertConnectionRemovable(connection.id),
       logger,
     });
 
