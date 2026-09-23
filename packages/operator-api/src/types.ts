@@ -11,7 +11,7 @@ import type {
   ControlPlaneStore,
   PublicationAutomationEvent,
 } from "@blogmaatic/control-plane";
-import type { Publication, PublicationGroup } from "@blogmaatic/core";
+import type { JsonValue, Publication, PublicationGroup } from "@blogmaatic/core";
 
 import type { OperatorAuthorizer } from "./auth.js";
 
@@ -25,10 +25,113 @@ export interface OperatorClock {
   now(): string;
 }
 
+export type OperatorConnectionStatus = "active" | "disabled";
+export type OperatorConnectionFieldKind =
+  | "text"
+  | "url"
+  | "email"
+  | "integer"
+  | "boolean"
+  | "select"
+  | "path"
+  | "string-list";
+
+export interface OperatorConnectionFieldOption {
+  readonly value: string;
+  readonly label: string;
+}
+
+export interface OperatorConnectionSettingField {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: OperatorConnectionFieldKind;
+  readonly required?: boolean;
+  readonly description?: string;
+  readonly placeholder?: string;
+  readonly defaultValue?: JsonValue;
+  readonly min?: number;
+  readonly max?: number;
+  readonly options?: readonly OperatorConnectionFieldOption[];
+}
+
+export interface OperatorConnectionSecretField {
+  readonly key: string;
+  readonly label: string;
+  readonly required?: boolean;
+  readonly description?: string;
+}
+
+export interface OperatorConnectionType {
+  readonly manifest: {
+    readonly apiVersion: 1;
+    readonly kind: "publisher";
+    readonly connectionSchemaVersion: 1;
+    readonly id: string;
+    readonly displayName: string;
+    readonly version: string;
+    readonly capabilities: readonly string[];
+  };
+  readonly connectionContract: {
+    readonly schemaVersion: 1;
+    readonly settingsFields: readonly OperatorConnectionSettingField[];
+    readonly secretFields: readonly OperatorConnectionSecretField[];
+  };
+}
+
+export interface OperatorConnectionView {
+  readonly id: string;
+  readonly extensionId: string;
+  readonly displayName: string;
+  readonly status: OperatorConnectionStatus;
+  readonly settings: Readonly<Record<string, JsonValue>>;
+  readonly configuredSecrets: readonly string[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ConnectionCreateBody {
+  readonly extensionId: string;
+  readonly displayName: string;
+  readonly status?: OperatorConnectionStatus;
+  readonly settings: Readonly<Record<string, JsonValue>>;
+  readonly secrets?: Readonly<Record<string, string>>;
+}
+
+export interface ConnectionUpdateBody {
+  readonly displayName?: string;
+  readonly status?: OperatorConnectionStatus;
+  readonly settings?: Readonly<Record<string, JsonValue>>;
+  readonly secrets?: Readonly<Record<string, string>>;
+}
+
+export interface OperatorConnectionTestResult {
+  readonly validation: {
+    readonly valid: boolean;
+    readonly errors: readonly string[];
+  };
+  readonly health?: {
+    readonly state: "healthy" | "degraded" | "unhealthy";
+    readonly checkedAt: string;
+    readonly detail: string;
+    readonly evidence?: Readonly<Record<string, JsonValue>>;
+  };
+}
+
+export interface OperatorConnectionManager {
+  listTypes(): readonly OperatorConnectionType[];
+  list(): readonly OperatorConnectionView[];
+  get(connectionId: string): OperatorConnectionView;
+  create(input: ConnectionCreateBody & { readonly id?: string }): Promise<OperatorConnectionView>;
+  update(connectionId: string, input: ConnectionUpdateBody): Promise<OperatorConnectionView>;
+  remove(connectionId: string): Promise<OperatorConnectionView>;
+  test(connectionId: string): Promise<OperatorConnectionTestResult>;
+}
+
 export interface OperatorApiOptions {
   readonly controlPlane: AutomationControlPlane;
   readonly store: ControlPlaneStore;
   readonly runtime: OperatorAutomationRuntime;
+  readonly connections?: OperatorConnectionManager;
   readonly authorizer: OperatorAuthorizer;
   readonly clock?: OperatorClock;
   readonly logger?: boolean;
