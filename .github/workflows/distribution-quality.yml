@@ -49,8 +49,13 @@ jobs:
       - name: Stage portable distribution
         run: npm run distribution:stage
 
-      - name: Build native installer
+      - name: Build Linux native installer
+        if: runner.os == 'Linux'
         run: npm run distribution:native
+
+      - name: Build ad-hoc Hardened Runtime macOS installer
+        if: runner.os == 'macOS'
+        run: npm run distribution:native -- --adhoc-signed
 
       - name: Burn clean extracted distribution
         shell: bash
