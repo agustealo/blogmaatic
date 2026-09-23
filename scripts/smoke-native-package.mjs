@@ -48,8 +48,19 @@ function requireDoctorCheck(report, name) {
   assert.equal(check.ok, true, `${name} failed: ${check.detail ?? "no detail"}`);
 }
 
+async function verifyMacNodeSigning() {
+  const node = "/opt/blogmaatic/bin/node";
+  await exec("codesign", ["--verify", "--strict", "--verbose=2", node]);
+  const details = await exec("codesign", ["--display", "--verbose=4", "--entitlements", ":-", node]);
+  const diagnostic = `${details.stdout}\n${details.stderr}`;
+  assert.match(diagnostic, /runtime/i, `Bundled Node is not Hardened Runtime signed: ${diagnostic}`);
+  assert.match(diagnostic, /com\.apple\.security\.cs\.allow-jit/, `Bundled Node lacks JIT entitlement: ${diagnostic}`);
+}
+
 try {
   await install();
+  if (process.platform === "darwin") await verifyMacNodeSigning();
+
   const binary = "/usr/local/bin/blogmaatic";
   const version = (await exec(binary, ["version"])).stdout.trim();
   assert.match(version, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/);
