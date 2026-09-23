@@ -148,6 +148,7 @@ export interface PublicationGroupActivationBody {
 }
 
 export interface OperatorPublicationGroupManager {
+  listPolicySetIds(): readonly string[];
   list(query?: PublicationGroupListQuery): Promise<Page<PublicationGroupRegistryEntry>>;
   get(groupId: string): Promise<PublicationGroupRegistryEntry | undefined>;
   listVersions(
