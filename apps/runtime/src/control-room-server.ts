@@ -47,15 +47,18 @@ function proxyHeaders(request: IncomingMessage, operatorToken: string): Headers 
   return headers;
 }
 
-function sameOriginProxyRequest(request: IncomingMessage): boolean {
+function sameOriginProxyRequest(request: IncomingMessage, controlRoomOrigin: string): boolean {
   const fetchSite = request.headers["sec-fetch-site"];
   if (typeof fetchSite === "string" && fetchSite !== "same-origin" && fetchSite !== "none") return false;
 
-  const origin = request.headers.origin;
-  if (typeof origin !== "string") return true;
+  if (!controlRoomOrigin) return false;
+  const expected = new URL(controlRoomOrigin);
   const host = request.headers.host;
-  if (!host) return false;
-  return origin === `http://${host}`;
+  if (!host || host !== expected.host) return false;
+
+  const origin = request.headers.origin;
+  if (typeof origin === "string" && origin !== expected.origin) return false;
+  return true;
 }
 
 function forbiddenProxy(response: ServerResponse): void {
@@ -65,7 +68,7 @@ function forbiddenProxy(response: ServerResponse): void {
   response.end(JSON.stringify({
     error: {
       code: "CONTROL_ROOM_ORIGIN_REJECTED",
-      message: "Control Room API requests must originate from the local Control Room",
+      message: "Control Room API requests must originate from the bound local Control Room origin",
     },
   }));
 }
@@ -75,8 +78,9 @@ async function proxy(
   response: ServerResponse,
   operatorOrigin: string,
   operatorToken: string,
+  controlRoomOrigin: string,
 ): Promise<void> {
-  if (!sameOriginProxyRequest(request)) {
+  if (!sameOriginProxyRequest(request, controlRoomOrigin)) {
     forbiddenProxy(response);
     return;
   }
@@ -183,11 +187,13 @@ export class ControlRoomServer {
       throw new Error(`Control Room production build is missing: ${index}. Run npm run build first.`);
     }
     if (!options.operatorToken.trim()) throw new Error("Control Room operator token is required");
+
+    let controlRoomOrigin = "";
     const server = createServer((request, response) => {
       securityHeaders(response);
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
       const task = pathname === "/api" || pathname.startsWith("/api/")
-        ? proxy(request, response, options.operatorOrigin, options.operatorToken)
+        ? proxy(request, response, options.operatorOrigin, options.operatorToken, controlRoomOrigin)
         : serveStatic(request, response, root);
       void task.catch((error: unknown) => {
         if (response.headersSent) return response.destroy(error instanceof Error ? error : undefined);
@@ -199,16 +205,20 @@ export class ControlRoomServer {
       server.once("error", reject);
       server.listen(options.port, options.host, () => {
         server.off("error", reject);
+        const bound = server.address();
+        if (!bound || typeof bound === "string") {
+          reject(new Error("Control Room server did not expose a TCP address"));
+          return;
+        }
+        controlRoomOrigin = httpOrigin(options.host, (bound as AddressInfo).port);
         resolveListen();
       });
     });
-    const bound = server.address();
-    if (!bound || typeof bound === "string") {
+    if (!controlRoomOrigin) {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-      throw new Error("Control Room server did not expose a TCP address");
+      throw new Error("Control Room server did not establish its bound origin");
     }
-    const port = (bound as AddressInfo).port;
-    return new ControlRoomServer(server, httpOrigin(options.host, port));
+    return new ControlRoomServer(server, controlRoomOrigin);
   }
 
   async close(): Promise<void> {

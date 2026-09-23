@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,22 @@ async function listen(server) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-test("Control Room host owns proxy authentication and rejects cross-site browser requests", async () => {
+async function rawRequest(url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(url, { headers }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolve({
+        status: response.statusCode,
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    req.once("error", reject);
+    req.end();
+  });
+}
+
+test("Control Room host owns proxy authentication and rejects cross-site or rebound origins", async () => {
   const root = await mkdtemp(join(tmpdir(), "blogmaatic-control-room-"));
   await writeFile(join(root, "index.html"), "<main>control room</main>");
   let receivedAuthorization;
@@ -66,6 +81,16 @@ test("Control Room host owns proxy authentication and rejects cross-site browser
     assert.equal(upstreamRequests, 1);
     const body = await rejected.json();
     assert.equal(body.error.code, "CONTROL_ROOM_ORIGIN_REJECTED");
+
+    const boundPort = new URL(host.address).port;
+    const rebound = await rawRequest(`${host.address}/api/v1/automations`, {
+      host: `attacker.example:${boundPort}`,
+      origin: `http://attacker.example:${boundPort}`,
+      "sec-fetch-site": "same-origin",
+    });
+    assert.equal(rebound.status, 403);
+    assert.equal(upstreamRequests, 1);
+    assert.equal(JSON.parse(rebound.body).error.code, "CONTROL_ROOM_ORIGIN_REJECTED");
   } finally {
     await host.close();
     await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
