@@ -31,6 +31,7 @@ export interface ConnectionView {
 }
 
 export interface CreateConnectionInput {
+  readonly id?: string;
   readonly extensionId: string;
   readonly displayName: string;
   readonly status?: ConnectionStatus;
@@ -61,6 +62,14 @@ export interface ConnectionManagerOptions {
   readonly createId?: () => string;
   readonly removalGuard?: (connection: ConnectionRecord) => Promise<void> | void;
   readonly logger?: Pick<Console, "error">;
+}
+
+function requireConnectionId(value: string): string {
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(normalized)) {
+    throw new Error("Connection id must be 1-160 safe identifier characters");
+  }
+  return normalized;
 }
 
 function requireDisplayName(value: string): string {
@@ -223,8 +232,8 @@ export class ConnectionManager {
       const contract = this.#extensions.getConnectionContract(extensionId);
       const suppliedSecrets = input.secrets ?? {};
       validateInputAgainstContract(contract, input.settings, suppliedSecrets);
-      const id = this.#createId();
-      if (!id.trim() || this.#connections.has(id)) throw new Error("Generated connection id is invalid or already in use");
+      const id = requireConnectionId(input.id ?? this.#createId());
+      if (this.#connections.has(id)) throw new Error(`Connection already registered: ${id}`);
       const now = this.#now();
       const staged = await this.#stageSecrets(id, suppliedSecrets);
       const candidate: ConnectionRecord = {
