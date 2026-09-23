@@ -31,7 +31,6 @@ function stringifySetting(field: OperatorConnectionSettingField, value: unknown)
   }
   if (value === undefined || value === null) {
     const fallback = field.defaultValue;
-    if (field.kind === "boolean") return fallback === true;
     if (Array.isArray(fallback)) return fallback.filter((item): item is string => typeof item === "string").join("\n");
     return fallback === undefined || fallback === null ? "" : String(fallback);
   }
@@ -246,6 +245,19 @@ export function ConnectionsPage() {
     setEditor(editorForConnection(type, connection));
   }, [typeById]);
 
+  const testConnection = useCallback(async (connectionId: string) => {
+    setBusy(`test:${connectionId}`);
+    setError(null);
+    try {
+      const result = await client.testConnection(connectionId);
+      setHealth((current) => ({ ...current, [connectionId]: result }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Connection test failed"));
+    } finally {
+      setBusy(null);
+    }
+  }, [client]);
+
   const save = useCallback(async (event: FormEvent) => {
     event.preventDefault();
     if (!editor || !selectedType) return;
@@ -266,7 +278,8 @@ export function ConnectionsPage() {
         const created = await client.createConnection(input);
         setConnections((current) => [...current, created].sort((a, b) => a.displayName.localeCompare(b.displayName)));
         setEditor(null);
-        await test(created.id);
+        const result = await client.testConnection(created.id);
+        setHealth((current) => ({ ...current, [created.id]: result }));
       } else if (editor.connectionId) {
         const input: ConnectionUpdateBody = {
           displayName: editor.displayName.trim(),
@@ -284,19 +297,6 @@ export function ConnectionsPage() {
       setBusy(null);
     }
   }, [client, editor, selectedConnection, selectedType]);
-
-  const test = useCallback(async (connectionId: string) => {
-    setBusy(`test:${connectionId}`);
-    setError(null);
-    try {
-      const result = await client.testConnection(connectionId);
-      setHealth((current) => ({ ...current, [connectionId]: result }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : new Error("Connection test failed"));
-    } finally {
-      setBusy(null);
-    }
-  }, [client]);
 
   const remove = useCallback(async (connection: OperatorConnectionView) => {
     if (!window.confirm(`Remove ${connection.displayName}? Enabled Publication Groups must be updated first.`)) return;
@@ -353,7 +353,7 @@ export function ConnectionsPage() {
                         <StatusPill value={healthLabel(result)} tone={healthTone(result)} />
                       </div>
                       <div className="connection-row__actions">
-                        <button className="button button--quiet" type="button" onClick={() => void test(connection.id)} disabled={busy !== null}>
+                        <button className="button button--quiet" type="button" onClick={() => void testConnection(connection.id)} disabled={busy !== null}>
                           {busy === `test:${connection.id}` ? "Testing…" : "Test"}
                         </button>
                         <button className="button button--quiet" type="button" onClick={() => startEdit(connection)} disabled={busy !== null}>Edit</button>
