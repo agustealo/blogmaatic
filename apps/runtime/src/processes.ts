@@ -9,7 +9,9 @@ import { canonicalLoopbackHost, socketAddress } from "./network.js";
 
 function candidateRoots(): string[] {
   const roots = new Set<string>();
-  for (const start of [process.cwd(), dirname(fileURLToPath(import.meta.url))]) {
+  // The runtime's own installation is authoritative. process.cwd() is a
+  // development fallback only and must never shadow packaged helper binaries.
+  for (const start of [dirname(fileURLToPath(import.meta.url)), process.cwd()]) {
     let current = resolve(start);
     while (true) {
       roots.add(current);
@@ -163,8 +165,6 @@ export class ManagedRestateServer {
     child.stderr.on("data", (chunk: Buffer) => { log = rolling(log, chunk); });
     const managed = new ManagedRestateServer(child, () => log);
     try {
-      // Ingress and admin are the canonical readiness surfaces. The query-engine
-      // listener is explicitly loopback-bound above but may remain disabled.
       await Promise.race([
         Promise.all([
           waitForTcp(ingressHost, ingressPort),
