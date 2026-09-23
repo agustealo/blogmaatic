@@ -4,6 +4,7 @@ import type {
   ApprovalDecisionResponse,
   AuditListQuery,
   AuditPage,
+  AutomationDefinition,
   AutomationListQuery,
   AutomationPage,
   AutomationRegistryEntry,
@@ -252,6 +253,13 @@ export class OperatorClient {
 
   listAutomations(query: AutomationListQuery = {}): Promise<AutomationPage> {
     return this.#request<AutomationPage>(pathWithQuery("/v1/automations", query));
+  }
+
+  registerAutomation(input: AutomationDefinition): Promise<AutomationRegistryEntry> {
+    return this.#request<AutomationRegistryEntry>("/v1/automations", {
+      method: "POST",
+      body: input,
+    });
   }
 
   listAutomationVersions(
