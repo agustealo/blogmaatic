@@ -138,6 +138,16 @@ try {
   assert.equal((await waitForHttp("http://127.0.0.1:4317/healthz", runtime.state)).status, 200);
   const controlRoom = await waitForHttp("http://127.0.0.1:4320/", runtime.state);
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
+
+  const proxied = await fetch("http://127.0.0.1:4320/api/v1/automations?limit=1", {
+    headers: {
+      origin: "http://127.0.0.1:4320",
+      "sec-fetch-site": "same-origin",
+    },
+  });
+  assert.equal(proxied.status, 200, `Control Room proxy returned ${proxied.status}: ${await proxied.text()}`);
+  assert.equal(proxied.headers.get("cache-control"), "no-store");
+
   await stopInstalledRuntime(runtime);
   runtime = undefined;
 

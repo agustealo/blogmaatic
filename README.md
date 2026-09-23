@@ -91,11 +91,9 @@ blogmaatic doctor
 blogmaatic start
 ```
 
-Retrieve the local operator credential only when needed:
+Open the Control Room shown by `blogmaatic start`. The bundled browser UI does not ask for or store the local Operator API bearer credential. Its same-origin `/api` proxy keeps that authority inside the runtime and injects it server-side after origin checks.
 
-```bash
-blogmaatic token
-```
+`blogmaatic token` remains an advanced command for an explicit external Operator API client. It is not part of the normal consumer Control Room flow.
 
 The application state directory is separate from the installation, so replacing the installed runtime does not move publication/run state, the operator credential, SQLite control-plane state, or managed Restate state.
 

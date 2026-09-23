@@ -222,6 +222,15 @@ try {
   const controlRoom = await waitForHttp("http://127.0.0.1:4320/", first.state);
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
+  const controlRoomApi = await fetch("http://127.0.0.1:4320/api/v1/automations?limit=1", {
+    headers: {
+      origin: "http://127.0.0.1:4320",
+      "sec-fetch-site": "same-origin",
+    },
+  });
+  await expectStatus(controlRoomApi, 200);
+  assert.equal(controlRoomApi.headers.get("cache-control"), "no-store");
+
   const registration = await api(token, "/v1/automations", { method: "POST", body: JSON.stringify(automation()) });
   await expectStatus(registration, 201);
   const launch = await api(token, "/v1/runs/manual", {

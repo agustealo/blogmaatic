@@ -1,13 +1,13 @@
 # Local Runtime and First-Run Bootstrap
 
-Slice 11 turns the proven Blogmaatic components into one local application runtime without creating a second publishing or workflow authority.
+Slice 11 turns the proven Blogmaatic components into one local application runtime without creating a second publishing or workflow authority. Slice 14 tightens the consumer authentication boundary so the bundled browser UI no longer handles the Operator API bearer credential.
 
 ## Runtime spine
 
 ```text
 Control Room :4320
       |
-      | /api proxy (loopback only)
+      | /api proxy (loopback only, runtime-authenticated)
       v
 Operator API :4317
       |
@@ -39,7 +39,7 @@ The local data directory contains separate authorities:
 - `restate/`: the managed Restate server's durable execution state;
 - `secrets/operator.token`: the local Operator API bearer credential.
 
-The operator credential file is created with owner-only permissions on POSIX systems and is never copied into `runtime.json`, URLs, the Control Room bundle, or Git.
+The operator credential file is created with owner-only permissions on POSIX systems and is never copied into `runtime.json`, URLs, the Control Room bundle, browser state, local storage, or Git.
 
 ## First run
 
@@ -52,13 +52,9 @@ npm run runtime:start
 
 For an existing Jekyll repository, initialization discovers its current Git branch and Git author identity. `--author-name` and `--author-email` may be supplied when the repository has no local Git identity. Publishing does not push by default. `--push` must be explicit.
 
-Retrieve the local operator credential only when needed by the Control Room:
+The bundled Control Room requires no credential-copy step. Once the runtime is running, the browser connects to the same-origin `/api` proxy. The proxy owns the local operator credential and injects it server-side only after origin/fetch-site validation.
 
-```bash
-npm run runtime:token
-```
-
-The token command intentionally writes only the credential to stdout so it can be copied or piped deliberately.
+`npm run runtime:token` remains an advanced escape hatch for an explicit external Operator API client. It is not part of the normal Control Room flow.
 
 ## Managed Restate
 
@@ -80,9 +76,15 @@ Schedules are not inert configuration. The runtime owns one polling loop which c
 
 Only one scheduler dispatch may be active at a time. Shutdown stops future timer creation and waits for the active dispatch to finish before any dependent runtime authority is closed. This prevents SQLite from being closed underneath a schedule claim or a successfully submitted durable run from being left unrecorded.
 
-## Control Room hosting
+## Control Room hosting and authentication
 
-The production Control Room bundle is served by a loopback-only static host. `/api/*` is a narrow reverse proxy to the Operator API. It forwards only the headers the operator contract needs, does not forward cookies, does not follow redirects, and applies restrictive browser security headers. Browser routing falls back to `index.html`; file traversal is rejected. IPv6 loopback origins are emitted with bracketed host syntax so `::1` configurations produce valid URLs.
+The production Control Room bundle is served by a loopback-only static host. `/api/*` is a narrow reverse proxy to the Operator API.
+
+The browser never supplies or receives the Operator API bearer credential. The runtime proxy owns that credential and replaces any incoming `Authorization` header with its own server-side authority. Before doing so, it rejects browser requests whose `Sec-Fetch-Site` is not `same-origin`/`none` or whose explicit `Origin` does not match the Control Room host. Proxied API responses are marked `no-store`.
+
+The proxy forwards only the non-secret headers the operator contract needs, does not forward cookies, does not follow redirects, and applies restrictive browser security headers including same-origin resource policy. Browser routing falls back to `index.html`; file traversal is rejected. IPv6 loopback origins are emitted with bracketed host syntax so `::1` configurations produce valid URLs.
+
+Direct Operator API clients remain bearer-authenticated and may use the advanced token command deliberately. Removing bearer material from the bundled browser UI does not weaken the Operator API boundary.
 
 ## Shutdown
 
@@ -103,8 +105,12 @@ The workflow endpoint is closed before managed Restate so no new local workflow 
 
 The runtime integration burn uses the real managed Restate server and a real temporary Git/Jekyll repository. It drives the path through the authenticated Operator API, durable Restate workflow, publication kernel, and Jekyll/Git extension, verifies the generated post and Git commit, reaches the same run through the Control Room proxy, shuts the runtime down, starts it again from the same SQLite and Restate state, and confirms the completed result is still available without creating another Git commit.
 
+Distribution burns additionally require the packaged archive and the installed native package to call the Control Room `/api` surface without a browser bearer header. The request succeeds only when the runtime-owned proxy injects the real operator credential.
+
 No fake publisher or in-memory workflow substitute is used for this proof.
 
 ## Extension posture
 
 Slice 11 wires the real Jekyll/Git publisher into first-run because it can be proven locally without provider credentials. Other publisher packages remain extensions and are not silently fabricated or auto-configured. A runtime configuration that references an extension not wired into the active runtime fails closed.
+
+Publisher credential storage is a separate authority from the local operator token. The existing `@blogmaatic/secrets` abstraction will be extended with a true OS credential-store adapter; this slice deliberately does not fake that boundary with shell commands that can expose secret material in process arguments.
