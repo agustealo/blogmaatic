@@ -21,6 +21,10 @@ export const WORDPRESS_CONNECTION_CONTRACT: ConnectionContract = {
   secretFields: [
     { key: "applicationPassword", label: "Application Password", required: true, description: "Stored only in the OS credential vault." },
   ],
+  defaultRoute: {
+    channel: "posts",
+    requiredCapabilities: ["article.create", "article.inspect"],
+  },
 };
 
 function normalizeHttpUrl(value: string, label: string): string {
