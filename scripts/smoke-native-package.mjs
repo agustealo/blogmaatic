@@ -33,15 +33,26 @@ async function install() {
 }
 
 async function cleanupInstall() {
-  await exec("sudo", ["rm", "-f", "/usr/local/bin/blogmaatic"]).catch(() => undefined);
-  await exec("sudo", ["rm", "-rf", "/opt/blogmaatic"]).catch(() => undefined);
+  if (process.platform === "linux") {
+    await exec("sudo", ["dpkg", "-r", "blogmaatic"]).catch(() => undefined);
+  } else if (process.platform === "darwin") {
+    await exec("sudo", ["rm", "-f", "/usr/local/bin/blogmaatic"]).catch(() => undefined);
+    await exec("sudo", ["rm", "-rf", "/opt/blogmaatic"]).catch(() => undefined);
+    await exec("sudo", ["pkgutil", "--forget", "com.blogmaatic.runtime"]).catch(() => undefined);
+  }
+}
+
+function requireDoctorCheck(report, name) {
+  const check = Array.isArray(report.checks) ? report.checks.find((candidate) => candidate?.name === name) : undefined;
+  assert.ok(check, `Doctor report is missing ${name}: ${JSON.stringify(report)}`);
+  assert.equal(check.ok, true, `${name} failed: ${check.detail ?? "no detail"}`);
 }
 
 try {
   await install();
   const binary = "/usr/local/bin/blogmaatic";
   const version = (await exec(binary, ["version"])).stdout.trim();
-  assert.match(version, /^Blogmaatic \d+\.\d+\.\d+/);
+  assert.match(version, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/);
 
   await git(["init", "-b", "main"]);
   await git(["config", "user.name", "Native Package Fixture"]);
@@ -62,11 +73,9 @@ try {
   const doctor = await exec(binary, ["doctor", "--json", "--data-dir", dataDir]);
   const report = JSON.parse(doctor.stdout);
   assert.equal(report.ok, true, JSON.stringify(report));
-  assert.equal(report.checks?.config?.ok, true);
-  assert.equal(report.checks?.operatorToken?.ok, true);
-  assert.equal(report.checks?.controlRoom?.ok, true);
-  assert.equal(report.checks?.restateServer?.ok, true);
-  assert.equal(report.checks?.restateCli?.ok, true);
+  for (const name of ["product", "config", "operator-credential", "control-room", "restate-server", "restate-cli"]) {
+    requireDoctorCheck(report, name);
+  }
 
   console.log(`Native installer smoke passed: ${basename(packagePath)}`);
 } finally {
