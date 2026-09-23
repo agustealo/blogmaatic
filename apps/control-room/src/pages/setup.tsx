@@ -156,14 +156,7 @@ function PublicationGroupStep({ readiness, onCreated }: {
       const routes = chosen.map((connection) => {
         const type = types.get(connection.extensionId);
         if (!type) throw new Error(`Publisher contract is unavailable for ${connection.extensionId}`);
-        const capabilities = new Set(type.manifest.capabilities);
-        if (!capabilities.has("article.create")) {
-          throw new Error(`${type.manifest.displayName} cannot create publications`);
-        }
-        const requiredCapabilities = [
-          "article.create",
-          ...(capabilities.has("article.inspect") ? ["article.inspect"] : []),
-        ];
+        const route = type.connectionContract.defaultRoute;
         return {
           id: routeId(connection),
           enabled: true,
@@ -171,9 +164,10 @@ function PublicationGroupStep({ readiness, onCreated }: {
           destination: {
             extensionId: connection.extensionId,
             connectionId: connection.id,
-            channel: "primary",
+            channel: route.channel,
           },
-          requiredCapabilities,
+          requiredCapabilities: route.requiredCapabilities,
+          ...(route.variant ? { variant: route.variant } : {}),
         };
       });
       await client.createPublicationGroup({
