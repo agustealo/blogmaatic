@@ -150,12 +150,19 @@ test("connection removal is blocked only by enabled group routes", async () => {
     assert.equal(disabled.version, 2);
     await manager.assertConnectionRemovable("jekyll-active");
 
-    await manager.update({
+    const parkedRoute = await manager.update({
       group: group({ enabled: false }),
       expectedVersion: 2,
-      enabled: true,
+      enabled: false,
     });
+    assert.equal(parkedRoute.version, 3);
+    assert.equal(parkedRoute.enabled, false);
     await manager.assertConnectionRemovable("jekyll-active");
+
+    await assert.rejects(
+      () => manager.setEnabled("primary", 3, true),
+      /must contain at least one enabled route/,
+    );
   });
 });
 
