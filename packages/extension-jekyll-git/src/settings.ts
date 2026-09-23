@@ -24,6 +24,10 @@ export const JEKYLL_CONNECTION_CONTRACT: ConnectionContract = {
     { key: "assetSourceRoots", label: "Allowed local asset roots", kind: "string-list", description: "Absolute directories from which managed local assets may be copied." },
   ],
   secretFields: [],
+  defaultRoute: {
+    channel: "posts",
+    requiredCapabilities: ["article.create", "article.inspect"],
+  },
 };
 
 export function parseSettings(connection: ConnectionRecord): JekyllGitSettings {
