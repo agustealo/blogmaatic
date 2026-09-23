@@ -387,7 +387,7 @@ export function FirstRunEntry({ ready }: { readonly ready: ReactNode }) {
   const check = useCallback(async () => {
     setState({ loading: true, ready: false, error: null });
     try {
-      const readiness = await loadOnboardingReadiness(client);
+      const readiness = await loadOnboardingReadiness(client, { probeConnections: false });
       setState({ loading: false, ready: readiness.stage === "ready", error: null });
     } catch (cause) {
       setState({
