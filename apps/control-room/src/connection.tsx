@@ -42,9 +42,10 @@ export function ConnectionProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<OperatorSession | null>(null);
 
   const connect = useCallback(async () => {
+    const sessionProof = localSessionProof();
     const client = new OperatorClient({
       baseUrl: localProxyBaseUrl,
-      ...(localSessionProof() ? { sessionProof: localSessionProof() } : {}),
+      ...(sessionProof ? { sessionProof } : {}),
     });
     const health = await client.health();
     if (health.status !== "ok") throw new Error("Operator API health check did not return ok");
