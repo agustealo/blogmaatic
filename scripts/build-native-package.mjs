@@ -8,7 +8,6 @@ import {
   readFile,
   readdir,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -99,7 +98,14 @@ await cp(portableStage, join(payload, "opt", "blogmaatic"), {
   verbatimSymlinks: true,
 });
 await mkdir(join(payload, "usr", "local", "bin"), { recursive: true });
-await symlink("../../../opt/blogmaatic/bin/blogmaatic", join(payload, "usr", "local", "bin", "blogmaatic"));
+const nativeLauncher = join(payload, "usr", "local", "bin", "blogmaatic");
+await writeFile(nativeLauncher, [
+  "#!/bin/sh",
+  "set -eu",
+  "exec /opt/blogmaatic/bin/blogmaatic \"$@\"",
+  "",
+].join("\n"), { mode: 0o755 });
+await chmod(nativeLauncher, 0o755);
 
 let output;
 if (process.platform === "linux") {
