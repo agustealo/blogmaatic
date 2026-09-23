@@ -30,11 +30,20 @@ The Control Room is a client. It does not open SQLite, execute workflows, publis
 - bounded API error parsing;
 - automation, run, approval, schedule, operations and audit calls.
 
-The package uses no Node-only runtime APIs and can be reused by a future Tauri shell.
+The package uses browser/ECMAScript type libraries rather than Node globals and can be reused by a future Tauri shell.
 
 ## Credential posture
 
 The browser Control Room never writes the bearer token to `localStorage`, `sessionStorage`, IndexedDB, a URL, or application configuration. The token lives only in the in-memory `OperatorClient` instance and disappears on reload or disconnect.
+
+Authenticated browser requests:
+
+- send the bearer only in the `Authorization` header;
+- omit ambient browser credentials/cookies;
+- refuse HTTP redirects instead of forwarding an authenticated request chain;
+- suppress the referrer header;
+- reject protocol-relative, backslash-bearing or query/hash-bearing root-relative API bases that could make the credential destination ambiguous;
+- accept absolute API origins only over HTTP or HTTPS and reject URL-embedded credentials.
 
 Theme preference may be persisted because it is not a credential.
 
@@ -59,6 +68,8 @@ BLOGMAATIC_DEV_API_TARGET=http://127.0.0.1:4317 npm run dev:control-room
 
 The browser-visible API prefix defaults to `/api` and may be set at build time with `VITE_BLOGMAATIC_API_BASE`.
 
+A production static server must provide SPA fallback to `index.html` for Control Room routes such as `/runs/:runId` and `/automations/:automationId`.
+
 ## Surfaces
 
 The first Control Room ships real operator surfaces only:
@@ -67,11 +78,24 @@ The first Control Room ships real operator surfaces only:
 - Operations: live attention projection with server-side kind filtering and operation-level pagination.
 - Approvals: current `approval_required` operations with server-validated approve/reject actions and optional notes.
 - Runs: live phase filtering, dispatch filtering and terminal result inspection.
-- Automations: active heads, enable/disable controls and immutable version history with explicit activation.
+- Automations: active heads, enable/disable controls and fully paginated immutable version history with explicit activation.
 - Schedules: durable timezone-aware schedule inspection.
 - Audit: cursor-paginated intent/outcome evidence with operator filters.
 
+Collection refresh and load-more requests are serialized through one request-generation authority so stale pagination responses cannot overwrite a newer filter or refresh.
+
 There are no generated charts, fake KPIs, sample runs, dummy schedules, fabricated health signals, or browser-owned status tables.
+
+## Mutation interaction contract
+
+Read and navigation surfaces remain immediate. High-impact operator mutations are intentionally two-step interactions:
+
+1. the operator selects approve/reject, enable/disable, or version activation;
+2. the UI exposes the exact pending decision and requires an explicit confirmation click;
+3. only the confirmed action reaches the Operator API;
+4. the server remains authoritative and revalidates permissions, expected approval role/revision, automation version and durable state.
+
+The browser confirmation is an ergonomics/safety guard, not authorization and not a replacement for server validation or the audit ledger.
 
 ## Tauri boundary
 
