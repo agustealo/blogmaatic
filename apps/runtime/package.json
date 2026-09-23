@@ -16,9 +16,13 @@
     "@blogmaatic/automation-restate": "0.1.0",
     "@blogmaatic/control-plane": "0.1.0",
     "@blogmaatic/core": "0.1.0",
+    "@blogmaatic/extension-facebook-pages": "0.1.0",
     "@blogmaatic/extension-jekyll-git": "0.1.0",
+    "@blogmaatic/extension-linkedin-rest": "0.1.0",
     "@blogmaatic/extension-sdk": "0.1.0",
+    "@blogmaatic/extension-wordpress-rest": "0.1.0",
     "@blogmaatic/operator-api": "0.1.0",
+    "@blogmaatic/secrets": "0.1.0",
     "@blogmaatic/state-sqlite": "0.1.0",
     "@restatedev/restate-sdk": "1.17.0"
   },
