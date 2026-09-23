@@ -5,6 +5,8 @@ export const OPERATOR_PERMISSIONS = [
   "automations:write",
   "connections:read",
   "connections:write",
+  "publication-groups:read",
+  "publication-groups:write",
   "schedules:read",
   "schedules:write",
   "schedules:dispatch",
