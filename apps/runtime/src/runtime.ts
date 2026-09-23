@@ -221,6 +221,7 @@ export async function startRuntime(options: {
       store: controlPlaneStore,
       runtime,
       connections: connectionManager,
+      publicationGroups,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
         token: options.operatorToken,
