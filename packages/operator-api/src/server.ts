@@ -20,6 +20,10 @@ import {
   type OperatorPrincipal,
 } from "./auth.js";
 import { listOperatorOperations } from "./operations.js";
+import {
+  PublicationGroupApiError,
+  registerPublicationGroupRoutes,
+} from "./publication-groups.js";
 import { listOperatorRuns } from "./runs.js";
 import type {
   ManualRunBody,
@@ -158,6 +162,10 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       void reply.code(400).send(errorBody(request, "INVALID_REQUEST", error.message));
       return;
     }
+    if (error instanceof PublicationGroupApiError) {
+      void reply.code(error.statusCode).send(errorBody(request, error.code, error.message));
+      return;
+    }
     if (error instanceof OperatorApiError) {
       void reply.code(error.statusCode).send(errorBody(request, error.code, error.message));
       return;
@@ -274,6 +282,8 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
     connectionOr404(manager, connectionId);
     return domainCall(() => manager.test(connectionId));
   });
+
+  registerPublicationGroupRoutes(app, options);
 
   app.get("/v1/automations", async (request) => {
     await authorize(request, "automations:read");
