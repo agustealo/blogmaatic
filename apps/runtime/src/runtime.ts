@@ -161,6 +161,7 @@ export async function startRuntime(options: {
       host: config.controlRoom.host,
       port: config.controlRoom.port,
       operatorOrigin: operator.address.replace(/\/$/, ""),
+      operatorToken: options.operatorToken,
     });
 
     // Startup becomes externally active only after every fallible listener is ready.

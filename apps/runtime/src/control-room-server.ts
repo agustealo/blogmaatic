@@ -21,6 +21,7 @@ function securityHeaders(response: ServerResponse): void {
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "no-referrer");
   response.setHeader("x-frame-options", "DENY");
+  response.setHeader("cross-origin-resource-policy", "same-origin");
   response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
 }
 
@@ -37,16 +38,49 @@ async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): P
   return Uint8Array.from(Buffer.concat(chunks));
 }
 
-function proxyHeaders(request: IncomingMessage): Headers {
-  const headers = new Headers();
-  for (const name of ["accept", "authorization", "content-type", "idempotency-key"] as const) {
+function proxyHeaders(request: IncomingMessage, operatorToken: string): Headers {
+  const headers = new Headers({ authorization: `Bearer ${operatorToken}` });
+  for (const name of ["accept", "content-type", "idempotency-key"] as const) {
     const value = request.headers[name];
     if (typeof value === "string") headers.set(name, value);
   }
   return headers;
 }
 
-async function proxy(request: IncomingMessage, response: ServerResponse, operatorOrigin: string): Promise<void> {
+function sameOriginProxyRequest(request: IncomingMessage): boolean {
+  const fetchSite = request.headers["sec-fetch-site"];
+  if (typeof fetchSite === "string" && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+
+  const origin = request.headers.origin;
+  if (typeof origin !== "string") return true;
+  const host = request.headers.host;
+  if (!host) return false;
+  return origin === `http://${host}`;
+}
+
+function forbiddenProxy(response: ServerResponse): void {
+  response.statusCode = 403;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.end(JSON.stringify({
+    error: {
+      code: "CONTROL_ROOM_ORIGIN_REJECTED",
+      message: "Control Room API requests must originate from the local Control Room",
+    },
+  }));
+}
+
+async function proxy(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operatorOrigin: string,
+  operatorToken: string,
+): Promise<void> {
+  if (!sameOriginProxyRequest(request)) {
+    forbiddenProxy(response);
+    return;
+  }
+
   try {
     const incomingUrl = new URL(request.url ?? "/", "http://localhost");
     const upstreamPath = incomingUrl.pathname.slice("/api".length) || "/";
@@ -54,14 +88,15 @@ async function proxy(request: IncomingMessage, response: ServerResponse, operato
     const body = await requestBody(request);
     const upstream = await fetch(target, {
       method: request.method ?? "GET",
-      headers: proxyHeaders(request),
+      headers: proxyHeaders(request, operatorToken),
       redirect: "manual",
       credentials: "omit",
       referrerPolicy: "no-referrer",
       ...(body === undefined ? {} : { body }),
     });
     response.statusCode = upstream.status;
-    for (const name of ["content-type", "cache-control", "www-authenticate", "x-content-type-options"] as const) {
+    response.setHeader("cache-control", "no-store");
+    for (const name of ["content-type", "www-authenticate", "x-content-type-options"] as const) {
       const value = upstream.headers.get(name);
       if (value) response.setHeader(name, value);
     }
@@ -69,6 +104,7 @@ async function proxy(request: IncomingMessage, response: ServerResponse, operato
   } catch (error) {
     response.statusCode = 502;
     response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("cache-control", "no-store");
     response.end(JSON.stringify({
       error: {
         code: "LOCAL_PROXY_UNAVAILABLE",
@@ -137,6 +173,7 @@ export class ControlRoomServer {
     readonly host: string;
     readonly port: number;
     readonly operatorOrigin: string;
+    readonly operatorToken: string;
   }): Promise<ControlRoomServer> {
     const root = resolve(options.root);
     const index = resolve(root, "index.html");
@@ -145,11 +182,12 @@ export class ControlRoomServer {
     } catch {
       throw new Error(`Control Room production build is missing: ${index}. Run npm run build first.`);
     }
+    if (!options.operatorToken.trim()) throw new Error("Control Room operator token is required");
     const server = createServer((request, response) => {
       securityHeaders(response);
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
       const task = pathname === "/api" || pathname.startsWith("/api/")
-        ? proxy(request, response, options.operatorOrigin)
+        ? proxy(request, response, options.operatorOrigin, options.operatorToken)
         : serveStatic(request, response, root);
       void task.catch((error: unknown) => {
         if (response.headersSent) return response.destroy(error instanceof Error ? error : undefined);

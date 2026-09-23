@@ -22,7 +22,7 @@ function initialTheme(): Theme {
 }
 
 export function AppShell() {
-  const { session, disconnect } = useConnection();
+  const { session } = useConnection();
   const [theme, setTheme] = useState<Theme>(initialTheme);
 
   useEffect(() => {
@@ -46,7 +46,7 @@ export function AppShell() {
           ))}
         </nav>
         <div className="sidebar__footer">
-          <span className="connection-chip"><i /> Connected</span>
+          <span className="connection-chip"><i /> Runtime session</span>
           <small title={session?.baseUrl}>{session?.baseUrl}</small>
         </div>
       </aside>
@@ -59,7 +59,6 @@ export function AppShell() {
             <button className="icon-button" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">
               {theme === "dark" ? "☀" : "◐"}
             </button>
-            <button className="button button--quiet" type="button" onClick={disconnect}>Disconnect</button>
           </div>
         </header>
         <div className="mobile-nav" aria-label="Mobile navigation">

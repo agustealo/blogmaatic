@@ -34,6 +34,24 @@ test("health is public while authenticated queries carry only the bearer credent
   assert.equal(calls[1].init.referrerPolicy, "no-referrer");
 });
 
+test("same-origin proxy mode sends no browser bearer credential", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const client = new OperatorClient({ baseUrl: "/api", fetchImpl });
+
+  await client.listAutomations({ limit: 1 });
+
+  assert.equal(calls[0].input, "/api/v1/automations?limit=1");
+  assert.equal(new Headers(calls[0].init.headers).has("authorization"), false);
+  assert.equal(calls[0].init.credentials, "omit");
+});
+
 test("mutation bodies are JSON and credentials never enter the URL", async () => {
   const calls = [];
   const fetchImpl = async (input, init = {}) => {
