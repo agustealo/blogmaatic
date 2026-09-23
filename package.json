@@ -1,8 +1,8 @@
 {
   "name": "blogmaatic",
   "private": true,
-  "version": "0.9.0",
-  "description": "Publication automation control plane, operator API, and Control Room",
+  "version": "0.10.0",
+  "description": "Publication automation control plane, local runtime, operator API, and Control Room",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -16,7 +16,10 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run build && npm run test --workspaces --if-present",
     "check": "npm run typecheck && npm test",
-    "dev:control-room": "npm run dev --workspace @blogmaatic/control-room"
+    "dev:control-room": "npm run dev --workspace @blogmaatic/control-room",
+    "runtime:init": "npm run build --workspace @blogmaatic/runtime && node apps/runtime/dist/cli.js init",
+    "runtime:start": "npm run build && node apps/runtime/dist/cli.js start",
+    "runtime:token": "npm run build --workspace @blogmaatic/runtime && node apps/runtime/dist/cli.js token"
   },
   "devDependencies": {
     "@types/node": "24.13.6",
