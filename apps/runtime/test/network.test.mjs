@@ -10,7 +10,7 @@ test("runtime address formatting brackets IPv6 loopback hosts", () => {
   assert.equal(httpOrigin("127.0.0.1", 4320), "http://127.0.0.1:4320");
 });
 
-test("managed Restate config binds ingress, admin, and query engine only to loopback", () => {
+test("managed Restate config is TCP-only and loopback-bound", () => {
   const ipv4 = managedRestateConfig({
     ingressHost: "127.0.0.1",
     ingressPort: 8080,
@@ -19,6 +19,7 @@ test("managed Restate config binds ingress, admin, and query engine only to loop
     queryHost: "127.0.0.1",
     queryPort: 9071,
   });
+  assert.match(ipv4, /^listen-mode = "tcp"$/m);
   assert.match(ipv4, /bind-address = "127\.0\.0\.1:9070"/);
   assert.match(ipv4, /pgsql-bind-address = "127\.0\.0\.1:9071"/);
   assert.match(ipv4, /bind-address = "127\.0\.0\.1:8080"/);
@@ -32,6 +33,7 @@ test("managed Restate config binds ingress, admin, and query engine only to loop
     queryHost: "::1",
     queryPort: 9071,
   });
+  assert.match(ipv6, /^listen-mode = "tcp"$/m);
   assert.match(ipv6, /bind-address = "\[::1\]:9070"/);
   assert.match(ipv6, /pgsql-bind-address = "\[::1\]:9071"/);
   assert.match(ipv6, /bind-address = "\[::1\]:8080"/);
