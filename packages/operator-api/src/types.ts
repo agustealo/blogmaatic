@@ -15,7 +15,13 @@ import type {
   PublicationGroupVersionListQuery,
   Page,
 } from "@blogmaatic/control-plane";
-import type { JsonValue, Publication, PublicationGroup, PublicationRoute } from "@blogmaatic/core";
+import type {
+  ExtensionCapability,
+  JsonValue,
+  Publication,
+  PublicationGroup,
+  PublicationRoute,
+} from "@blogmaatic/core";
 
 import type { OperatorAuthorizer } from "./auth.js";
 
@@ -73,12 +79,17 @@ export interface OperatorConnectionType {
     readonly id: string;
     readonly displayName: string;
     readonly version: string;
-    readonly capabilities: readonly string[];
+    readonly capabilities: readonly ExtensionCapability[];
   };
   readonly connectionContract: {
     readonly schemaVersion: 1;
     readonly settingsFields: readonly OperatorConnectionSettingField[];
     readonly secretFields: readonly OperatorConnectionSecretField[];
+    readonly defaultRoute: {
+      readonly channel: string;
+      readonly requiredCapabilities: readonly ExtensionCapability[];
+      readonly variant?: Readonly<Record<string, JsonValue>>;
+    };
   };
 }
 
