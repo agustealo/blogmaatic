@@ -3,6 +3,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 export const OPERATOR_PERMISSIONS = [
   "automations:read",
   "automations:write",
+  "connections:read",
+  "connections:write",
   "schedules:read",
   "schedules:write",
   "schedules:dispatch",
