@@ -120,7 +120,7 @@ await cp(join(root, "node_modules"), join(stage, "node_modules"), {
   verbatimSymlinks: true,
 });
 
-const launcher = `#!/bin/sh\nset -eu\nSELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nROOT=$(dirname "$SELF_DIR")\nexec "$ROOT/bin/node" "$ROOT/apps/runtime/dist/cli.js" "$@"\n`;
+const launcher = `#!/bin/sh\nset -eu\nSELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nROOT=$(dirname "$SELF_DIR")\nPATH="$ROOT/bin:$PATH"\nexport PATH\nexec "$ROOT/bin/node" "$ROOT/apps/runtime/dist/cli.js" "$@"\n`;
 await writeFile(join(stage, "bin", "blogmaatic"), launcher, { mode: 0o755 });
 await chmod(join(stage, "bin", "blogmaatic"), 0o755);
 
