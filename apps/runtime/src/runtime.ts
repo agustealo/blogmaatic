@@ -10,7 +10,11 @@ import {
   RestateAutomationLauncher,
   createPublicationAutomationWorkflow,
 } from "@blogmaatic/automation-restate";
-import { AutomationControlPlane, SqliteControlPlaneStore } from "@blogmaatic/control-plane";
+import {
+  AutomationControlPlane,
+  SqliteControlPlaneStore,
+  SqlitePublicationGroupStore,
+} from "@blogmaatic/control-plane";
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
 import {
   FACEBOOK_CONNECTION_CONTRACT,
@@ -43,6 +47,7 @@ import { ConnectionManager } from "./connection-manager.js";
 import { ControlRoomServer } from "./control-room-server.js";
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
+import { PublicationGroupManager } from "./publication-group-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
 
 export interface RunningRuntime {
@@ -148,6 +153,7 @@ export async function startRuntime(options: {
   let controlRoom: ControlRoomServer | undefined;
   let scheduler: SchedulerLoop | undefined;
   let controlPlaneStore: SqliteControlPlaneStore | undefined;
+  let publicationGroupStore: SqlitePublicationGroupStore | undefined;
   let projectionState: SqliteProjectionStateStore | undefined;
 
   try {
@@ -177,12 +183,21 @@ export async function startRuntime(options: {
       FACEBOOK_CONNECTION_CONTRACT,
     );
     await inspectConfiguredConnections(extensions, connections, logger);
+
+    controlPlaneStore = new SqliteControlPlaneStore(paths.controlPlanePath);
+    publicationGroupStore = new SqlitePublicationGroupStore(paths.controlPlanePath);
+    const publicationGroups = new PublicationGroupManager({
+      store: publicationGroupStore,
+      connections,
+      extensions,
+    });
     const connectionManager = new ConnectionManager({
       config,
       configPath: paths.configPath,
       connections,
       extensions,
       secrets,
+      removalGuard: (connection) => publicationGroups.assertConnectionRemovable(connection.id),
       logger,
     });
 
@@ -200,7 +215,6 @@ export async function startRuntime(options: {
     if (config.restate.mode === "managed-local") await registerManagedDeployment(config);
 
     const runtime = new RestateAutomationLauncher({ url: config.restate.ingressUrl });
-    controlPlaneStore = new SqliteControlPlaneStore(paths.controlPlanePath);
     const controlPlane = new AutomationControlPlane({ store: controlPlaneStore, launcher: runtime });
     operator = await startOperatorApi({
       controlPlane,
@@ -251,6 +265,7 @@ export async function startRuntime(options: {
         if (workflowServer) await closeHttp2(workflowServer);
         if (managedRestate) await managedRestate.close();
         projectionState?.close();
+        publicationGroupStore?.close();
         controlPlaneStore?.close();
       },
     };
@@ -261,6 +276,7 @@ export async function startRuntime(options: {
     if (workflowServer) await closeHttp2(workflowServer).catch(() => undefined);
     if (managedRestate) await managedRestate.close().catch(() => undefined);
     projectionState?.close();
+    publicationGroupStore?.close();
     controlPlaneStore?.close();
     throw error;
   }
