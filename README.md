@@ -4,6 +4,35 @@ Blogmaatic is a modular **publication automation control plane** for maintaining
 
 It combines durable automation, policy, destination-aware content projection, provider extensions, verification, reconciliation, and an operator Control Room. Provider behavior stays outside the core: Jekyll/Git, WordPress, LinkedIn, Facebook, and future destinations connect through extension contracts rather than provider branches in the publication kernel.
 
+## Control Room
+
+The product screenshots below are captured from the **real running Blogmaatic runtime and Control Room**, not a mock UI. The capture fixture creates an actual Jekyll/Git connection, Publication Group, Automation, completed durable publication run, and verification evidence before taking the images. Capture provenance lives in [`docs/screenshots/capture-manifest.json`](docs/screenshots/capture-manifest.json).
+
+<p align="center">
+  <img src="docs/screenshots/04-control-room-overview.png" alt="Blogmaatic Control Room overview" width="100%" />
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/01-first-run-setup.png" alt="Blogmaatic first-run setup" /></td>
+    <td width="50%"><img src="docs/screenshots/03-connections.png" alt="Blogmaatic Connections manager" /></td>
+  </tr>
+  <tr>
+    <td><strong>Guided first run</strong><br/>Connect a real destination, validate health, create a Publication Group, and wire the first Automation through the same authorities used after setup.</td>
+    <td><strong>Connection Manager</strong><br/>Extension-driven destination settings, write-only credentials, live health, and lifecycle management without browser-owned connection truth.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/05-automations.png" alt="Blogmaatic Automations" /></td>
+    <td width="50%"><img src="docs/screenshots/07-run-detail.png" alt="Blogmaatic run detail" /></td>
+  </tr>
+  <tr>
+    <td><strong>Durable automation</strong><br/>Versioned publishing automations remain owned by the control plane and durable runtime.</td>
+    <td><strong>Run evidence</strong><br/>Inspect durable execution, delivery receipts, and verification truth after real publication work.</td>
+  </tr>
+</table>
+
+See the full canonical visual set in [`docs/screenshots/`](docs/screenshots/README.md).
+
 ## Architecture
 
 The executable authority chain is:
@@ -71,10 +100,12 @@ Trusted releases publish a Debian package as the primary installer and retain th
 ```bash
 sudo dpkg -i blogmaatic-<version>-amd64.deb
 blogmaatic version
-blogmaatic init --jekyll-repo /absolute/path/to/site
+blogmaatic init
 blogmaatic doctor
 blogmaatic start
 ```
+
+After `blogmaatic start`, open the one-time Control Room launch URL and complete the guided first run to configure a publisher destination, validate it, create a Publication Group, and register the first Automation. The legacy CLI Jekyll bootstrap flags remain available for explicit scripted setup, but they are not required for the normal consumer path.
 
 ### macOS Apple Silicon and Intel
 
@@ -86,12 +117,12 @@ After installation:
 
 ```bash
 blogmaatic version
-blogmaatic init --jekyll-repo /absolute/path/to/site
+blogmaatic init
 blogmaatic doctor
 blogmaatic start
 ```
 
-`blogmaatic start` prints a **one-time Control Room launch URL**. Open that URL in the browser. It exchanges the launch capability for a runtime-memory `HttpOnly; SameSite=Strict` session cookie, then the bundled browser UI uses the same-origin `/api` proxy without ever receiving or storing the Operator API bearer credential. The launch capability is consumed after first use and a new browser session is generated on the next runtime start.
+`blogmaatic start` prints a **one-time Control Room launch URL**. Opening it exchanges the launch capability for a runtime-memory `HttpOnly; SameSite=Strict` session cookie plus an origin-bound browser proof. The bundled same-origin `/api` proxy injects the Operator API bearer server-side; the bearer never enters browser JavaScript. The launch capability is consumed after first use and a new browser session is generated on the next runtime start.
 
 `blogmaatic token` remains an advanced command for an explicit external Operator API client. It is not part of the normal consumer Control Room flow.
 
@@ -106,19 +137,19 @@ See [`docs/architecture/distribution.md`](docs/architecture/distribution.md) for
 - `@blogmaatic/core` — publication domain, policy, projection state, delivery, verification and reconciliation.
 - `@blogmaatic/variants` — destination capability profiles, adaptation and fidelity reporting.
 - `@blogmaatic/extension-sdk` — extension manifests, connections, health and lifecycle.
-- `@blogmaatic/secrets` — scoped secret-reference resolution.
+- `@blogmaatic/secrets` — scoped secret-reference resolution and managed OS-vault authority.
 - `@blogmaatic/state-sqlite` — durable remote projection identity.
 - `@blogmaatic/automation` — provider-neutral automation definitions and run contracts.
 - `@blogmaatic/automation-restate` — durable Restate execution adapter.
-- `@blogmaatic/control-plane` — automation registry, event routing, schedules, deterministic run identity and audit authority.
+- `@blogmaatic/control-plane` — automation registry, Publication Group registry, event routing, schedules, deterministic run identity and audit authority.
 - `@blogmaatic/operator-api` — authenticated operator/control-plane HTTP surface.
 - `@blogmaatic/operator-client` — browser-safe typed client for the operator API.
 - `@blogmaatic/extension-jekyll-git` — real Jekyll/Git publisher.
 - `@blogmaatic/extension-wordpress-rest` — real WordPress publisher.
 - `@blogmaatic/extension-linkedin-rest` — real LinkedIn organization-post publisher.
 - `@blogmaatic/extension-facebook-pages` — real Facebook Pages publisher.
-- `@blogmaatic/control-room` — React/Vite operational UI.
-- `@blogmaatic/runtime` — local application composition, first-run bootstrap, managed Restate lifecycle and consumer CLI.
+- `@blogmaatic/control-room` — React/Vite operational UI and guided first-run experience.
+- `@blogmaatic/runtime` — local application composition, connection authority, managed Restate lifecycle and consumer CLI.
 
 ## Development
 
@@ -130,6 +161,7 @@ Requirements:
 - npm 11.19.x
 - Git
 - Docker for the existing Restate Testcontainers integration burn
+- Chromium/Chrome only when regenerating product screenshots locally
 
 ```bash
 npm ci --ignore-scripts
@@ -139,7 +171,7 @@ npm run check
 For live Control Room development, initialize and start the real local runtime first. In a second shell, start Vite:
 
 ```bash
-npm run runtime:init -- --jekyll-repo /absolute/path/to/site   # first run only
+npm run runtime:init   # first run only
 npm run runtime:start
 
 # second shell
@@ -153,6 +185,15 @@ BLOGMAATIC_DEV_DATA_DIR=/absolute/path/to/blogmaatic-data npm run dev:control-ro
 ```
 
 `BLOGMAATIC_DEV_API_TARGET` may be used only to point the server-side dev proxy at a non-default local Operator API address. Development fails closed when the operator credential file is missing or malformed.
+
+To regenerate the canonical product screenshots against the real runtime:
+
+```bash
+npm run build
+npm run product:screenshots
+```
+
+The capture contract and gallery live in [`docs/screenshots/`](docs/screenshots/README.md). Screenshots must come from the real runtime-backed Control Room; generated concept art and browser-only mock state are not accepted as product evidence.
 
 To burn a local portable distribution after building:
 
@@ -175,6 +216,7 @@ Provider credentials belong in connection/secrets infrastructure, never in `@blo
 
 ## Architecture documents
 
+- [`control-room.md`](docs/architecture/control-room.md)
 - [`publication-kernel.md`](docs/architecture/publication-kernel.md)
 - [`extensions.md`](docs/architecture/extensions.md)
 - [`wordpress-rest.md`](docs/architecture/wordpress-rest.md)
@@ -185,3 +227,4 @@ Provider credentials belong in connection/secrets infrastructure, never in `@blo
 - [`runtime-bootstrap.md`](docs/architecture/runtime-bootstrap.md)
 - [`distribution.md`](docs/architecture/distribution.md)
 - [`release operations`](docs/operations/releases.md)
+- [`product screenshot manifest`](docs/screenshots/README.md)
