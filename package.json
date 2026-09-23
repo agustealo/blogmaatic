@@ -1,15 +1,17 @@
 {
   "name": "blogmaatic",
   "private": true,
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Publication automation control plane, local runtime, operator API, and Control Room",
   "type": "module",
+  "packageManager": "npm@11.19.0",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "engines": {
-    "node": ">=24"
+    "node": ">=24.21.0 <25",
+    "npm": ">=11.19.0 <12"
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
@@ -19,7 +21,9 @@
     "dev:control-room": "npm run dev --workspace @blogmaatic/control-room",
     "runtime:init": "npm run build --workspace @blogmaatic/runtime && node apps/runtime/dist/cli.js init",
     "runtime:start": "npm run build && node apps/runtime/dist/cli.js start",
-    "runtime:token": "npm run build --workspace @blogmaatic/runtime && node apps/runtime/dist/cli.js token"
+    "runtime:token": "npm run build --workspace @blogmaatic/runtime && node apps/runtime/dist/cli.js token",
+    "distribution:stage": "node scripts/build-distribution.mjs",
+    "distribution:smoke": "node scripts/smoke-distribution.mjs"
   },
   "devDependencies": {
     "@types/node": "24.13.6",
