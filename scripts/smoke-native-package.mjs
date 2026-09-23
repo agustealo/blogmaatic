@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -11,6 +11,7 @@ if (!packageArg) throw new Error("Usage: node scripts/smoke-native-package.mjs <
 const packagePath = resolve(packageArg);
 const dataDir = await mkdtemp(join(tmpdir(), "blogmaatic-native-state-"));
 const repository = await mkdtemp(join(tmpdir(), "blogmaatic-native-jekyll-"));
+let runtime;
 
 async function exec(file, args, options = {}) {
   return execFileAsync(file, args, { encoding: "utf8", ...options });
@@ -57,6 +58,51 @@ async function verifyMacNodeSigning() {
   assert.match(diagnostic, /com\.apple\.security\.cs\.allow-jit/, `Bundled Node lacks JIT entitlement: ${diagnostic}`);
 }
 
+function startInstalledRuntime(binary) {
+  const state = { exited: false, output: "" };
+  const child = spawn(binary, ["start", "--data-dir", dataDir], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const append = (chunk) => {
+    state.output = `${state.output}${chunk.toString("utf8")}`.slice(-128_000);
+  };
+  child.stdout.on("data", append);
+  child.stderr.on("data", append);
+  child.once("exit", () => { state.exited = true; });
+  return { child, state };
+}
+
+async function waitForHttp(url, state, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (state.exited) throw new Error(`Installed Blogmaatic exited before readiness:\n${state.output}`);
+    try {
+      const response = await fetch(url, { redirect: "manual" });
+      if (response.ok) return response;
+    } catch {
+      // Runtime is still starting.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`Timed out waiting for installed Blogmaatic at ${url}:\n${state.output}`);
+}
+
+async function stopInstalledRuntime(handle) {
+  if (!handle || handle.state.exited) return;
+  handle.child.kill("SIGTERM");
+  await new Promise((resolveExit, reject) => {
+    const timer = setTimeout(() => {
+      handle.child.kill("SIGKILL");
+      reject(new Error(`Installed Blogmaatic did not stop cleanly:\n${handle.state.output}`));
+    }, 10_000);
+    handle.child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0 || signal === "SIGTERM") resolveExit();
+      else reject(new Error(`Installed Blogmaatic stopped unexpectedly (${signal ?? `code ${code}`}):\n${handle.state.output}`));
+    });
+  });
+}
+
 try {
   await install();
   if (process.platform === "darwin") await verifyMacNodeSigning();
@@ -88,8 +134,16 @@ try {
     requireDoctorCheck(report, name);
   }
 
+  runtime = startInstalledRuntime(binary);
+  assert.equal((await waitForHttp("http://127.0.0.1:4317/healthz", runtime.state)).status, 200);
+  const controlRoom = await waitForHttp("http://127.0.0.1:4320/", runtime.state);
+  assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
+  await stopInstalledRuntime(runtime);
+  runtime = undefined;
+
   console.log(`Native installer smoke passed: ${basename(packagePath)}`);
 } finally {
+  if (runtime) await stopInstalledRuntime(runtime).catch(() => undefined);
   await cleanupInstall();
   await rm(dataDir, { recursive: true, force: true });
   await rm(repository, { recursive: true, force: true });
