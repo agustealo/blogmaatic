@@ -59,9 +59,13 @@ async function init(args: ParsedArgs): Promise<void> {
   const authorName = value(args, "author-name");
   const authorEmail = value(args, "author-email");
   const siteBaseUrl = value(args, "site-base-url");
-  const buildVerification = value(args, "build-verification");
-  if (buildVerification && buildVerification !== "none" && buildVerification !== "bundle") {
-    throw new Error("--build-verification must be none or bundle");
+  const rawBuildVerification = value(args, "build-verification");
+  let buildVerification: "none" | "bundle" | undefined;
+  if (rawBuildVerification !== undefined) {
+    if (rawBuildVerification !== "none" && rawBuildVerification !== "bundle") {
+      throw new Error("--build-verification must be none or bundle");
+    }
+    buildVerification = rawBuildVerification;
   }
   const config = await configForFirstRun({
     ...(jekyllRepository ? { jekyllRepository } : {}),
