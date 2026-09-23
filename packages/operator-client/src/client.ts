@@ -45,6 +45,9 @@ function normalizeBaseUrl(input: string): string {
   const value = input.trim();
   if (!value) throw new Error("Operator API base URL is required");
   if (value.startsWith("/")) {
+    if (value.startsWith("//") || value.includes("\\") || value.includes("?") || value.includes("#")) {
+      throw new Error("Root-relative Operator API base URL must be an unambiguous path");
+    }
     const normalized = value.replace(/\/+$/, "");
     return normalized || "/";
   }
@@ -113,6 +116,9 @@ export class OperatorClient {
     const response = await this.#fetch(joinBase(this.#baseUrl, path), {
       method: options.method ?? "GET",
       headers,
+      credentials: "omit",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
     });
     if (!response.ok) {
