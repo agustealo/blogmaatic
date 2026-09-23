@@ -1,55 +1,143 @@
 # Blogmaatic
 
-Blogmaatic is being rebuilt as a modular **publication automation control plane**.
+Blogmaatic is a modular **publication automation control plane** for maintaining one logical publication across multiple publishing hubs.
 
-It manages one logical publication across multiple publishing hubs while keeping provider behavior outside the core. WordPress, Jekyll/Git, social platforms, newsletters, and future systems connect through extensions.
+It combines durable automation, policy, destination-aware content projection, provider extensions, verification, reconciliation, and an operator Control Room. Provider behavior stays outside the core: Jekyll/Git, WordPress, LinkedIn, Facebook, and future destinations connect through extension contracts rather than provider branches in the publication kernel.
 
-## Current foundation
+## Architecture
 
 The executable authority chain is:
 
-`Trigger -> Control Plane -> Automation -> Publication Group -> Policy -> Variant/Projection -> Extension -> Delivery -> Verification -> Receipt -> Reconciliation`
+```text
+Trigger / Schedule / Operator
+            ↓
+       Control Plane
+            ↓
+    Durable Automation
+            ↓
+     Publication Group
+            ↓
+       Policy Engine
+            ↓
+ Variant / Projection
+            ↓
+    Extension Runtime
+            ↓
+ Delivery / Verification
+            ↓
+ Receipt / Reconciliation
+```
 
-Slice 1 established the platform-neutral publication kernel.
+The local application adds:
 
-Slice 2 added the managed extension runtime and connection authority plus the first real publisher: `@blogmaatic/extension-jekyll-git`.
+```text
+Control Room
+    ↓
+Operator API
+    ↓
+Control Plane + SQLite
+    ↓
+Restate durable runtime
+    ↓
+Publication Kernel
+    ↓
+Publisher extensions
+```
 
-Slice 3 added `@blogmaatic/secrets` and `@blogmaatic/extension-wordpress-rest`, proving authenticated remote CMS publishing, media/taxonomy management, scheduling, ownership-safe inspection, and update-in-place reconciliation.
+Current real publisher classes prove materially different delivery models:
 
-Slice 4 added provider-neutral social adaptation, durable projection identity, and `@blogmaatic/extension-linkedin-rest`. Rich Publication IR can be projected into constrained destinations with an explicit fidelity report instead of silently pretending every hub supports the same content model. Server-generated remote identities are persisted through the core projection-state contract, with a file-backed SQLite adapter for restart-safe reconciliation.
+- **Jekyll/Git** — files, assets, Git commits/push, build verification, drift repair.
+- **WordPress REST** — authenticated CMS API, media, taxonomy, scheduling, remote IDs and update-in-place reconciliation.
+- **LinkedIn** — constrained social projection, fidelity reporting, opaque post identity and safe partial updates.
+- **Facebook Pages** — Graph API text/link/image/multi-image/scheduled posts with immutable-drift protection.
 
-Slice 5 added `@blogmaatic/extension-facebook-pages` plus provider-neutral drift-reconciliation planning. Facebook Page text, link, image, multi-image, and scheduled projections publish through pinned Graph API semantics, while remote edits are detected and fail closed instead of being silently deleted/recreated.
+Restate is an execution adapter, not Blogmaatic's domain model. SQLite owns local control-plane/projection facts; Restate owns durable workflow journaling, replay, timers, and approval suspension.
 
-Slice 6 added the provider-neutral `@blogmaatic/automation` model and `@blogmaatic/automation-restate`, the first durable execution adapter. Publication workflows can pause for revision-bound human approval, survive replay at suspension points, wait on durable timers, execute publication groups without repeating completed steps, distinguish business failures from retryable unavailability, and expose queryable per-run status.
+## Consumer installation
 
-Slice 7 adds `@blogmaatic/control-plane`, the durable wake-up authority above the workflow runtime. Automation definitions are immutable and versioned; source-scoped events are deduplicated without being reinterpreted by newer definitions; exact run snapshots are committed before launch; launch retries reuse deterministic workflow IDs; and local one-time/daily/weekly schedules are persisted with IANA timezone, DST, misfire, lease and restart semantics. `@blogmaatic/automation-restate` also exposes a detached Restate launcher for submit/status/approval/result operations.
+Slice 12 produces portable managed-runtime archives for:
 
-The original 2017 Django prototype remains in the repository for deliberate migration analysis; it is not an authority for the new architecture.
+- Linux x64
+- macOS Apple Silicon
+- macOS Intel
 
-## Packages
+Each archive contains the compiled Blogmaatic runtime and Control Room, the locked production dependency graph, a pinned Node.js 24.21 runtime, and pinned Restate binaries. The target machine does **not** need a repository checkout, Node.js, or npm.
 
-- `@blogmaatic/core` — publication domain, policy, projection state, delivery, verification, reconciliation, and provider-directed drift planning.
-- `@blogmaatic/automation` — provider-neutral automation definitions, triggers, conditions, publication-group actions, approvals, delays, and run contracts.
-- `@blogmaatic/control-plane` — automation registry, source-scoped event inbox, deterministic run registry, SQLite scheduler authority, DST/misfire semantics, and runtime-launch coordination.
-- `@blogmaatic/automation-restate` — Restate durable-execution adapter and detached launcher for replay-safe publication workflows, approvals, timers, retry semantics, run status, and result attachment.
-- `@blogmaatic/extension-sdk` — managed extension manifest, connection authority, health and lifecycle runtime.
-- `@blogmaatic/secrets` — provider-neutral secret-reference resolution with scoped plaintext exposure.
-- `@blogmaatic/variants` — destination capability profiles, social adaptation, fidelity reporting, and minimum-fidelity gates.
-- `@blogmaatic/state-sqlite` — durable remote projection identity using Node's built-in SQLite runtime.
-- `@blogmaatic/extension-jekyll-git` — real Jekyll/Git repository publisher.
-- `@blogmaatic/extension-wordpress-rest` — real WordPress REST publisher using Application Password authentication.
-- `@blogmaatic/extension-linkedin-rest` — versioned LinkedIn organization-post publisher with drift-aware commentary updates and fail-closed structural reconciliation.
-- `@blogmaatic/extension-facebook-pages` — pinned Graph API Page publisher for text, link, image, multi-image, and scheduled projections with immutable-drift protection.
+Verify the matching `.sha256` file before extraction, then:
 
-See [`docs/architecture/publication-kernel.md`](docs/architecture/publication-kernel.md), [`docs/architecture/extensions.md`](docs/architecture/extensions.md), [`docs/architecture/wordpress-rest.md`](docs/architecture/wordpress-rest.md), [`docs/architecture/social-projections.md`](docs/architecture/social-projections.md), [`docs/architecture/facebook-pages.md`](docs/architecture/facebook-pages.md), [`docs/architecture/durable-automation.md`](docs/architecture/durable-automation.md), and [`docs/architecture/control-plane.md`](docs/architecture/control-plane.md).
+```bash
+./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic version
+./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic init --jekyll-repo /absolute/path/to/site
+./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic doctor
+./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic start
+```
+
+Retrieve the local operator credential only when needed:
+
+```bash
+./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic token
+```
+
+The application state directory is separate from the installation, so the versioned application archive can be replaced without moving publication/run state.
+
+Windows currently requires `restate.mode=external`; Blogmaatic does not claim an unverified managed Restate binary path on Windows.
+
+See [`docs/architecture/distribution.md`](docs/architecture/distribution.md) for the artifact, integrity, compatibility, and clean-install proof contract.
+
+## Main packages
+
+- `@blogmaatic/core` — publication domain, policy, projection state, delivery, verification and reconciliation.
+- `@blogmaatic/variants` — destination capability profiles, adaptation and fidelity reporting.
+- `@blogmaatic/extension-sdk` — extension manifests, connections, health and lifecycle.
+- `@blogmaatic/secrets` — scoped secret-reference resolution.
+- `@blogmaatic/state-sqlite` — durable remote projection identity.
+- `@blogmaatic/automation` — provider-neutral automation definitions and run contracts.
+- `@blogmaatic/automation-restate` — durable Restate execution adapter.
+- `@blogmaatic/control-plane` — automation registry, event routing, schedules, deterministic run identity and audit authority.
+- `@blogmaatic/operator-api` — authenticated operator/control-plane HTTP surface.
+- `@blogmaatic/operator-client` — browser-safe typed client for the operator API.
+- `@blogmaatic/extension-jekyll-git` — real Jekyll/Git publisher.
+- `@blogmaatic/extension-wordpress-rest` — real WordPress publisher.
+- `@blogmaatic/extension-linkedin-rest` — real LinkedIn organization-post publisher.
+- `@blogmaatic/extension-facebook-pages` — real Facebook Pages publisher.
+- `@blogmaatic/control-room` — React/Vite operational UI.
+- `@blogmaatic/runtime` — local application composition, first-run bootstrap, managed Restate lifecycle and consumer CLI.
 
 ## Development
 
-Requires Node.js 24 LTS or newer, Git, and Docker for the durable automation integration burn.
+Development uses a committed dependency graph and exact install semantics.
+
+Requirements:
+
+- Node.js 24.21.x
+- npm 11.19.x
+- Git
+- Docker for the existing Restate Testcontainers integration burn
 
 ```bash
-npm install
+npm ci --ignore-scripts
 npm run check
 ```
 
-Provider SDKs and credentials belong in extension packages and connection/secrets infrastructure, never in `@blogmaatic/core`. Durable-runtime-specific code belongs behind an automation adapter rather than in the provider-neutral automation model. Trigger, schedule and run authority belongs in the control plane rather than publisher extensions or durable-runtime-specific code.
+To burn a local portable distribution after building:
+
+```bash
+npm run build
+rm -rf node_modules
+npm ci --omit=dev --ignore-scripts
+npm run distribution:stage
+```
+
+Provider credentials belong in connection/secrets infrastructure, never in `@blogmaatic/core`. Durable-runtime code belongs behind the automation adapter. Trigger, schedule and run authority belongs in the control plane rather than extensions.
+
+## Architecture documents
+
+- [`publication-kernel.md`](docs/architecture/publication-kernel.md)
+- [`extensions.md`](docs/architecture/extensions.md)
+- [`wordpress-rest.md`](docs/architecture/wordpress-rest.md)
+- [`social-projections.md`](docs/architecture/social-projections.md)
+- [`facebook-pages.md`](docs/architecture/facebook-pages.md)
+- [`durable-automation.md`](docs/architecture/durable-automation.md)
+- [`control-plane.md`](docs/architecture/control-plane.md)
+- [`runtime-bootstrap.md`](docs/architecture/runtime-bootstrap.md)
+- [`distribution.md`](docs/architecture/distribution.md)
