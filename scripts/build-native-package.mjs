@@ -127,7 +127,7 @@ if (process.platform === "linux") {
     "Priority: optional",
     `Architecture: ${architecture}`,
     "Maintainer: Agustealo Johnson <8550514+agustealo@users.noreply.github.com>",
-    "Depends: git, ca-certificates",
+    "Depends: git, ca-certificates, libsecret-tools, gnome-keyring",
     "Homepage: https://github.com/agustealo/blogmaatic",
     "Description: Publication automation control plane runtime and Control Room",
     " Blogmaatic connects publishing destinations through durable automation workflows.",

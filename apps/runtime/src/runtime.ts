@@ -12,9 +12,18 @@ import {
 } from "@blogmaatic/automation-restate";
 import { AutomationControlPlane, SqliteControlPlaneStore } from "@blogmaatic/control-plane";
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
-import { JEKYLL_GIT_EXTENSION_ID, JekyllGitPublisher } from "@blogmaatic/extension-jekyll-git";
+import { FacebookPagesPublisher } from "@blogmaatic/extension-facebook-pages";
+import { JekyllGitPublisher } from "@blogmaatic/extension-jekyll-git";
+import { LinkedInRestPublisher } from "@blogmaatic/extension-linkedin-rest";
 import { ConnectionAuthority, ExtensionRuntime } from "@blogmaatic/extension-sdk";
+import { WordPressRestPublisher } from "@blogmaatic/extension-wordpress-rest";
 import { StaticBearerAuthorizer, closeOperatorApi, startOperatorApi } from "@blogmaatic/operator-api";
+import {
+  EnvironmentSecretProvider,
+  OsCredentialSecretProvider,
+  SecretAuthority,
+  type SecretProvider,
+} from "@blogmaatic/secrets";
 import { SqliteProjectionStateStore } from "@blogmaatic/state-sqlite";
 
 import type { RuntimeConfig, RuntimePaths } from "./config.js";
@@ -26,12 +35,46 @@ import { SchedulerLoop } from "./scheduler.js";
 export interface RunningRuntime {
   readonly operatorAddress: string;
   readonly controlRoomAddress: string;
+  readonly controlRoomLaunchAddress: string;
   readonly fatal: Promise<never>;
   close(): Promise<void>;
 }
 
 function controlRoomDist(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "../../control-room/dist");
+}
+
+function createSecretAuthority(): SecretAuthority {
+  const providers: SecretProvider[] = [new EnvironmentSecretProvider()];
+  if (process.platform === "darwin" || process.platform === "linux") {
+    providers.push(new OsCredentialSecretProvider());
+  }
+  return new SecretAuthority(providers);
+}
+
+export async function inspectConfiguredConnections(
+  extensions: ExtensionRuntime,
+  connections: ConnectionAuthority,
+  logger: Pick<Console, "info" | "error">,
+): Promise<void> {
+  for (const connection of connections.list()) {
+    try {
+      const validation = await extensions.validateConnection(connection.id);
+      if (!validation.valid) {
+        logger.error(`Connection ${connection.id} is invalid: ${validation.errors.join("; ")}`);
+        continue;
+      }
+      if (connection.status !== "active") continue;
+      const health = await extensions.checkHealth(connection.id);
+      if (health.state === "unhealthy") {
+        logger.error(`Connection ${connection.id} is unhealthy: ${health.detail}`);
+      } else if (health.state === "degraded") {
+        logger.info(`Connection ${connection.id} is degraded: ${health.detail}`);
+      }
+    } catch (error) {
+      logger.error(`Connection ${connection.id} could not be inspected: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 async function startWorkflowEndpoint(workflow: ReturnType<typeof createPublicationAutomationWorkflow>, host: string, port: number): Promise<Http2Server> {
@@ -105,20 +148,13 @@ export async function startRuntime(options: {
     }
 
     const connections = new ConnectionAuthority(config.connections);
+    const secrets = createSecretAuthority();
     const extensions = new ExtensionRuntime(connections);
     extensions.registerPublisher(new JekyllGitPublisher(connections));
-    for (const connection of connections.list()) {
-      if (connection.extensionId !== JEKYLL_GIT_EXTENSION_ID) {
-        throw new Error(`Runtime connection ${connection.id} references an extension that is not wired in this slice: ${connection.extensionId}`);
-      }
-      if (connection.status === "active") {
-        const health = await extensions.checkHealth(connection.id);
-        if (health.state === "unhealthy") {
-          throw new Error(`Connection ${connection.id} is unhealthy: ${health.detail}`);
-        }
-        if (health.state === "degraded") logger.info(`Connection ${connection.id} is degraded: ${health.detail}`);
-      }
-    }
+    extensions.registerPublisher(new WordPressRestPublisher(connections, secrets));
+    extensions.registerPublisher(new LinkedInRestPublisher(connections, secrets));
+    extensions.registerPublisher(new FacebookPagesPublisher(connections, secrets));
+    await inspectConfiguredConnections(extensions, connections, logger);
 
     projectionState = new SqliteProjectionStateStore(paths.projectionStatePath);
     const kernel = new PublicationKernel(
@@ -161,6 +197,7 @@ export async function startRuntime(options: {
       host: config.controlRoom.host,
       port: config.controlRoom.port,
       operatorOrigin: operator.address.replace(/\/$/, ""),
+      operatorToken: options.operatorToken,
     });
 
     // Startup becomes externally active only after every fallible listener is ready.
@@ -172,6 +209,7 @@ export async function startRuntime(options: {
     return {
       operatorAddress: operator.address,
       controlRoomAddress: controlRoom.address,
+      controlRoomLaunchAddress: controlRoom.launchAddress,
       fatal,
       close: async () => {
         if (closed) return;

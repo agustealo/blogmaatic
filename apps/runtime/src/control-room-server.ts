@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFile, stat } from "node:fs/promises";
@@ -5,6 +6,8 @@ import { extname, relative, resolve, sep } from "node:path";
 
 import { httpOrigin } from "./network.js";
 
+const SESSION_COOKIE_PREFIX = "blogmaatic_control_room_session";
+const SESSION_PROOF_HEADER = "x-blogmaatic-session-proof";
 const MIME: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -21,6 +24,7 @@ function securityHeaders(response: ServerResponse): void {
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "no-referrer");
   response.setHeader("x-frame-options", "DENY");
+  response.setHeader("cross-origin-resource-policy", "same-origin");
   response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
 }
 
@@ -37,31 +41,138 @@ async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): P
   return Uint8Array.from(Buffer.concat(chunks));
 }
 
-function proxyHeaders(request: IncomingMessage): Headers {
+function proxyHeaders(request: IncomingMessage, operatorToken: string, authenticated: boolean): Headers {
   const headers = new Headers();
-  for (const name of ["accept", "authorization", "content-type", "idempotency-key"] as const) {
+  if (authenticated) headers.set("authorization", `Bearer ${operatorToken}`);
+  for (const name of ["accept", "content-type", "idempotency-key"] as const) {
     const value = request.headers[name];
     if (typeof value === "string") headers.set(name, value);
   }
   return headers;
 }
 
-async function proxy(request: IncomingMessage, response: ServerResponse, operatorOrigin: string): Promise<void> {
+function requestMatchesBoundOrigin(request: IncomingMessage, controlRoomOrigin: string): boolean {
+  if (!controlRoomOrigin) return false;
+  const expected = new URL(controlRoomOrigin);
+  const host = request.headers.host;
+  if (!host || host !== expected.host) return false;
+
+  const fetchSite = request.headers["sec-fetch-site"];
+  if (typeof fetchSite === "string" && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+
+  const origin = request.headers.origin;
+  if (typeof origin === "string" && origin !== expected.origin) return false;
+  return true;
+}
+
+function cookieValue(request: IncomingMessage, name: string): string | undefined {
+  const raw = request.headers.cookie;
+  if (!raw) return undefined;
+  for (const item of raw.split(";")) {
+    const [key, ...parts] = item.trim().split("=");
+    if (key === name) return parts.join("=");
+  }
+  return undefined;
+}
+
+function secretMatches(received: string | undefined, expected: string): boolean {
+  if (!received) return false;
+  const left = Buffer.from(received, "utf8");
+  const right = Buffer.from(expected, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function sessionAuthorized(
+  request: IncomingMessage,
+  controlRoomOrigin: string,
+  sessionCookieName: string,
+  sessionToken: string,
+  sessionProof: string,
+): boolean {
+  const proof = request.headers[SESSION_PROOF_HEADER];
+  return requestMatchesBoundOrigin(request, controlRoomOrigin)
+    && secretMatches(cookieValue(request, sessionCookieName), sessionToken)
+    && typeof proof === "string"
+    && secretMatches(proof, sessionProof);
+}
+
+function forbiddenProxy(response: ServerResponse): void {
+  response.statusCode = 403;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.end(JSON.stringify({
+    error: {
+      code: "CONTROL_ROOM_SESSION_REQUIRED",
+      message: "Open the Control Room using the one-time launch URL printed by the Blogmaatic runtime",
+    },
+  }));
+}
+
+function bootstrapSession(
+  request: IncomingMessage,
+  response: ServerResponse,
+  controlRoomOrigin: string,
+  sessionCookieName: string,
+  bootstrapToken: string,
+  sessionToken: string,
+  sessionProof: string,
+  consume: () => boolean,
+): void {
+  if (request.method !== "GET" || !requestMatchesBoundOrigin(request, controlRoomOrigin)) {
+    forbiddenProxy(response);
+    return;
+  }
+  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  if (!secretMatches(pathname.slice("/session/".length), bootstrapToken)) {
+    forbiddenProxy(response);
+    return;
+  }
+  if (!consume()) {
+    response.statusCode = 410;
+    response.setHeader("cache-control", "no-store");
+    response.end("Control Room launch capability has already been consumed");
+    return;
+  }
+
+  response.statusCode = 303;
+  response.setHeader("location", `/#session=${sessionProof}`);
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("set-cookie", `${sessionCookieName}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict`);
+  response.end();
+}
+
+async function proxy(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operatorOrigin: string,
+  operatorToken: string,
+  controlRoomOrigin: string,
+  sessionCookieName: string,
+  sessionToken: string,
+  sessionProof: string,
+): Promise<void> {
+  const incomingUrl = new URL(request.url ?? "/", "http://localhost");
+  const upstreamPath = incomingUrl.pathname.slice("/api".length) || "/";
+  const publicHealth = request.method === "GET" && upstreamPath === "/healthz";
+  if (!publicHealth && !sessionAuthorized(request, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof)) {
+    forbiddenProxy(response);
+    return;
+  }
+
   try {
-    const incomingUrl = new URL(request.url ?? "/", "http://localhost");
-    const upstreamPath = incomingUrl.pathname.slice("/api".length) || "/";
     const target = `${operatorOrigin}${upstreamPath}${incomingUrl.search}`;
     const body = await requestBody(request);
     const upstream = await fetch(target, {
       method: request.method ?? "GET",
-      headers: proxyHeaders(request),
+      headers: proxyHeaders(request, operatorToken, !publicHealth),
       redirect: "manual",
       credentials: "omit",
       referrerPolicy: "no-referrer",
       ...(body === undefined ? {} : { body }),
     });
     response.statusCode = upstream.status;
-    for (const name of ["content-type", "cache-control", "www-authenticate", "x-content-type-options"] as const) {
+    response.setHeader("cache-control", "no-store");
+    for (const name of ["content-type", "www-authenticate", "x-content-type-options"] as const) {
       const value = upstream.headers.get(name);
       if (value) response.setHeader(name, value);
     }
@@ -69,6 +180,7 @@ async function proxy(request: IncomingMessage, response: ServerResponse, operato
   } catch (error) {
     response.statusCode = 502;
     response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("cache-control", "no-store");
     response.end(JSON.stringify({
       error: {
         code: "LOCAL_PROXY_UNAVAILABLE",
@@ -126,10 +238,12 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, r
 export class ControlRoomServer {
   readonly #server: Server;
   readonly address: string;
+  readonly launchAddress: string;
 
-  private constructor(server: Server, address: string) {
+  private constructor(server: Server, address: string, launchAddress: string) {
     this.#server = server;
     this.address = address;
+    this.launchAddress = launchAddress;
   }
 
   static async start(options: {
@@ -137,6 +251,7 @@ export class ControlRoomServer {
     readonly host: string;
     readonly port: number;
     readonly operatorOrigin: string;
+    readonly operatorToken: string;
   }): Promise<ControlRoomServer> {
     const root = resolve(options.root);
     const index = resolve(root, "index.html");
@@ -145,12 +260,48 @@ export class ControlRoomServer {
     } catch {
       throw new Error(`Control Room production build is missing: ${index}. Run npm run build first.`);
     }
+    if (!options.operatorToken.trim()) throw new Error("Control Room operator token is required");
+
+    const bootstrapToken = randomBytes(24).toString("base64url");
+    const sessionToken = randomBytes(32).toString("base64url");
+    const sessionProof = randomBytes(32).toString("base64url");
+    let bootstrapAvailable = true;
+    let controlRoomOrigin = "";
+    let sessionCookieName = SESSION_COOKIE_PREFIX;
     const server = createServer((request, response) => {
       securityHeaders(response);
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-      const task = pathname === "/api" || pathname.startsWith("/api/")
-        ? proxy(request, response, options.operatorOrigin)
-        : serveStatic(request, response, root);
+      let task: Promise<void>;
+      if (pathname.startsWith("/session/")) {
+        bootstrapSession(
+          request,
+          response,
+          controlRoomOrigin,
+          sessionCookieName,
+          bootstrapToken,
+          sessionToken,
+          sessionProof,
+          () => {
+            if (!bootstrapAvailable) return false;
+            bootstrapAvailable = false;
+            return true;
+          },
+        );
+        task = Promise.resolve();
+      } else if (pathname === "/api" || pathname.startsWith("/api/")) {
+        task = proxy(
+          request,
+          response,
+          options.operatorOrigin,
+          options.operatorToken,
+          controlRoomOrigin,
+          sessionCookieName,
+          sessionToken,
+          sessionProof,
+        );
+      } else {
+        task = serveStatic(request, response, root);
+      }
       void task.catch((error: unknown) => {
         if (response.headersSent) return response.destroy(error instanceof Error ? error : undefined);
         response.statusCode = 500;
@@ -161,16 +312,26 @@ export class ControlRoomServer {
       server.once("error", reject);
       server.listen(options.port, options.host, () => {
         server.off("error", reject);
+        const bound = server.address();
+        if (!bound || typeof bound === "string") {
+          reject(new Error("Control Room server did not expose a TCP address"));
+          return;
+        }
+        const port = (bound as AddressInfo).port;
+        controlRoomOrigin = httpOrigin(options.host, port);
+        sessionCookieName = `${SESSION_COOKIE_PREFIX}_${port}`;
         resolveListen();
       });
     });
-    const bound = server.address();
-    if (!bound || typeof bound === "string") {
+    if (!controlRoomOrigin) {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-      throw new Error("Control Room server did not expose a TCP address");
+      throw new Error("Control Room server did not establish its bound origin");
     }
-    const port = (bound as AddressInfo).port;
-    return new ControlRoomServer(server, httpOrigin(options.host, port));
+    return new ControlRoomServer(
+      server,
+      controlRoomOrigin,
+      `${controlRoomOrigin}/session/${bootstrapToken}`,
+    );
   }
 
   async close(): Promise<void> {

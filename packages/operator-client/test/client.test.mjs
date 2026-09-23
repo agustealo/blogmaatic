@@ -29,9 +29,49 @@ test("health is public while authenticated queries carry only the bearer credent
   assert.match(calls[1].input, /runtimePhase=waiting_approval/);
   assert.match(calls[1].input, /publicationId=pub\+one/);
   assert.equal(new Headers(calls[1].init.headers).get("authorization"), `Bearer ${token}`);
+  assert.equal(new Headers(calls[1].init.headers).has("x-blogmaatic-session-proof"), false);
   assert.equal(calls[1].init.credentials, "omit");
   assert.equal(calls[1].init.redirect, "error");
   assert.equal(calls[1].init.referrerPolicy, "no-referrer");
+});
+
+test("same-origin proxy mode sends no bearer credential and carries the origin-bound session proof", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ items: [], nextCursor: null }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const proof = "origin-proof-0123456789-abcdefghijklmnopqrstuvwxyz";
+  const client = new OperatorClient({ baseUrl: "/api", sessionProof: proof, fetchImpl });
+
+  await client.listAutomations({ limit: 1 });
+
+  assert.equal(calls[0].input, "/api/v1/automations?limit=1");
+  const headers = new Headers(calls[0].init.headers);
+  assert.equal(headers.has("authorization"), false);
+  assert.equal(headers.get("x-blogmaatic-session-proof"), proof);
+  assert.equal(calls[0].init.credentials, "same-origin");
+});
+
+test("public health never carries the local session proof", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ status: "ok", service: "blogmaatic-operator-api" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const client = new OperatorClient({
+    baseUrl: "/api",
+    sessionProof: "origin-proof-0123456789-abcdefghijklmnopqrstuvwxyz",
+    fetchImpl,
+  });
+  await client.health();
+  assert.equal(new Headers(calls[0].init.headers).has("x-blogmaatic-session-proof"), false);
 });
 
 test("mutation bodies are JSON and credentials never enter the URL", async () => {

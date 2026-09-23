@@ -91,11 +91,9 @@ blogmaatic doctor
 blogmaatic start
 ```
 
-Retrieve the local operator credential only when needed:
+`blogmaatic start` prints a **one-time Control Room launch URL**. Open that URL in the browser. It exchanges the launch capability for a runtime-memory `HttpOnly; SameSite=Strict` session cookie, then the bundled browser UI uses the same-origin `/api` proxy without ever receiving or storing the Operator API bearer credential. The launch capability is consumed after first use and a new browser session is generated on the next runtime start.
 
-```bash
-blogmaatic token
-```
+`blogmaatic token` remains an advanced command for an explicit external Operator API client. It is not part of the normal consumer Control Room flow.
 
 The application state directory is separate from the installation, so replacing the installed runtime does not move publication/run state, the operator credential, SQLite control-plane state, or managed Restate state.
 
@@ -137,6 +135,24 @@ Requirements:
 npm ci --ignore-scripts
 npm run check
 ```
+
+For live Control Room development, initialize and start the real local runtime first. In a second shell, start Vite:
+
+```bash
+npm run runtime:init -- --jekyll-repo /absolute/path/to/site   # first run only
+npm run runtime:start
+
+# second shell
+npm run dev:control-room
+```
+
+The Vite development proxy reads the existing operator credential **server-side** from Blogmaatic's runtime data directory and injects it into `/api` requests. The bearer token is never exposed to the browser or a `VITE_*` variable. If the runtime uses a custom data directory, point the dev proxy at the same directory:
+
+```bash
+BLOGMAATIC_DEV_DATA_DIR=/absolute/path/to/blogmaatic-data npm run dev:control-room
+```
+
+`BLOGMAATIC_DEV_API_TARGET` may be used only to point the server-side dev proxy at a non-default local Operator API address. Development fails closed when the operator credential file is missing or malformed.
 
 To burn a local portable distribution after building:
 

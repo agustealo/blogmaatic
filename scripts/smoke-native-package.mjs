@@ -87,6 +87,36 @@ async function waitForHttp(url, state, timeoutMs = 20_000) {
   throw new Error(`Timed out waiting for installed Blogmaatic at ${url}:\n${state.output}`);
 }
 
+async function controlRoomSession(state, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (state.exited) throw new Error(`Installed Blogmaatic exited before Control Room session bootstrap:\n${state.output}`);
+    const match = state.output.match(/Control Room: (http:\/\/[^\s]+)/);
+    if (match?.[1]) {
+      const launchAddress = match[1];
+      const response = await fetch(launchAddress, {
+        redirect: "manual",
+        headers: { "sec-fetch-site": "none" },
+      });
+      assert.equal(response.status, 303, `Control Room bootstrap returned ${response.status}: ${await response.text()}`);
+      const setCookie = response.headers.get("set-cookie");
+      const location = response.headers.get("location");
+      assert.ok(setCookie, "Control Room bootstrap did not set a session cookie");
+      assert.ok(location, "Control Room bootstrap did not return a session-proof redirect");
+      const origin = new URL(launchAddress).origin;
+      const proof = new URL(location, origin).hash.replace(/^#session=/, "");
+      assert.match(proof, /^[A-Za-z0-9_-]{32,128}$/);
+      return {
+        origin,
+        cookie: setCookie.split(";", 1)[0],
+        proof,
+      };
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`Timed out waiting for the Control Room launch URL:\n${state.output}`);
+}
+
 async function stopInstalledRuntime(handle) {
   if (!handle || handle.state.exited) return;
   handle.child.kill("SIGTERM");
@@ -138,6 +168,19 @@ try {
   assert.equal((await waitForHttp("http://127.0.0.1:4317/healthz", runtime.state)).status, 200);
   const controlRoom = await waitForHttp("http://127.0.0.1:4320/", runtime.state);
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
+
+  const session = await controlRoomSession(runtime.state);
+  const proxied = await fetch(`${session.origin}/api/v1/automations?limit=1`, {
+    headers: {
+      cookie: session.cookie,
+      "x-blogmaatic-session-proof": session.proof,
+      origin: session.origin,
+      "sec-fetch-site": "same-origin",
+    },
+  });
+  assert.equal(proxied.status, 200, `Control Room proxy returned ${proxied.status}: ${await proxied.text()}`);
+  assert.equal(proxied.headers.get("cache-control"), "no-store");
+
   await stopInstalledRuntime(runtime);
   runtime = undefined;
 

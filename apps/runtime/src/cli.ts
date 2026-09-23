@@ -54,7 +54,7 @@ function dataDir(args: ParsedArgs): string {
 }
 
 function usage(): void {
-  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  start [--data-dir PATH]\n  token [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  version\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
+  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
 }
 
 async function productVersion(): Promise<string> {
@@ -114,10 +114,10 @@ async function init(args: ParsedArgs): Promise<void> {
   const credential = await ensureOperatorToken(paths.operatorTokenPath);
   console.log(`Initialized Blogmaatic runtime at ${paths.dataDir}`);
   console.log(`Config: ${paths.configPath}`);
-  console.log(`Operator credential: ${paths.operatorTokenPath}${credential.created ? " (created)" : ""}`);
+  console.log(`Local operator authority: ${credential.created ? "created" : "present"}`);
   if (config.connections.length === 0) console.log("No publisher connection was configured. Add a real extension connection before publishing.");
   else console.log(`Configured ${config.connections.length} real publisher connection(s).`);
-  console.log("Use `blogmaatic token --data-dir <path>` when you need the local operator credential.");
+  console.log("Start Blogmaatic and open the one-time Control Room launch URL; browser authentication is handled by the local runtime.");
 }
 
 async function start(args: ParsedArgs): Promise<void> {
@@ -126,8 +126,8 @@ async function start(args: ParsedArgs): Promise<void> {
   const token = await readOperatorToken(paths.operatorTokenPath);
   const runtime = await startRuntime({ config, paths, operatorToken: token });
   console.log(`Operator API: ${runtime.operatorAddress}`);
-  console.log(`Control Room: ${runtime.controlRoomAddress}`);
-  console.log(`Credential file: ${paths.operatorTokenPath}`);
+  console.log(`Control Room: ${runtime.controlRoomLaunchAddress}`);
+  console.log("Control Room authentication: one-time launch capability → HttpOnly runtime session");
 
   let resolveSignal!: () => void;
   const signal = new Promise<void>((resolveStop) => { resolveSignal = resolveStop; });
@@ -167,7 +167,7 @@ async function doctor(args: ParsedArgs): Promise<void> {
   await run("operator-credential", async () => {
     const credential = await readOperatorToken(paths.operatorTokenPath);
     if (credential.length < 32) throw new Error("operator credential is unexpectedly short");
-    return "present";
+    return "present; Control Room proxy keeps it server-side";
   });
   await run("control-room", async () => {
     const index = await controlRoomIndex();

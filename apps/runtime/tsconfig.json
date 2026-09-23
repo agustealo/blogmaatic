@@ -27,6 +27,10 @@
     { "path": "../../packages/automation-restate" },
     { "path": "../../packages/extension-sdk" },
     { "path": "../../packages/extension-jekyll-git" },
+    { "path": "../../packages/extension-wordpress-rest" },
+    { "path": "../../packages/extension-linkedin-rest" },
+    { "path": "../../packages/extension-facebook-pages" },
+    { "path": "../../packages/secrets" },
     { "path": "../../packages/state-sqlite" }
   ]
 }

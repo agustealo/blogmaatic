@@ -25,7 +25,8 @@ import type {
 
 export interface OperatorClientOptions {
   readonly baseUrl: string;
-  readonly token: string;
+  readonly token?: string;
+  readonly sessionProof?: string;
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -88,13 +89,16 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 export class OperatorClient {
   readonly #baseUrl: string;
-  readonly #token: string;
+  readonly #token: string | undefined;
+  readonly #sessionProof: string | undefined;
   readonly #fetch: typeof fetch;
 
   constructor(options: OperatorClientOptions) {
     this.#baseUrl = normalizeBaseUrl(options.baseUrl);
-    this.#token = options.token.trim();
-    if (!this.#token) throw new Error("Operator bearer token is required");
+    const token = options.token?.trim();
+    const sessionProof = options.sessionProof?.trim();
+    this.#token = token || undefined;
+    this.#sessionProof = sessionProof || undefined;
     this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -111,12 +115,15 @@ export class OperatorClient {
     } = {},
   ): Promise<T> {
     const headers = new Headers({ accept: "application/json" });
-    if (options.authenticated !== false) headers.set("authorization", `Bearer ${this.#token}`);
+    if (options.authenticated !== false && this.#token) headers.set("authorization", `Bearer ${this.#token}`);
+    if (options.authenticated !== false && !this.#token && this.#sessionProof) {
+      headers.set("x-blogmaatic-session-proof", this.#sessionProof);
+    }
     if (options.body !== undefined) headers.set("content-type", "application/json");
     const response = await this.#fetch(joinBase(this.#baseUrl, path), {
       method: options.method ?? "GET",
       headers,
-      credentials: "omit",
+      credentials: this.#token ? "omit" : "same-origin",
       redirect: "error",
       referrerPolicy: "no-referrer",
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),

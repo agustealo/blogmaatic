@@ -3,6 +3,11 @@ export interface SecretProvider {
   resolve(locator: string): Promise<Uint8Array | undefined>;
 }
 
+export interface MutableSecretProvider extends SecretProvider {
+  store(locator: string, material: Uint8Array): Promise<void>;
+  delete(locator: string): Promise<boolean>;
+}
+
 function parseReference(reference: string): { scheme: string; locator: string } {
   const separator = reference.indexOf(":");
   if (separator <= 0 || separator === reference.length - 1) {
@@ -14,6 +19,11 @@ function parseReference(reference: string): { scheme: string; locator: string } 
     throw new Error(`Invalid secret reference scheme: ${scheme}`);
   }
   return { scheme, locator };
+}
+
+function isMutable(provider: SecretProvider): provider is MutableSecretProvider {
+  const candidate = provider as Partial<MutableSecretProvider>;
+  return typeof candidate.store === "function" && typeof candidate.delete === "function";
 }
 
 export class SecretAuthority {
@@ -59,6 +69,28 @@ export class SecretAuthority {
       material.fill(0);
     }
   }
+
+  async storeUtf8(reference: string, value: string): Promise<void> {
+    const { scheme, locator } = parseReference(reference);
+    const provider = this.#providers.get(scheme);
+    if (!provider) throw new Error(`No secret provider registered for scheme: ${scheme}`);
+    if (!isMutable(provider)) throw new Error(`Secret provider is read-only: ${scheme}`);
+    const material = new TextEncoder().encode(value);
+    if (material.byteLength === 0) throw new Error("Secret value must not be empty");
+    try {
+      await provider.store(locator, material);
+    } finally {
+      material.fill(0);
+    }
+  }
+
+  async delete(reference: string): Promise<boolean> {
+    const { scheme, locator } = parseReference(reference);
+    const provider = this.#providers.get(scheme);
+    if (!provider) throw new Error(`No secret provider registered for scheme: ${scheme}`);
+    if (!isMutable(provider)) throw new Error(`Secret provider is read-only: ${scheme}`);
+    return provider.delete(locator);
+  }
 }
 
 export class EnvironmentSecretProvider implements SecretProvider {
@@ -77,3 +109,5 @@ export class EnvironmentSecretProvider implements SecretProvider {
     return value === undefined ? undefined : new TextEncoder().encode(value);
   }
 }
+
+export * from "./os-vault.js";

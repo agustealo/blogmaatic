@@ -26,6 +26,30 @@ test("zeroes provider material after callback completion", async () => {
   assert.deepEqual([...material], new Array(material.length).fill(0));
 });
 
+test("zeroes mutable secret material after storage", async () => {
+  let stored;
+  const authority = new SecretAuthority([
+    {
+      scheme: "test",
+      async resolve() { return undefined; },
+      async store(_locator, material) {
+        stored = material;
+        assert.equal(new TextDecoder().decode(material), "store-me");
+      },
+      async delete() { return true; },
+    },
+  ]);
+  await authority.storeUtf8("test:item", "store-me");
+  assert.deepEqual([...stored], new Array(stored.length).fill(0));
+  assert.equal(await authority.delete("test:item"), true);
+});
+
+test("read-only secret providers reject mutation", async () => {
+  const authority = new SecretAuthority([new EnvironmentSecretProvider({ BLOGMAATIC_TEST_SECRET: "value" })]);
+  await assert.rejects(authority.storeUtf8("env:BLOGMAATIC_TEST_SECRET", "replacement"), /read-only/);
+  await assert.rejects(authority.delete("env:BLOGMAATIC_TEST_SECRET"), /read-only/);
+});
+
 test("does not echo missing secret locators into unavailable errors", async () => {
   const authority = new SecretAuthority([new EnvironmentSecretProvider({})]);
   await assert.rejects(

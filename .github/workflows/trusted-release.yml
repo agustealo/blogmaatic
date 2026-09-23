@@ -83,6 +83,12 @@ jobs:
       - name: Stage portable distribution
         run: npm run distribution:stage
 
+      - name: Install Linux native runtime prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-tools
+
       - name: Require Apple release credentials
         if: runner.os == 'macOS'
         shell: bash
@@ -283,4 +289,4 @@ jobs:
       - name: Verify published release attestations
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release verify "$GITHUB_REF_NAME"
+        run: gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
