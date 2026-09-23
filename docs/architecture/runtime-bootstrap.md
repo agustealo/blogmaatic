@@ -62,29 +62,48 @@ The token command intentionally writes only the credential to stdout so it can b
 
 ## Managed Restate
 
-On macOS and Linux, `managed-local` uses the pinned `@restatedev/restate-server` and `@restatedev/restate` packages installed with the workspace. The runtime refuses to attach to an unknown process already occupying the managed Restate ports. Restate is started with a persistent base directory and the Blogmaatic workflow endpoint is registered through the official CLI without development `--force` semantics.
+On macOS and Linux, `managed-local` uses the pinned `@restatedev/restate-server` and `@restatedev/restate` packages installed with the workspace. The runtime refuses to attach to an unknown process already occupying the managed Restate ports. Restate is started with a persistent base directory and a generated configuration that explicitly binds ingress, admin, and the optional query-engine listener to loopback addresses. The Blogmaatic workflow endpoint is registered through the official CLI without development `--force` semantics.
+
+Only Restate ingress and admin are startup-readiness surfaces. The query-engine listener is still loopback-bound when enabled, but its absence does not make an otherwise healthy managed Restate instance fail startup.
 
 Restate's current distribution publishes local server binaries for macOS and Linux. Other platforms must use `restate.mode=external` until a supported local binary strategy exists. The publication/control-plane contracts are unchanged in external mode.
+
+## Startup activation boundary
+
+Startup has a strict side-effect boundary. Blogmaatic first brings up and validates every fallible component: Restate, configured publisher connections, projection state, workflow endpoint, deployment registration, control-plane state, Operator API, and the Control Room host. The scheduler is created during composition but **does not start dispatching until every one of those components is ready**.
+
+That rule is important because a due schedule may publish content immediately. A failed Control Room or listener startup must never be able to reject `startRuntime()` after publication side effects have already escaped.
 
 ## Scheduler authority
 
 Schedules are not inert configuration. The runtime owns one polling loop which calls the canonical `AutomationControlPlane.dispatchDueSchedules()` API. Claim leases and deterministic schedule fire identities remain in the control-plane store, so the loop does not introduce a second scheduling truth.
 
+Only one scheduler dispatch may be active at a time. Shutdown stops future timer creation and waits for the active dispatch to finish before any dependent runtime authority is closed. This prevents SQLite from being closed underneath a schedule claim or a successfully submitted durable run from being left unrecorded.
+
 ## Control Room hosting
 
-The production Control Room bundle is served by a loopback-only static host. `/api/*` is a narrow reverse proxy to the Operator API. It forwards only the headers the operator contract needs, does not forward cookies, does not follow redirects, and applies restrictive browser security headers. Browser routing falls back to `index.html`; file traversal is rejected.
+The production Control Room bundle is served by a loopback-only static host. `/api/*` is a narrow reverse proxy to the Operator API. It forwards only the headers the operator contract needs, does not forward cookies, does not follow redirects, and applies restrictive browser security headers. Browser routing falls back to `index.html`; file traversal is rejected. IPv6 loopback origins are emitted with bracketed host syntax so `::1` configurations produce valid URLs.
 
 ## Shutdown
 
-Shutdown order is intentional:
+Shutdown order is intentional and reverses the active application surfaces before state is released:
 
-1. stop the scheduler and Control Room;
-2. stop the Operator API so no new mutations enter;
-3. stop managed Restate so it stops driving workflow work;
-4. close the workflow endpoint;
-5. close projection and control-plane SQLite stores.
+1. stop future scheduler work and await any active scheduler dispatch;
+2. stop the Control Room host;
+3. stop the Operator API so no new mutations enter;
+4. close the Blogmaatic workflow endpoint;
+5. stop managed Restate;
+6. close projection and control-plane SQLite stores.
 
 External Restate is never stopped by Blogmaatic.
+
+The workflow endpoint is closed before managed Restate so no new local workflow handler requests are accepted while the durable runtime is being torn down. Durable execution state remains owned by Restate and resumes on the next successful start.
+
+## Production proof
+
+The runtime integration burn uses the real managed Restate server and a real temporary Git/Jekyll repository. It drives the path through the authenticated Operator API, durable Restate workflow, publication kernel, and Jekyll/Git extension, verifies the generated post and Git commit, reaches the same run through the Control Room proxy, shuts the runtime down, starts it again from the same SQLite and Restate state, and confirms the completed result is still available without creating another Git commit.
+
+No fake publisher or in-memory workflow substitute is used for this proof.
 
 ## Extension posture
 
