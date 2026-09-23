@@ -136,6 +136,24 @@ npm ci --ignore-scripts
 npm run check
 ```
 
+For live Control Room development, initialize and start the real local runtime first. In a second shell, start Vite:
+
+```bash
+npm run runtime:init -- --jekyll-repo /absolute/path/to/site   # first run only
+npm run runtime:start
+
+# second shell
+npm run dev:control-room
+```
+
+The Vite development proxy reads the existing operator credential **server-side** from Blogmaatic's runtime data directory and injects it into `/api` requests. The bearer token is never exposed to the browser or a `VITE_*` variable. If the runtime uses a custom data directory, point the dev proxy at the same directory:
+
+```bash
+BLOGMAATIC_DEV_DATA_DIR=/absolute/path/to/blogmaatic-data npm run dev:control-room
+```
+
+`BLOGMAATIC_DEV_API_TARGET` may be used only to point the server-side dev proxy at a non-default local Operator API address. Development fails closed when the operator credential file is missing or malformed.
+
 To burn a local portable distribution after building:
 
 ```bash
