@@ -51,7 +51,7 @@ test("macOS resolves and deletes encoded Keychain items without exposing the loc
     ok(),
     ok(`${stored("read-secret")}\n`),
     ok(),
-    ok(),
+    ok("", "security: SecKeychainItemDelete: The specified item was deleted.\n"),
   ], calls);
   const backend = new MacOsKeychainBackend({ run });
   const provider = new OsCredentialSecretProvider(backend);

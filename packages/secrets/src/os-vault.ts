@@ -220,7 +220,7 @@ export class MacOsKeychainBackend implements CredentialVaultBackend {
       this.#keychain,
     ]);
     if (result.code === 44) return false;
-    if (result.code !== 0 || result.stderr !== "") throw vaultError("macOS Keychain delete failed");
+    if (result.code !== 0) throw vaultError("macOS Keychain delete failed");
     return true;
   }
 }
