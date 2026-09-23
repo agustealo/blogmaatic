@@ -39,6 +39,7 @@ import {
 import { SqliteProjectionStateStore } from "@blogmaatic/state-sqlite";
 
 import type { RuntimeConfig, RuntimePaths } from "./config.js";
+import { ConnectionManager } from "./connection-manager.js";
 import { ControlRoomServer } from "./control-room-server.js";
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
@@ -176,6 +177,14 @@ export async function startRuntime(options: {
       FACEBOOK_CONNECTION_CONTRACT,
     );
     await inspectConfiguredConnections(extensions, connections, logger);
+    const connectionManager = new ConnectionManager({
+      config,
+      configPath: paths.configPath,
+      connections,
+      extensions,
+      secrets,
+      logger,
+    });
 
     projectionState = new SqliteProjectionStateStore(paths.projectionStatePath);
     const kernel = new PublicationKernel(
@@ -197,6 +206,7 @@ export async function startRuntime(options: {
       controlPlane,
       store: controlPlaneStore,
       runtime,
+      connections: connectionManager,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
         token: options.operatorToken,
