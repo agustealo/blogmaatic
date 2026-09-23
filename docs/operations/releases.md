@@ -101,9 +101,9 @@ The publish job also creates:
 - `SHA256SUMS`
 - `release-manifest.json`
 
-The release manifest records the product version, tag, source SHA, package manager authority, bundled Node version, bundled Restate version, and each published asset's size and SHA-256 digest. Those metadata files are separately attested before the GitHub Release is created.
+The release manifest records the product version, tag, source SHA, package manager authority, bundled Node version, bundled Restate version, and each published asset's size and SHA-256 digest. Its `generatedAt` field is derived from the tagged source commit timestamp rather than workflow wall-clock time, so rebuilding the same source does not manufacture different metadata solely because it ran later.
 
-Consumers can verify conventional checksums with their platform SHA-256 tool and can verify GitHub release attestations with GitHub CLI release verification.
+`SHA256SUMS`, `release-manifest.json`, and the per-asset `.sha256` sidecars are separately attested before the GitHub Release is created. Consumers can verify conventional checksums with their platform SHA-256 tool and can verify GitHub release attestations with GitHub CLI release verification.
 
 ## Release procedure
 
