@@ -14,6 +14,20 @@ function defaultDataDir(environment: NodeJS.ProcessEnv = process.env): string {
   return join(environment.XDG_DATA_HOME ?? join(home, ".local", "share"), "blogmaatic");
 }
 
+function developmentApiTarget(input: string): string {
+  const url = new URL(input);
+  if (url.protocol !== "http:") throw new Error("Control Room development API target must use plain HTTP loopback");
+  if (url.username || url.password) throw new Error("Control Room development API target must not contain credentials");
+  const hostname = url.hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  if (hostname !== "127.0.0.1" && hostname !== "::1" && hostname !== "localhost") {
+    throw new Error("Control Room development API target must stay on loopback");
+  }
+  if ((url.pathname && url.pathname !== "/") || url.search || url.hash) {
+    throw new Error("Control Room development API target must be an origin without path, query, or fragment");
+  }
+  return url.origin;
+}
+
 function developmentOperatorToken(dataDir: string): string {
   const tokenPath = join(resolve(dataDir), "secrets", "operator.token");
   let token: string;
@@ -29,7 +43,6 @@ function developmentOperatorToken(dataDir: string): string {
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const target = env.BLOGMAATIC_DEV_API_TARGET || "http://127.0.0.1:4317";
   const shared = {
     plugins: [react()],
     preview: { host: "127.0.0.1" },
@@ -37,6 +50,7 @@ export default defineConfig(({ command, mode }) => {
 
   if (command !== "serve") return shared;
 
+  const target = developmentApiTarget(env.BLOGMAATIC_DEV_API_TARGET || "http://127.0.0.1:4317");
   const dataDir = env.BLOGMAATIC_DEV_DATA_DIR || defaultDataDir(env);
   const operatorToken = developmentOperatorToken(dataDir);
   return {

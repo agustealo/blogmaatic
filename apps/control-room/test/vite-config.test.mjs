@@ -8,17 +8,22 @@ import { loadConfigFromFile } from "vite";
 
 const configFile = resolve("vite.config.ts");
 
-async function load(command, dataDir) {
-  const previous = process.env.BLOGMAATIC_DEV_DATA_DIR;
+async function load(command, dataDir, apiTarget) {
+  const previousDataDir = process.env.BLOGMAATIC_DEV_DATA_DIR;
+  const previousTarget = process.env.BLOGMAATIC_DEV_API_TARGET;
   if (dataDir === undefined) delete process.env.BLOGMAATIC_DEV_DATA_DIR;
   else process.env.BLOGMAATIC_DEV_DATA_DIR = dataDir;
+  if (apiTarget === undefined) delete process.env.BLOGMAATIC_DEV_API_TARGET;
+  else process.env.BLOGMAATIC_DEV_API_TARGET = apiTarget;
   try {
     const loaded = await loadConfigFromFile({ command, mode: "development" }, configFile, undefined, "silent");
     assert.ok(loaded, "Vite configuration did not load");
     return loaded.config;
   } finally {
-    if (previous === undefined) delete process.env.BLOGMAATIC_DEV_DATA_DIR;
-    else process.env.BLOGMAATIC_DEV_DATA_DIR = previous;
+    if (previousDataDir === undefined) delete process.env.BLOGMAATIC_DEV_DATA_DIR;
+    else process.env.BLOGMAATIC_DEV_DATA_DIR = previousDataDir;
+    if (previousTarget === undefined) delete process.env.BLOGMAATIC_DEV_API_TARGET;
+    else process.env.BLOGMAATIC_DEV_API_TARGET = previousTarget;
   }
 }
 
@@ -58,6 +63,24 @@ test("development mode fails closed when the runtime credential is unavailable",
   const dataDir = await mkdtemp(join(tmpdir(), "blogmaatic-control-room-dev-missing-"));
   try {
     await assert.rejects(() => load("serve", dataDir), /initialized Blogmaatic runtime credential/);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("development proxy refuses any target that could exfiltrate operator authority", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "blogmaatic-control-room-dev-target-"));
+  try {
+    await mkdir(join(dataDir, "secrets"), { recursive: true });
+    await writeFile(
+      join(dataDir, "secrets", "operator.token"),
+      "dev-operator-token-0123456789-abcdefghijklmnopqrstuvwxyz\n",
+      { mode: 0o600 },
+    );
+    await assert.rejects(() => load("serve", dataDir, "https://attacker.example:4317"), /plain HTTP loopback|stay on loopback/);
+    await assert.rejects(() => load("serve", dataDir, "http://attacker.example:4317"), /stay on loopback/);
+    await assert.rejects(() => load("serve", dataDir, "http://user:pass@127.0.0.1:4317"), /must not contain credentials/);
+    await assert.rejects(() => load("serve", dataDir, "http://127.0.0.1:4317/path"), /origin without path/);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
