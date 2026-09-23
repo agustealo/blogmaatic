@@ -29,10 +29,10 @@ export async function resolveLocalBinary(name: string): Promise<string> {
       await access(path, constants.X_OK);
       return path;
     } catch {
-      // Keep walking toward the workspace root.
+      // Keep walking toward the installation/workspace root.
     }
   }
-  throw new Error(`Local binary ${name} is unavailable. Run npm install from the Blogmaatic repository root.`);
+  throw new Error(`Required local binary ${name} is unavailable. The Blogmaatic installation is incomplete or damaged.`);
 }
 
 export async function isTcpOpen(host: string, port: number, timeoutMs = 250): Promise<boolean> {
