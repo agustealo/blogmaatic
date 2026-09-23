@@ -5,7 +5,7 @@ import { OperatorClient, OperatorClientError } from "../dist/index.js";
 
 const token = "operator-control-room-0123456789-abcdefghijklmnopqrstuvwxyz";
 
-test("health is public while authenticated queries carry the bearer credential and encoded filters", async () => {
+test("health is public while authenticated queries carry only the bearer credential and encoded filters", async () => {
   const calls = [];
   const fetchImpl = async (input, init = {}) => {
     calls.push({ input: String(input), init });
@@ -21,11 +21,17 @@ test("health is public while authenticated queries carry the bearer credential a
 
   assert.equal(calls[0].input, "https://control.example.test/api/healthz");
   assert.equal(new Headers(calls[0].init.headers).has("authorization"), false);
+  assert.equal(calls[0].init.credentials, "omit");
+  assert.equal(calls[0].init.redirect, "error");
+  assert.equal(calls[0].init.referrerPolicy, "no-referrer");
   assert.match(calls[1].input, /\/api\/v1\/runs\?/);
   assert.match(calls[1].input, /limit=25/);
   assert.match(calls[1].input, /runtimePhase=waiting_approval/);
   assert.match(calls[1].input, /publicationId=pub\+one/);
   assert.equal(new Headers(calls[1].init.headers).get("authorization"), `Bearer ${token}`);
+  assert.equal(calls[1].init.credentials, "omit");
+  assert.equal(calls[1].init.redirect, "error");
+  assert.equal(calls[1].init.referrerPolicy, "no-referrer");
 });
 
 test("mutation bodies are JSON and credentials never enter the URL", async () => {
@@ -65,7 +71,10 @@ test("structured API failures become bounded client errors", async () => {
   );
 });
 
-test("rejects non-http absolute API origins and URL credentials", () => {
+test("rejects ambiguous relative origins, non-http absolute origins, and URL credentials", () => {
+  assert.throws(() => new OperatorClient({ baseUrl: "//attacker.example/api", token }), /unambiguous path/);
+  assert.throws(() => new OperatorClient({ baseUrl: "/\\attacker.example/api", token }), /unambiguous path/);
+  assert.throws(() => new OperatorClient({ baseUrl: "/api?next=//attacker.example", token }), /unambiguous path/);
   assert.throws(() => new OperatorClient({ baseUrl: "file:///tmp/api", token }), /HTTP or HTTPS/);
   assert.throws(() => new OperatorClient({ baseUrl: "https://user:pass@example.test", token }), /must not contain credentials/);
 });
