@@ -52,6 +52,31 @@ function createSecretAuthority(): SecretAuthority {
   return new SecretAuthority(providers);
 }
 
+export async function inspectConfiguredConnections(
+  extensions: ExtensionRuntime,
+  connections: ConnectionAuthority,
+  logger: Pick<Console, "info" | "error">,
+): Promise<void> {
+  for (const connection of connections.list()) {
+    try {
+      const validation = await extensions.validateConnection(connection.id);
+      if (!validation.valid) {
+        logger.error(`Connection ${connection.id} is invalid: ${validation.errors.join("; ")}`);
+        continue;
+      }
+      if (connection.status !== "active") continue;
+      const health = await extensions.checkHealth(connection.id);
+      if (health.state === "unhealthy") {
+        logger.error(`Connection ${connection.id} is unhealthy: ${health.detail}`);
+      } else if (health.state === "degraded") {
+        logger.info(`Connection ${connection.id} is degraded: ${health.detail}`);
+      }
+    } catch (error) {
+      logger.error(`Connection ${connection.id} could not be inspected: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 async function startWorkflowEndpoint(workflow: ReturnType<typeof createPublicationAutomationWorkflow>, host: string, port: number): Promise<Http2Server> {
   const handler = restate.createEndpointHandler({ services: [workflow] });
   const server = createHttp2Server(handler);
@@ -129,20 +154,7 @@ export async function startRuntime(options: {
     extensions.registerPublisher(new WordPressRestPublisher(connections, secrets));
     extensions.registerPublisher(new LinkedInRestPublisher(connections, secrets));
     extensions.registerPublisher(new FacebookPagesPublisher(connections, secrets));
-
-    for (const connection of connections.list()) {
-      const validation = await extensions.validateConnection(connection.id);
-      if (!validation.valid) {
-        throw new Error(`Connection ${connection.id} is invalid: ${validation.errors.join("; ")}`);
-      }
-      if (connection.status === "active") {
-        const health = await extensions.checkHealth(connection.id);
-        if (health.state === "unhealthy") {
-          throw new Error(`Connection ${connection.id} is unhealthy: ${health.detail}`);
-        }
-        if (health.state === "degraded") logger.info(`Connection ${connection.id} is degraded: ${health.detail}`);
-      }
-    }
+    await inspectConfiguredConnections(extensions, connections, logger);
 
     projectionState = new SqliteProjectionStateStore(paths.projectionStatePath);
     const kernel = new PublicationKernel(
