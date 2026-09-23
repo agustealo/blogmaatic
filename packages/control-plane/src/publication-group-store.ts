@@ -248,18 +248,31 @@ export class SqlitePublicationGroupStore implements PublicationGroupStore {
     this.#assertOpen();
     const id = requireId(groupId, "Publication group id");
     const expected = requireVersion(expectedVersion, "Expected publication group version");
-    const result = this.#database.prepare(`
-      UPDATE publication_group_heads
-      SET enabled = ?, updated_at = ?
-      WHERE group_id = ? AND active_version = ?
-    `).run(enabled ? 1 : 0, updatedAt, id, expected);
-    if (result.changes !== 1) {
-      const head = this.#database.prepare(
-        "SELECT active_version FROM publication_group_heads WHERE group_id = ?",
-      ).get(id) as { active_version: number } | undefined;
+    this.#transaction(() => {
+      const head = this.#database.prepare(`
+        SELECT h.active_version, h.enabled, v.group_json
+        FROM publication_group_heads h
+        JOIN publication_group_versions v
+          ON v.group_id = h.group_id AND v.version = h.active_version
+        WHERE h.group_id = ?
+      `).get(id) as { active_version: number; enabled: number; group_json: string } | undefined;
       if (!head) throw new Error(`Publication group is not registered: ${id}`);
-      throw new Error(`Publication group ${id} changed from version ${expected} to ${head.active_version}`);
-    }
+      if (head.active_version !== expected) {
+        throw new Error(`Publication group ${id} changed from version ${expected} to ${head.active_version}`);
+      }
+      if ((head.enabled === 1) === enabled) return;
+      const nextVersion = expected + 1;
+      const group = JSON.parse(head.group_json) as PublicationGroup;
+      this.#insertVersion(group, nextVersion, updatedAt);
+      const result = this.#database.prepare(`
+        UPDATE publication_group_heads
+        SET active_version = ?, enabled = ?, updated_at = ?
+        WHERE group_id = ? AND active_version = ?
+      `).run(nextVersion, enabled ? 1 : 0, updatedAt, id, expected);
+      if (result.changes !== 1) {
+        throw new Error(`Publication group ${id} changed while activation was being updated`);
+      }
+    });
     const updated = await this.getActivePublicationGroup(id);
     if (!updated) throw new Error(`Publication group could not be read after activation change: ${id}`);
     return updated;
