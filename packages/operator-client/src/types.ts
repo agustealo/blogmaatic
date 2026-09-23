@@ -7,6 +7,9 @@ import type {
   AutomationSchedule,
   AutomationVersionListQuery,
   Page,
+  PublicationGroupListQuery,
+  PublicationGroupRegistryEntry,
+  PublicationGroupVersionListQuery,
   RunListQuery,
   ScheduleListQuery,
   ControlPlaneRunRecord,
@@ -21,6 +24,9 @@ import type {
   OperatorOperationKind,
   OperatorOperationsPage,
   OperatorOperationsQuery,
+  PublicationGroupActivationBody,
+  PublicationGroupCreateBody,
+  PublicationGroupUpdateBody,
 } from "@blogmaatic/operator-api";
 
 export type {
@@ -43,6 +49,12 @@ export type {
   OperatorOperationsPage,
   OperatorOperationsQuery,
   Page,
+  PublicationGroupActivationBody,
+  PublicationGroupCreateBody,
+  PublicationGroupListQuery,
+  PublicationGroupRegistryEntry,
+  PublicationGroupUpdateBody,
+  PublicationGroupVersionListQuery,
   RunListQuery,
   ScheduleListQuery,
 };
@@ -101,6 +113,8 @@ export interface OperatorErrorBody {
 
 export type AutomationPage = Page<AutomationRegistryEntry>;
 export type AutomationVersionPage = Page<AutomationRegistryEntry>;
+export type PublicationGroupPage = Page<PublicationGroupRegistryEntry>;
+export type PublicationGroupVersionPage = Page<PublicationGroupRegistryEntry>;
 export type RunPage = Page<ControlPlaneRunRecord>;
 export type SchedulePage = Page<AutomationSchedule>;
 export type AuditPage = Page<AuditLedgerEntry>;
