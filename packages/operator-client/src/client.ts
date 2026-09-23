@@ -25,6 +25,7 @@ import type {
   PublicationGroupActivationBody,
   PublicationGroupCreateBody,
   PublicationGroupListQuery,
+  PublicationGroupOptionsResponse,
   PublicationGroupPage,
   PublicationGroupRegistryEntry,
   PublicationGroupUpdateBody,
@@ -201,6 +202,10 @@ export class OperatorClient {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, {
       method: "POST",
     });
+  }
+
+  getPublicationGroupOptions(): Promise<PublicationGroupOptionsResponse> {
+    return this.#request<PublicationGroupOptionsResponse>("/v1/publication-group-options");
   }
 
   listPublicationGroups(query: PublicationGroupListQuery = {}): Promise<PublicationGroupPage> {
