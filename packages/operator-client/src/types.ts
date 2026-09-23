@@ -12,6 +12,11 @@ import type {
   ControlPlaneRunRecord,
 } from "@blogmaatic/control-plane";
 import type {
+  ConnectionCreateBody,
+  ConnectionUpdateBody,
+  OperatorConnectionTestResult,
+  OperatorConnectionType,
+  OperatorConnectionView,
   OperatorOperation,
   OperatorOperationKind,
   OperatorOperationsPage,
@@ -27,7 +32,12 @@ export type {
   AutomationRunResult,
   AutomationSchedule,
   AutomationVersionListQuery,
+  ConnectionCreateBody,
+  ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  OperatorConnectionTestResult,
+  OperatorConnectionType,
+  OperatorConnectionView,
   OperatorOperation,
   OperatorOperationKind,
   OperatorOperationsPage,
@@ -40,6 +50,14 @@ export type {
 export interface OperatorHealth {
   readonly status: "ok";
   readonly service: string;
+}
+
+export interface ConnectionTypesResponse {
+  readonly items: readonly OperatorConnectionType[];
+}
+
+export interface ConnectionsResponse {
+  readonly items: readonly OperatorConnectionView[];
 }
 
 export interface ApprovalDecisionInput {
