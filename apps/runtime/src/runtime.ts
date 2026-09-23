@@ -19,6 +19,7 @@ import { SqliteProjectionStateStore } from "@blogmaatic/state-sqlite";
 
 import type { RuntimeConfig, RuntimePaths } from "./config.js";
 import { ControlRoomServer } from "./control-room-server.js";
+import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
 import { SchedulerLoop } from "./scheduler.js";
 
@@ -60,17 +61,16 @@ function managedRestateAddresses(config: RuntimeConfig): { ingressHost: string; 
   }
   const ingressPort = Number(ingress.port || "80");
   const adminPort = Number(admin.port || "80");
-  if (!["127.0.0.1", "localhost"].includes(ingress.hostname) || !["127.0.0.1", "localhost"].includes(admin.hostname)) {
-    throw new Error("managed-local Restate must bind to loopback endpoints");
-  }
+  const ingressHost = canonicalLoopbackHost(normalizeHost(ingress.hostname));
+  const adminHost = canonicalLoopbackHost(normalizeHost(admin.hostname));
   if (ingressPort !== 8080 || adminPort !== 9070) {
     throw new Error("managed-local Restate currently owns canonical ports 8080 and 9070; use restate.mode=external for custom ports");
   }
-  return { ingressHost: ingress.hostname, ingressPort, adminHost: admin.hostname, adminPort };
+  return { ingressHost, ingressPort, adminHost, adminPort };
 }
 
 async function registerManagedDeployment(config: RuntimeConfig): Promise<void> {
-  const deploymentUrl = `http://${config.restate.workflowHost}:${config.restate.workflowPort}`;
+  const deploymentUrl = httpOrigin(config.restate.workflowHost, config.restate.workflowPort);
   await runLocalCommand("restate", ["deployments", "register", deploymentUrl, "--yes"]);
 }
 
@@ -101,7 +101,7 @@ export async function startRuntime(options: {
     } else {
       const ingress = new URL(config.restate.ingressUrl);
       const port = Number(ingress.port || (ingress.protocol === "https:" ? "443" : "80"));
-      await waitForTcp(ingress.hostname, port, 5000);
+      await waitForTcp(normalizeHost(ingress.hostname), port, 5000);
     }
 
     const connections = new ConnectionAuthority(config.connections);
@@ -155,7 +155,6 @@ export async function startRuntime(options: {
       batchSize: config.scheduler.batchSize,
       onError: (error) => logger.error(`Scheduler dispatch failed: ${error.message}`),
     });
-    scheduler.start();
 
     controlRoom = await ControlRoomServer.start({
       root: options.controlRoomRoot ?? controlRoomDist(),
@@ -163,6 +162,10 @@ export async function startRuntime(options: {
       port: config.controlRoom.port,
       operatorOrigin: operator.address.replace(/\/$/, ""),
     });
+
+    // Startup becomes externally active only after every fallible listener is ready.
+    // This prevents due schedules from publishing during a startup that later fails.
+    scheduler.start();
 
     const fatal = managedRestate?.fatal ?? new Promise<never>(() => undefined);
     let closed = false;
@@ -173,21 +176,21 @@ export async function startRuntime(options: {
       close: async () => {
         if (closed) return;
         closed = true;
-        scheduler?.close();
+        await scheduler?.close();
         if (controlRoom) await controlRoom.close();
         if (operator) await closeOperatorApi(operator.app);
-        if (managedRestate) await managedRestate.close();
         if (workflowServer) await closeHttp2(workflowServer);
+        if (managedRestate) await managedRestate.close();
         projectionState?.close();
         controlPlaneStore?.close();
       },
     };
   } catch (error) {
-    scheduler?.close();
+    await scheduler?.close().catch(() => undefined);
     if (controlRoom) await controlRoom.close().catch(() => undefined);
     if (operator) await closeOperatorApi(operator.app).catch(() => undefined);
-    if (managedRestate) await managedRestate.close().catch(() => undefined);
     if (workflowServer) await closeHttp2(workflowServer).catch(() => undefined);
+    if (managedRestate) await managedRestate.close().catch(() => undefined);
     projectionState?.close();
     controlPlaneStore?.close();
     throw error;
