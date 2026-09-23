@@ -32,15 +32,23 @@ async function rawRequest(url, headers) {
   });
 }
 
-function sessionCookie(response) {
-  const header = response.headers.get("set-cookie");
-  assert.ok(header, "Control Room bootstrap did not set a session cookie");
-  assert.match(header, /HttpOnly/i);
-  assert.match(header, /SameSite=Strict/i);
-  return header.split(";", 1)[0];
+function browserSession(response, origin) {
+  const cookieHeader = response.headers.get("set-cookie");
+  assert.ok(cookieHeader, "Control Room bootstrap did not set a session cookie");
+  assert.match(cookieHeader, /HttpOnly/i);
+  assert.match(cookieHeader, /SameSite=Strict/i);
+  const cookie = cookieHeader.split(";", 1)[0];
+  const cookieName = cookie.split("=", 1)[0];
+  assert.match(cookieName, /^blogmaatic_control_room_session_\d+$/);
+
+  const location = response.headers.get("location");
+  assert.ok(location, "Control Room bootstrap did not return a redirect location");
+  const proof = new URL(location, origin).hash.replace(/^#session=/, "");
+  assert.match(proof, /^[A-Za-z0-9_-]{32,128}$/);
+  return { cookie, cookieName, proof };
 }
 
-test("Control Room exchanges a one-time launch capability for a scoped browser session", async () => {
+test("Control Room requires both a host-wide HttpOnly cookie and an origin-bound proof", async () => {
   const root = await mkdtemp(join(tmpdir(), "blogmaatic-control-room-"));
   await writeFile(join(root, "index.html"), "<main>control room</main>");
   let receivedAuthorization;
@@ -67,10 +75,7 @@ test("Control Room exchanges a one-time launch capability for a scoped browser s
     assert.equal(page.headers.get("cross-origin-resource-policy"), "same-origin");
 
     const unauthenticated = await fetch(`${host.address}/api/v1/automations`, {
-      headers: {
-        origin: host.address,
-        "sec-fetch-site": "same-origin",
-      },
+      headers: { origin: host.address, "sec-fetch-site": "same-origin" },
     });
     assert.equal(unauthenticated.status, 403);
     assert.equal(upstreamRequests, 0);
@@ -80,8 +85,7 @@ test("Control Room exchanges a one-time launch capability for a scoped browser s
       headers: { "sec-fetch-site": "none" },
     });
     assert.equal(bootstrap.status, 303);
-    assert.equal(bootstrap.headers.get("location"), "/");
-    const cookie = sessionCookie(bootstrap);
+    const session = browserSession(bootstrap, host.address);
 
     const reusedBootstrap = await fetch(host.launchAddress, {
       redirect: "manual",
@@ -89,10 +93,31 @@ test("Control Room exchanges a one-time launch capability for a scoped browser s
     });
     assert.equal(reusedBootstrap.status, 410);
 
+    const cookieOnly = await fetch(`${host.address}/api/v1/automations`, {
+      headers: {
+        cookie: session.cookie,
+        origin: host.address,
+        "sec-fetch-site": "same-origin",
+      },
+    });
+    assert.equal(cookieOnly.status, 403);
+    assert.equal(upstreamRequests, 0);
+
+    const proofOnly = await fetch(`${host.address}/api/v1/automations`, {
+      headers: {
+        "x-blogmaatic-session-proof": session.proof,
+        origin: host.address,
+        "sec-fetch-site": "same-origin",
+      },
+    });
+    assert.equal(proofOnly.status, 403);
+    assert.equal(upstreamRequests, 0);
+
     const proxied = await fetch(`${host.address}/api/v1/automations`, {
       headers: {
         authorization: "Bearer browser-must-not-control-this",
-        cookie,
+        cookie: session.cookie,
+        "x-blogmaatic-session-proof": session.proof,
         origin: host.address,
         "sec-fetch-site": "same-origin",
       },
@@ -105,7 +130,8 @@ test("Control Room exchanges a one-time launch capability for a scoped browser s
 
     const rejected = await fetch(`${host.address}/api/v1/automations`, {
       headers: {
-        cookie,
+        cookie: session.cookie,
+        "x-blogmaatic-session-proof": session.proof,
         origin: "https://attacker.example",
         "sec-fetch-site": "cross-site",
       },
@@ -117,7 +143,8 @@ test("Control Room exchanges a one-time launch capability for a scoped browser s
     const rebound = await rawRequest(`${host.address}/api/v1/automations`, {
       host: `attacker.example:${boundPort}`,
       origin: `http://attacker.example:${boundPort}`,
-      cookie,
+      cookie: session.cookie,
+      "x-blogmaatic-session-proof": session.proof,
       "sec-fetch-site": "same-origin",
     });
     assert.equal(rebound.status, 403);
@@ -125,6 +152,27 @@ test("Control Room exchanges a one-time launch capability for a scoped browser s
     assert.equal(JSON.parse(rebound.body).error.code, "CONTROL_ROOM_SESSION_REQUIRED");
   } finally {
     await host.close();
+    await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("Control Room instances use distinct cookie names so their loopback sessions do not overwrite each other", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blogmaatic-control-room-cookies-"));
+  await writeFile(join(root, "index.html"), "<main>control room</main>");
+  const upstream = createServer((_request, response) => response.end("{}"));
+  const operatorOrigin = await listen(upstream);
+  const first = await ControlRoomServer.start({ root, host: "127.0.0.1", port: 0, operatorOrigin, operatorToken: "first-token-0123456789-abcdefghijklmnopqrstuvwxyz" });
+  const second = await ControlRoomServer.start({ root, host: "127.0.0.1", port: 0, operatorOrigin, operatorToken: "second-token-0123456789-abcdefghijklmnopqrstuvwxyz" });
+  try {
+    const firstBootstrap = await fetch(first.launchAddress, { redirect: "manual", headers: { "sec-fetch-site": "none" } });
+    const secondBootstrap = await fetch(second.launchAddress, { redirect: "manual", headers: { "sec-fetch-site": "none" } });
+    const firstSession = browserSession(firstBootstrap, first.address);
+    const secondSession = browserSession(secondBootstrap, second.address);
+    assert.notEqual(firstSession.cookieName, secondSession.cookieName);
+    assert.notEqual(firstSession.proof, secondSession.proof);
+  } finally {
+    await first.close();
+    await second.close();
     await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
   }
 });
