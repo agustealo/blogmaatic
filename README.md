@@ -55,34 +55,53 @@ Restate is an execution adapter, not Blogmaatic's domain model. SQLite owns loca
 
 ## Consumer installation
 
-Slice 12 produces portable managed-runtime archives for:
+Blogmaatic's verified runtime is self-contained: the target machine does **not** need a repository checkout, Node.js, npm, or its own Restate installation.
 
-- Linux x64
-- macOS Apple Silicon
-- macOS Intel
+The native installation layout is:
 
-Each archive contains the compiled Blogmaatic runtime and Control Room, the locked production dependency graph, a pinned Node.js 24.21 runtime, and pinned Restate binaries. The target machine does **not** need a repository checkout, Node.js, or npm.
+```text
+/opt/blogmaatic/                compiled runtime, Control Room, Node, Restate
+/usr/local/bin/blogmaatic       stable command wrapper
+```
 
-Verify the matching `.sha256` file before extraction, then:
+### Linux x64
+
+Trusted releases publish a Debian package as the primary installer and retain the portable archive as a fallback distribution:
 
 ```bash
-./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic version
-./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic init --jekyll-repo /absolute/path/to/site
-./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic doctor
-./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic start
+sudo dpkg -i blogmaatic-<version>-amd64.deb
+blogmaatic version
+blogmaatic init --jekyll-repo /absolute/path/to/site
+blogmaatic doctor
+blogmaatic start
+```
+
+### macOS Apple Silicon and Intel
+
+Trusted releases publish native `.pkg` installers. The release path signs the payload with Developer ID + Hardened Runtime, grants bundled Node only the JIT entitlement required by V8, signs the installer with Developer ID Installer, notarizes it with Apple's notary service, and staples the resulting ticket before publication.
+
+The portable macOS archive remains a build/clean-install proof and is **not** published as a consumer release asset because it is created before the Developer ID signing/notarization boundary.
+
+After installation:
+
+```bash
+blogmaatic version
+blogmaatic init --jekyll-repo /absolute/path/to/site
+blogmaatic doctor
+blogmaatic start
 ```
 
 Retrieve the local operator credential only when needed:
 
 ```bash
-./blogmaatic-0.11.0-<platform>-<arch>/bin/blogmaatic token
+blogmaatic token
 ```
 
-The application state directory is separate from the installation, so the versioned application archive can be replaced without moving publication/run state.
+The application state directory is separate from the installation, so replacing the installed runtime does not move publication/run state, the operator credential, SQLite control-plane state, or managed Restate state.
 
 Windows currently requires `restate.mode=external`; Blogmaatic does not claim an unverified managed Restate binary path on Windows.
 
-See [`docs/architecture/distribution.md`](docs/architecture/distribution.md) for the artifact, integrity, compatibility, and clean-install proof contract.
+See [`docs/architecture/distribution.md`](docs/architecture/distribution.md) for the artifact and clean-install proof contract and [`docs/operations/releases.md`](docs/operations/releases.md) for trusted release, signing, notarization, provenance, and version/tag authority.
 
 ## Main packages
 
@@ -128,6 +147,14 @@ npm ci --omit=dev --ignore-scripts
 npm run distribution:stage
 ```
 
+To build the native installer from that stage:
+
+```bash
+npm run distribution:native
+```
+
+On macOS CI, Distribution Quality uses `--adhoc-signed` to exercise Hardened Runtime and Node's JIT entitlement without production signing credentials. The trusted tag workflow is the only path that uses Developer ID and notarization credentials.
+
 Provider credentials belong in connection/secrets infrastructure, never in `@blogmaatic/core`. Durable-runtime code belongs behind the automation adapter. Trigger, schedule and run authority belongs in the control plane rather than extensions.
 
 ## Architecture documents
@@ -141,3 +168,4 @@ Provider credentials belong in connection/secrets infrastructure, never in `@blo
 - [`control-plane.md`](docs/architecture/control-plane.md)
 - [`runtime-bootstrap.md`](docs/architecture/runtime-bootstrap.md)
 - [`distribution.md`](docs/architecture/distribution.md)
+- [`release operations`](docs/operations/releases.md)
