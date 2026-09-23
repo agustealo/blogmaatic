@@ -110,9 +110,10 @@ export class ManagedRestateServer {
     }
     const binary = await resolveLocalBinary("restate-server");
     const child = spawn(binary, ["--base-dir", options.dataDir], {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
+    child.stdin.end();
     let log = "";
     child.stdout.on("data", (chunk: Buffer) => { log = rolling(log, chunk); });
     child.stderr.on("data", (chunk: Buffer) => { log = rolling(log, chunk); });
