@@ -88,7 +88,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 export class OperatorClient {
   readonly #baseUrl: string;
-  readonly #token?: string;
+  readonly #token: string | undefined;
   readonly #fetch: typeof fetch;
 
   constructor(options: OperatorClientOptions) {
