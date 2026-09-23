@@ -71,11 +71,13 @@ async function controlRoomSession(processState, timeoutMs = 20_000) {
       });
       assert.equal(response.status, 303, `Control Room bootstrap returned ${response.status}: ${await response.text()}`);
       const setCookie = response.headers.get("set-cookie");
+      const location = response.headers.get("location");
       assert.ok(setCookie, "Control Room bootstrap did not set a session cookie");
-      return {
-        origin: new URL(launchAddress).origin,
-        cookie: setCookie.split(";", 1)[0],
-      };
+      assert.ok(location, "Control Room bootstrap did not return a redirect location");
+      const origin = new URL(launchAddress).origin;
+      const proof = new URL(location, origin).hash.replace(/^#session=/, "");
+      assert.match(proof, /^[A-Za-z0-9_-]{32,128}$/);
+      return { origin, cookie: setCookie.split(";", 1)[0], proof };
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
@@ -95,11 +97,7 @@ async function terminalResult(token, runId) {
 
 function startPackagedRuntime(binary, dataDir, cwd, env) {
   const state = { exited: false, output: "" };
-  const child = spawn(binary, ["start", "--data-dir", dataDir], {
-    cwd,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = spawn(binary, ["start", "--data-dir", dataDir], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   const append = (chunk) => { state.output = `${state.output}${chunk.toString("utf8")}`.slice(-128_000); };
   child.stdout.on("data", append);
   child.stderr.on("data", append);
@@ -246,6 +244,7 @@ try {
   const controlRoomApi = await fetch(`${session.origin}/api/v1/automations?limit=1`, {
     headers: {
       cookie: session.cookie,
+      "x-blogmaatic-session-proof": session.proof,
       origin: session.origin,
       "sec-fetch-site": "same-origin",
     },
