@@ -190,6 +190,7 @@ export async function startRuntime(options: {
       store: publicationGroupStore,
       connections,
       extensions,
+      policySetIds: config.policies.map((policy) => policy.id),
     });
     const connectionManager = new ConnectionManager({
       config,
