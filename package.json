@@ -25,7 +25,10 @@
     "distribution:stage": "node scripts/build-distribution.mjs",
     "distribution:smoke": "node scripts/smoke-distribution.mjs",
     "distribution:native": "node scripts/build-native-package.mjs",
-    "distribution:native:smoke": "node scripts/smoke-native-package.mjs"
+    "distribution:native:smoke": "node scripts/smoke-native-package.mjs",
+    "release:validate": "node scripts/validate-release.mjs",
+    "release:validate:contract": "node scripts/validate-release.mjs --contract-only",
+    "release:metadata": "node scripts/generate-release-metadata.mjs"
   },
   "devDependencies": {
     "@types/node": "24.13.6",
