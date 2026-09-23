@@ -1,10 +1,23 @@
 import type { JsonValue } from "@blogmaatic/core";
-import type { ConnectionRecord } from "@blogmaatic/extension-sdk";
+import type { ConnectionContract, ConnectionRecord } from "@blogmaatic/extension-sdk";
 
 import type { LinkedInSettings } from "./types.js";
 
 export const LINKEDIN_REST_EXTENSION_ID = "blogmaatic.linkedin-rest";
 export const DEFAULT_LINKEDIN_API_VERSION = "202609";
+
+export const LINKEDIN_CONNECTION_CONTRACT: ConnectionContract = {
+  schemaVersion: 1,
+  settingsFields: [
+    { key: "authorUrn", label: "Organization URN", kind: "text", required: true, placeholder: "urn:li:organization:123456", description: "LinkedIn organization that will author published posts." },
+    { key: "apiRoot", label: "API root", kind: "url", defaultValue: "https://api.linkedin.com/rest", description: "LinkedIn REST API root." },
+    { key: "apiVersion", label: "LinkedIn API version", kind: "text", defaultValue: DEFAULT_LINKEDIN_API_VERSION, description: "Pinned YYYYMM LinkedIn API version." },
+    { key: "timeoutMs", label: "Request timeout (ms)", kind: "integer", defaultValue: 15000, min: 1000, max: 120000 },
+  ],
+  secretFields: [
+    { key: "accessToken", label: "Access token", required: true, description: "Stored only in the OS credential vault." },
+  ],
+};
 
 function getString(record: Readonly<Record<string, JsonValue>>, key: string): string | undefined {
   const value = record[key];

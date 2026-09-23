@@ -1,11 +1,30 @@
 import { isAbsolute } from "node:path";
 
-import type { ConnectionRecord } from "@blogmaatic/extension-sdk";
+import type { ConnectionContract, ConnectionRecord } from "@blogmaatic/extension-sdk";
 
 import { booleanSetting, stringArraySetting, stringSetting } from "./json.js";
 import type { JekyllGitSettings } from "./types.js";
 
 export const JEKYLL_GIT_EXTENSION_ID = "blogmaatic.jekyll-git";
+
+export const JEKYLL_CONNECTION_CONTRACT: ConnectionContract = {
+  schemaVersion: 1,
+  settingsFields: [
+    { key: "repositoryPath", label: "Repository path", kind: "path", required: true, description: "Absolute path to the local Jekyll Git repository." },
+    { key: "branch", label: "Branch", kind: "text", required: true },
+    { key: "authorName", label: "Git author name", kind: "text", required: true },
+    { key: "authorEmail", label: "Git author email", kind: "email", required: true },
+    { key: "postsDirectory", label: "Posts directory", kind: "path", defaultValue: "_posts" },
+    { key: "draftsDirectory", label: "Drafts directory", kind: "path", defaultValue: "_drafts" },
+    { key: "assetsDirectory", label: "Assets directory", kind: "path", defaultValue: "assets/blogmaatic" },
+    { key: "remote", label: "Git remote", kind: "text", defaultValue: "origin" },
+    { key: "push", label: "Push commits to remote", kind: "boolean", defaultValue: false },
+    { key: "siteBaseUrl", label: "Site base URL", kind: "url", description: "Optional public site URL used for canonical identities." },
+    { key: "buildVerification", label: "Build verification", kind: "select", defaultValue: "none", options: [{ value: "none", label: "None" }, { value: "bundle", label: "bundle exec jekyll build" }] },
+    { key: "assetSourceRoots", label: "Allowed local asset roots", kind: "string-list", description: "Absolute directories from which managed local assets may be copied." },
+  ],
+  secretFields: [],
+};
 
 export function parseSettings(connection: ConnectionRecord): JekyllGitSettings {
   if (connection.extensionId !== JEKYLL_GIT_EXTENSION_ID) {

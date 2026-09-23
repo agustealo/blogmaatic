@@ -1,12 +1,26 @@
 import { isAbsolute } from "node:path";
 
 import type { JsonValue } from "@blogmaatic/core";
-import type { ConnectionRecord } from "@blogmaatic/extension-sdk";
+import type { ConnectionContract, ConnectionRecord } from "@blogmaatic/extension-sdk";
 
 import type { FacebookSettings } from "./types.js";
 
 export const FACEBOOK_PAGES_EXTENSION_ID = "blogmaatic.facebook-pages";
 export const DEFAULT_FACEBOOK_GRAPH_VERSION = "v26.0";
+
+export const FACEBOOK_CONNECTION_CONTRACT: ConnectionContract = {
+  schemaVersion: 1,
+  settingsFields: [
+    { key: "pageId", label: "Facebook Page ID", kind: "text", required: true, description: "Numeric Facebook Page ID that Blogmaatic will publish to." },
+    { key: "apiRoot", label: "Graph API root", kind: "url", defaultValue: "https://graph.facebook.com" },
+    { key: "apiVersion", label: "Graph API version", kind: "text", defaultValue: DEFAULT_FACEBOOK_GRAPH_VERSION },
+    { key: "assetSourceRoots", label: "Allowed local asset roots", kind: "string-list", description: "Absolute directories from which managed local media may be uploaded." },
+    { key: "timeoutMs", label: "Request timeout (ms)", kind: "integer", defaultValue: 15000, min: 1000, max: 120000 },
+  ],
+  secretFields: [
+    { key: "pageAccessToken", label: "Page access token", required: true, description: "Stored only in the OS credential vault." },
+  ],
+};
 
 function getString(record: Readonly<Record<string, JsonValue>>, key: string): string | undefined {
   const value = record[key];

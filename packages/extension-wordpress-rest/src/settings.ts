@@ -1,11 +1,27 @@
 import { isAbsolute } from "node:path";
 
-import type { ConnectionRecord } from "@blogmaatic/extension-sdk";
+import type { ConnectionContract, ConnectionRecord } from "@blogmaatic/extension-sdk";
 
 import { getBoolean, getNumber, getString, stringArray } from "./json.js";
 import type { WordPressSettings } from "./types.js";
 
 export const WORDPRESS_REST_EXTENSION_ID = "blogmaatic.wordpress-rest";
+
+export const WORDPRESS_CONNECTION_CONTRACT: ConnectionContract = {
+  schemaVersion: 1,
+  settingsFields: [
+    { key: "siteUrl", label: "Site URL", kind: "url", required: true, placeholder: "https://example.com", description: "Public WordPress site URL." },
+    { key: "username", label: "Username", kind: "text", required: true, description: "WordPress user that owns the Application Password." },
+    { key: "apiRoot", label: "REST API root", kind: "url", description: "Optional custom wp-json REST root. Leave blank for the standard WordPress REST endpoint." },
+    { key: "postTypeRestBase", label: "Post type REST base", kind: "text", defaultValue: "posts", description: "REST base for the post type Blogmaatic should publish." },
+    { key: "assetSourceRoots", label: "Allowed local asset roots", kind: "string-list", description: "Absolute directories from which managed local media may be uploaded." },
+    { key: "createMissingTerms", label: "Create missing categories and tags", kind: "boolean", defaultValue: true },
+    { key: "timeoutMs", label: "Request timeout (ms)", kind: "integer", defaultValue: 15000, min: 1000, max: 120000 },
+  ],
+  secretFields: [
+    { key: "applicationPassword", label: "Application Password", required: true, description: "Stored only in the OS credential vault." },
+  ],
+};
 
 function normalizeHttpUrl(value: string, label: string): string {
   const parsed = new URL(value);
