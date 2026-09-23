@@ -63,6 +63,10 @@ const contract = {
   secretFields: [
     { key: "token", label: "Token", required: true },
   ],
+  defaultRoute: {
+    channel: "posts",
+    requiredCapabilities: ["article.create"],
+  },
 };
 
 test("connection manager persists live authority and rotates vault secrets without exposing plaintext", async () => {
