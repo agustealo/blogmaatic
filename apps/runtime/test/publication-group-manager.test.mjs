@@ -19,13 +19,18 @@ import {
   defaultRuntimeConfig,
 } from "../dist/index.js";
 
-function connection(id, status = "active") {
+function connection(id, repositoryPath, status = "active") {
   return {
     id,
     extensionId: JEKYLL_GIT_EXTENSION_ID,
     displayName: id,
     status,
-    settings: {},
+    settings: {
+      repositoryPath,
+      branch: "main",
+      authorName: "Blogmaatic Test",
+      authorEmail: "test@blogmaatic.local",
+    },
     secretRefs: {},
     createdAt: "2026-09-23T17:40:00.000Z",
     updatedAt: "2026-09-23T17:40:00.000Z",
@@ -51,8 +56,8 @@ async function withManager(fn) {
   const directory = await mkdtemp(join(tmpdir(), "blogmaatic-group-manager-"));
   const store = new SqlitePublicationGroupStore(join(directory, "control.sqlite"));
   const connections = new ConnectionAuthority([
-    connection("jekyll-active", "active"),
-    connection("jekyll-disabled", "disabled"),
+    connection("jekyll-active", directory, "active"),
+    connection("jekyll-disabled", directory, "disabled"),
   ]);
   const extensions = new ExtensionRuntime(connections);
   extensions.registerPublisher(new JekyllGitPublisher(connections), JEKYLL_CONNECTION_CONTRACT);
