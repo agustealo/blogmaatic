@@ -79,6 +79,11 @@ async function currentOr404(groupManager: OperatorPublicationGroupManager, group
 export function registerPublicationGroupRoutes(app: FastifyInstance, options: OperatorApiOptions): void {
   const clock = options.clock ?? { now: () => new Date().toISOString() };
 
+  app.get("/v1/publication-group-options", async (request) => {
+    await authorize(options, request, "publication-groups:read");
+    return { policySetIds: manager(options).listPolicySetIds() };
+  });
+
   app.get("/v1/publication-groups", async (request) => {
     await authorize(options, request, "publication-groups:read");
     return domainCall(() => manager(options).list(parsePublicationGroupListQuery(query(request))));
