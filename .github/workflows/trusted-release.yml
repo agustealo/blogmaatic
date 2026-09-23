@@ -182,6 +182,7 @@ jobs:
           xcrun stapler staple "$package"
           xcrun stapler validate "$package"
           pkgutil --check-signature "$package"
+          spctl --assess --type install --verbose=4 "$package"
           package_dir=$(dirname "$package")
           package_name=$(basename "$package")
           (cd "$package_dir" && shasum -a 256 "$package_name" > "$package_name.sha256")
