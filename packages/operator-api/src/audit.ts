@@ -5,6 +5,16 @@ import type { JsonValue } from "@blogmaatic/core";
 
 import type { OperatorPrincipal } from "./auth.js";
 
+type AuditEvidenceValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly AuditEvidenceValue[]
+  | { readonly [key: string]: AuditEvidenceValue };
+
+type AuditEvidence = Readonly<Record<string, AuditEvidenceValue>>;
+
 export interface AuditedMutationOptions<T> {
   readonly store: ControlPlaneStore;
   readonly principal: OperatorPrincipal;
@@ -14,20 +24,46 @@ export interface AuditedMutationOptions<T> {
     readonly type: string;
     readonly id: string;
   };
-  readonly evidence?: Readonly<Record<string, JsonValue>>;
+  readonly evidence?: AuditEvidence;
   readonly now: () => string;
   readonly execute: () => Promise<T>;
   readonly success?: (result: T) => {
     readonly runId?: string;
-    readonly evidence?: Readonly<Record<string, JsonValue>>;
+    readonly evidence?: AuditEvidence;
   };
 }
 
+function normalizeEvidenceValue(value: AuditEvidenceValue): JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeEvidenceValue(item));
+  }
+  const normalized: Record<string, JsonValue> = {};
+  for (const [key, item] of Object.entries(value)) {
+    normalized[key] = normalizeEvidenceValue(item);
+  }
+  return normalized;
+}
+
+function normalizeEvidence(evidence: AuditEvidence | undefined): Readonly<Record<string, JsonValue>> {
+  if (!evidence) return {};
+  const normalized: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(evidence)) {
+    normalized[key] = normalizeEvidenceValue(value);
+  }
+  return normalized;
+}
+
 function mergeEvidence(
-  base: Readonly<Record<string, JsonValue>> | undefined,
-  extra: Readonly<Record<string, JsonValue>> | undefined,
+  base: AuditEvidence | undefined,
+  extra: AuditEvidence | undefined,
 ): Readonly<Record<string, JsonValue>> {
-  return { ...(base ?? {}), ...(extra ?? {}) };
+  return {
+    ...normalizeEvidence(base),
+    ...normalizeEvidence(extra),
+  };
 }
 
 export async function auditedMutation<T>(options: AuditedMutationOptions<T>): Promise<T> {
@@ -40,7 +76,7 @@ export async function auditedMutation<T>(options: AuditedMutationOptions<T>): Pr
     action: options.action,
     resource: options.resource,
     requestId: options.requestId,
-    evidence: options.evidence ?? {},
+    evidence: normalizeEvidence(options.evidence),
     occurredAt: options.now(),
   });
 
