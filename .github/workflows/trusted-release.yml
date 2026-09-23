@@ -185,15 +185,22 @@ jobs:
           shasum -a 256 "$package" > "$package.sha256"
           rm -f "$key_path"
 
-      - name: Attest final release bytes
+      - name: Attest Linux release bytes
+        if: runner.os == 'Linux'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             artifacts/blogmaatic-*.tar.gz
             artifacts/blogmaatic-*.deb
-            artifacts/blogmaatic-*.pkg
 
-      - name: Upload release inputs
+      - name: Attest macOS release bytes
+        if: runner.os == 'macOS'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/blogmaatic-*.pkg
+
+      - name: Upload Linux release inputs
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.target }}
@@ -202,6 +209,16 @@ jobs:
             artifacts/blogmaatic-*.tar.gz.sha256
             artifacts/blogmaatic-*.deb
             artifacts/blogmaatic-*.deb.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload macOS release inputs
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.target }}
+          path: |
             artifacts/blogmaatic-*.pkg
             artifacts/blogmaatic-*.pkg.sha256
           if-no-files-found: error
@@ -248,7 +265,7 @@ jobs:
             release-assets/SHA256SUMS
             release-assets/release-manifest.json
 
-      - name: Publish immutable-intent GitHub Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
