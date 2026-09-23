@@ -60,7 +60,7 @@ export interface ConnectionManagerOptions {
   readonly writeConfig?: (path: string, config: RuntimeConfig) => Promise<void>;
   readonly now?: () => string;
   readonly createId?: () => string;
-  readonly removalGuard?: (connection: ConnectionRecord) => Promise<void> | void;
+  readonly referenceGuard?: (connection: ConnectionRecord) => Promise<void> | void;
   readonly logger?: Pick<Console, "error">;
 }
 
@@ -194,7 +194,7 @@ export class ConnectionManager {
   readonly #writeConfig: (path: string, config: RuntimeConfig) => Promise<void>;
   readonly #now: () => string;
   readonly #createId: () => string;
-  readonly #removalGuard: ((connection: ConnectionRecord) => Promise<void> | void) | undefined;
+  readonly #referenceGuard: ((connection: ConnectionRecord) => Promise<void> | void) | undefined;
   readonly #logger: Pick<Console, "error">;
   #config: RuntimeConfig;
   #mutationTail: Promise<void> = Promise.resolve();
@@ -208,7 +208,7 @@ export class ConnectionManager {
     this.#writeConfig = options.writeConfig ?? writeRuntimeConfig;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#createId = options.createId ?? (() => `connection_${randomUUID()}`);
-    this.#removalGuard = options.removalGuard;
+    this.#referenceGuard = options.referenceGuard;
     this.#logger = options.logger ?? console;
   }
 
@@ -266,6 +266,10 @@ export class ConnectionManager {
   async update(connectionId: string, input: UpdateConnectionInput): Promise<ConnectionView> {
     return this.#exclusive(async () => {
       const existing = this.#connections.get(connectionId);
+      const nextStatus = input.status === undefined ? existing.status : validateStatus(input.status);
+      if (existing.status === "active" && nextStatus === "disabled") {
+        await this.#referenceGuard?.(existing);
+      }
       const contract = this.#extensions.getConnectionContract(existing.extensionId);
       const settings = input.settings ?? existing.settings;
       const suppliedSecrets = input.secrets ?? {};
@@ -275,7 +279,7 @@ export class ConnectionManager {
       const candidate: ConnectionRecord = {
         ...existing,
         displayName: input.displayName === undefined ? existing.displayName : requireDisplayName(input.displayName),
-        status: input.status === undefined ? existing.status : validateStatus(input.status),
+        status: nextStatus,
         settings: { ...settings },
         secretRefs: nextSecretRefs,
         updatedAt: this.#now(),
@@ -305,7 +309,7 @@ export class ConnectionManager {
   async remove(connectionId: string): Promise<ConnectionView> {
     return this.#exclusive(async () => {
       const existing = this.#connections.get(connectionId);
-      await this.#removalGuard?.(existing);
+      await this.#referenceGuard?.(existing);
       this.#connections.remove(connectionId);
       try {
         await this.#persistConnections();
