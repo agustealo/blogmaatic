@@ -168,6 +168,9 @@ try {
   assert.equal(roots.length, 1, `Expected one packaged root in ${basename(archive)}`);
   const installRoot = join(extractionRoot, roots[0].name);
   const binary = join(installRoot, "bin", "blogmaatic");
+  const packagedManifest = JSON.parse(await readFile(join(installRoot, "package.json"), "utf8"));
+  const expectedVersion = String(packagedManifest.version ?? "");
+  assert.match(expectedVersion, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/, "Packaged product version is not valid SemVer");
 
   // Make host Node unusable for children unless the packaged launcher prepends
   // its own bin directory to PATH. The launcher itself is still invoked by path.
@@ -189,7 +192,7 @@ try {
   const help = await execFileAsync(binary, ["help"], { cwd: callerRoot, env, encoding: "utf8" });
   assert.match(help.stdout, /Blogmaatic runtime/);
   const version = await execFileAsync(binary, ["version"], { cwd: callerRoot, env, encoding: "utf8" });
-  assert.equal(version.stdout.trim(), "0.11.0");
+  assert.equal(version.stdout.trim(), expectedVersion);
 
   await git(repository, ["init", "-b", "main"]);
   await git(repository, ["config", "user.name", "Distribution Fixture"]);

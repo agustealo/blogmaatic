@@ -1,7 +1,7 @@
 {
   "name": "blogmaatic",
   "private": true,
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Publication automation control plane, local runtime, operator API, and Control Room",
   "type": "module",
   "packageManager": "npm@11.19.0",
@@ -23,7 +23,12 @@
     "runtime:start": "npm run build && node apps/runtime/dist/cli.js start",
     "runtime:token": "npm run build --workspace @blogmaatic/runtime && node apps/runtime/dist/cli.js token",
     "distribution:stage": "node scripts/build-distribution.mjs",
-    "distribution:smoke": "node scripts/smoke-distribution.mjs"
+    "distribution:smoke": "node scripts/smoke-distribution.mjs",
+    "distribution:native": "node scripts/build-native-package.mjs",
+    "distribution:native:smoke": "node scripts/smoke-native-package.mjs",
+    "release:validate": "node scripts/validate-release.mjs",
+    "release:validate:contract": "node scripts/validate-release.mjs --contract-only",
+    "release:metadata": "node scripts/generate-release-metadata.mjs"
   },
   "devDependencies": {
     "@types/node": "24.13.6",

@@ -25,5 +25,8 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
 
+      - name: Validate release contract
+        run: npm run release:validate:contract
+
       - name: Typecheck and test
         run: npm run check
