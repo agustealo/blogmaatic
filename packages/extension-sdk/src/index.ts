@@ -1,5 +1,6 @@
 import {
   ExtensionRegistry,
+  type ExtensionCapability,
   type JsonValue,
   type PublisherExtension,
   type PublisherExtensionManifest,
@@ -42,10 +43,17 @@ export interface ConnectionSecretField {
   readonly description?: string;
 }
 
+export interface DefaultPublicationRouteContract {
+  readonly channel: string;
+  readonly requiredCapabilities: readonly ExtensionCapability[];
+  readonly variant?: Readonly<Record<string, JsonValue>>;
+}
+
 export interface ConnectionContract {
   readonly schemaVersion: 1;
   readonly settingsFields: readonly ConnectionSettingField[];
   readonly secretFields: readonly ConnectionSecretField[];
+  readonly defaultRoute: DefaultPublicationRouteContract;
 }
 
 export interface ConnectionRecord {
@@ -113,37 +121,57 @@ function validateFieldKey(key: string, label: string): void {
   }
 }
 
-function validateConnectionContract(extensionId: string, contract: ConnectionContract): void {
+function validateConnectionContract(
+  manifest: ManagedPublisherExtensionManifest,
+  contract: ConnectionContract,
+): void {
   if (contract.schemaVersion !== 1) {
-    throw new Error(`Unsupported connection contract for ${extensionId}`);
+    throw new Error(`Unsupported connection contract for ${manifest.id}`);
   }
   const keys = new Set<string>();
   for (const field of contract.settingsFields) {
-    validateFieldKey(field.key, `${extensionId} settings field`);
-    if (!field.label.trim()) throw new Error(`${extensionId} settings field ${field.key} requires a label`);
-    if (keys.has(field.key)) throw new Error(`${extensionId} connection field is duplicated: ${field.key}`);
+    validateFieldKey(field.key, `${manifest.id} settings field`);
+    if (!field.label.trim()) throw new Error(`${manifest.id} settings field ${field.key} requires a label`);
+    if (keys.has(field.key)) throw new Error(`${manifest.id} connection field is duplicated: ${field.key}`);
     keys.add(field.key);
     if (field.kind === "select") {
-      if (!field.options?.length) throw new Error(`${extensionId} select field ${field.key} requires options`);
+      if (!field.options?.length) throw new Error(`${manifest.id} select field ${field.key} requires options`);
       const values = field.options.map((option) => option.value);
       if (values.some((value) => !value.trim()) || new Set(values).size !== values.length) {
-        throw new Error(`${extensionId} select field ${field.key} has invalid options`);
+        throw new Error(`${manifest.id} select field ${field.key} has invalid options`);
       }
     } else if (field.options !== undefined) {
-      throw new Error(`${extensionId} non-select field ${field.key} must not declare options`);
+      throw new Error(`${manifest.id} non-select field ${field.key} must not declare options`);
     }
     if ((field.min !== undefined || field.max !== undefined) && field.kind !== "integer") {
-      throw new Error(`${extensionId} field ${field.key} may use min/max only when kind is integer`);
+      throw new Error(`${manifest.id} field ${field.key} may use min/max only when kind is integer`);
     }
     if (field.min !== undefined && field.max !== undefined && field.min > field.max) {
-      throw new Error(`${extensionId} field ${field.key} has min greater than max`);
+      throw new Error(`${manifest.id} field ${field.key} has min greater than max`);
     }
   }
   for (const field of contract.secretFields) {
-    validateFieldKey(field.key, `${extensionId} secret field`);
-    if (!field.label.trim()) throw new Error(`${extensionId} secret field ${field.key} requires a label`);
-    if (keys.has(field.key)) throw new Error(`${extensionId} connection field is duplicated: ${field.key}`);
+    validateFieldKey(field.key, `${manifest.id} secret field`);
+    if (!field.label.trim()) throw new Error(`${manifest.id} secret field ${field.key} requires a label`);
+    if (keys.has(field.key)) throw new Error(`${manifest.id} connection field is duplicated: ${field.key}`);
     keys.add(field.key);
+  }
+
+  const route = contract.defaultRoute;
+  if (!route.channel.trim()) throw new Error(`${manifest.id} default publication route requires a channel`);
+  if (route.requiredCapabilities.length === 0) {
+    throw new Error(`${manifest.id} default publication route requires at least one capability`);
+  }
+  if (new Set(route.requiredCapabilities).size !== route.requiredCapabilities.length) {
+    throw new Error(`${manifest.id} default publication route declares duplicate capabilities`);
+  }
+  const available = new Set(manifest.capabilities);
+  const missing = route.requiredCapabilities.filter((capability) => !available.has(capability));
+  if (missing.length > 0) {
+    throw new Error(`${manifest.id} default publication route requires undeclared capabilities: ${missing.join(", ")}`);
+  }
+  if (!route.requiredCapabilities.includes("article.create")) {
+    throw new Error(`${manifest.id} default publication route must require article.create`);
   }
 }
 
@@ -233,11 +261,18 @@ export class ExtensionRuntime {
       throw new Error(`Managed publisher already registered: ${extension.manifest.id}`);
     }
     if (connectionContract) {
-      validateConnectionContract(extension.manifest.id, connectionContract);
+      validateConnectionContract(extension.manifest, connectionContract);
       this.#connectionContracts.set(extension.manifest.id, Object.freeze({
         ...connectionContract,
         settingsFields: Object.freeze([...connectionContract.settingsFields]),
         secretFields: Object.freeze([...connectionContract.secretFields]),
+        defaultRoute: Object.freeze({
+          ...connectionContract.defaultRoute,
+          requiredCapabilities: Object.freeze([...connectionContract.defaultRoute.requiredCapabilities]),
+          ...(connectionContract.defaultRoute.variant
+            ? { variant: Object.freeze({ ...connectionContract.defaultRoute.variant }) }
+            : {}),
+        }),
       }));
     }
     this.#managed.set(extension.manifest.id, extension);
