@@ -182,7 +182,9 @@ jobs:
           xcrun stapler staple "$package"
           xcrun stapler validate "$package"
           pkgutil --check-signature "$package"
-          shasum -a 256 "$package" > "$package.sha256"
+          package_dir=$(dirname "$package")
+          package_name=$(basename "$package")
+          (cd "$package_dir" && shasum -a 256 "$package_name" > "$package_name.sha256")
           rm -f "$key_path"
 
       - name: Attest Linux release bytes
