@@ -10,6 +10,7 @@ import test from "node:test";
 import {
   configForFirstRun,
   ensureOperatorToken,
+  isTcpOpen,
   runtimePaths,
   startRuntime,
 } from "../dist/index.js";
@@ -31,6 +32,15 @@ async function freePort() {
   if (!address || typeof address === "string") throw new Error("Could not allocate a TCP port");
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   return address.port;
+}
+
+async function distinctFreePorts(count) {
+  const ports = [];
+  while (ports.length < count) {
+    const port = await freePort();
+    if (!ports.includes(port)) ports.push(port);
+  }
+  return ports;
 }
 
 async function jekyllRepository() {
@@ -115,6 +125,12 @@ async function api(origin, token, path, options = {}) {
   });
 }
 
+async function expectStatus(response, expected) {
+  if (response.status !== expected) {
+    assert.fail(`Expected HTTP ${expected}, received ${response.status}: ${await response.text()}`);
+  }
+}
+
 async function terminalResult(origin, token, runId) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
@@ -131,7 +147,15 @@ async function terminalResult(origin, token, runId) {
 test("managed runtime publishes through Restate and survives a full restart", {
   skip: process.platform !== "linux" && process.platform !== "darwin",
   timeout: 60_000,
-}, async () => {
+}, async (t) => {
+  if (process.env.CI !== "true") {
+    const managedPortsOccupied = await Promise.all([8080, 9070, 9071].map((port) => isTcpOpen("127.0.0.1", port)));
+    if (managedPortsOccupied.some(Boolean)) {
+      t.skip("A local Restate process already owns a managed runtime port");
+      return;
+    }
+  }
+
   const dataDir = await mkdtemp(join(tmpdir(), "blogmaatic-runtime-state-"));
   const repository = await jekyllRepository();
   const paths = runtimePaths(dataDir);
@@ -145,9 +169,7 @@ test("managed runtime publishes through Restate and survives a full restart", {
       authorEmail: "runtime@example.test",
       siteBaseUrl: "https://example.test",
     });
-    const [operatorPort, controlRoomPort, workflowPort] = await Promise.all([
-      freePort(), freePort(), freePort(),
-    ]);
+    const [operatorPort, controlRoomPort, workflowPort] = await distinctFreePorts(3);
     const config = {
       ...discovered,
       operator: { ...discovered.operator, port: operatorPort },
@@ -165,14 +187,14 @@ test("managed runtime publishes through Restate and survives a full restart", {
     });
 
     const controlRoom = await fetch(first.controlRoomAddress);
-    assert.equal(controlRoom.status, 200);
+    await expectStatus(controlRoom, 200);
     assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
     const registration = await api(first.operatorAddress, credential.token, "/v1/automations", {
       method: "POST",
       body: JSON.stringify(automation()),
     });
-    assert.equal(registration.status, 201, await registration.text());
+    await expectStatus(registration, 201);
 
     const launch = await api(first.operatorAddress, credential.token, "/v1/runs/manual", {
       method: "POST",
@@ -183,7 +205,7 @@ test("managed runtime publishes through Restate and survives a full restart", {
         groups: [group()],
       }),
     });
-    assert.equal(launch.status, 202, await launch.text());
+    await expectStatus(launch, 202);
     const run = await launch.json();
     assert.equal(run.dispatchState, "started");
 
@@ -200,7 +222,7 @@ test("managed runtime publishes through Restate and survives a full restart", {
     assert.equal(await git(repository, ["rev-list", "--count", "HEAD"]), "2");
 
     const proxiedRun = await api(first.controlRoomAddress, credential.token, `/api/v1/runs/${encodeURIComponent(run.runId)}`);
-    assert.equal(proxiedRun.status, 200, await proxiedRun.text());
+    await expectStatus(proxiedRun, 200);
 
     await first.close();
     first = undefined;
@@ -212,7 +234,7 @@ test("managed runtime publishes through Restate and survives a full restart", {
       logger: { info: () => undefined, error: () => undefined },
     });
     const restored = await api(second.operatorAddress, credential.token, `/v1/runs/${encodeURIComponent(run.runId)}`);
-    assert.equal(restored.status, 200, await restored.text());
+    await expectStatus(restored, 200);
     const restoredRun = await restored.json();
     assert.equal(restoredRun.runId, run.runId);
     assert.equal(restoredRun.runtimePhase, "completed");
