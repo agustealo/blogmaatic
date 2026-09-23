@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-23T18:33:34.402Z",
+  "sourceCommit": "0ecd73f99d18af6ddc1a36ebaae5cb6546ecd643",
+  "source": "real-runtime-capture",
+  "browser": "/usr/bin/google-chrome",
+  "viewport": {
+    "width": 1600,
+    "height": 1000,
+    "deviceScaleFactor": 1.5
+  },
+  "fixture": {
+    "runtime": "managed local runtime",
+    "publisher": "Jekyll/Git",
+    "connection": "created through Operator API",
+    "publicationGroup": "created through canonical Publication Group authority",
+    "automation": "registered through canonical automation registry",
+    "run": "real completed durable publication run"
+  },
+  "captures": [
+    {
+      "file": "01-first-run-setup.png",
+      "route": "/setup",
+      "feature": "fresh first-run setup"
+    },
+    {
+      "file": "02-first-run-ready.png",
+      "route": "/setup",
+      "feature": "completed first-run readiness"
+    },
+    {
+      "file": "03-connections.png",
+      "route": "/connections",
+      "feature": "real managed destination and health"
+    },
+    {
+      "file": "04-control-room-overview.png",
+      "route": "/",
+      "feature": "Control Room overview"
+    },
+    {
+      "file": "05-automations.png",
+      "route": "/automations",
+      "feature": "durable automation management"
+    },
+    {
+      "file": "06-runs.png",
+      "route": "/runs",
+      "feature": "durable run history"
+    },
+    {
+      "file": "07-run-detail.png",
+      "route": "/runs/run_6aa9c1a6331954729bfccf8ef53af2c777e86488",
+      "feature": "verified run detail"
+    },
+    {
+      "file": "08-operations.png",
+      "route": "/operations",
+      "feature": "operator attention surface"
+    }
+  ]
+}
