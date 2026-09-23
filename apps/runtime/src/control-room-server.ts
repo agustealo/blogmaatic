@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 import { readFile, stat } from "node:fs/promises";
 import { extname, relative, resolve, sep } from "node:path";
 
+import { httpOrigin } from "./network.js";
+
 const MIME: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -168,7 +170,7 @@ export class ControlRoomServer {
       throw new Error("Control Room server did not expose a TCP address");
     }
     const port = (bound as AddressInfo).port;
-    return new ControlRoomServer(server, `http://${options.host}:${port}`);
+    return new ControlRoomServer(server, httpOrigin(options.host, port));
   }
 
   async close(): Promise<void> {
