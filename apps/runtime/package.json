@@ -1,0 +1,29 @@
+{
+  "name": "@blogmaatic/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "blogmaatic-runtime": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@blogmaatic/automation": "0.1.0",
+    "@blogmaatic/automation-restate": "0.1.0",
+    "@blogmaatic/control-plane": "0.1.0",
+    "@blogmaatic/core": "0.1.0",
+    "@blogmaatic/extension-jekyll-git": "0.1.0",
+    "@blogmaatic/extension-sdk": "0.1.0",
+    "@blogmaatic/operator-api": "0.1.0",
+    "@blogmaatic/state-sqlite": "0.1.0",
+    "@restatedev/restate-sdk": "1.17.0"
+  },
+  "optionalDependencies": {
+    "@restatedev/restate": "1.7.10",
+    "@restatedev/restate-server": "1.7.10"
+  }
+}
