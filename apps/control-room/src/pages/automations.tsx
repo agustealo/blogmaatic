@@ -1,40 +1,35 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router";
 
 import type { AutomationRegistryEntry } from "@blogmaatic/operator-client";
 
 import { useConnection } from "../connection";
 import { CollectionFooter, EmptyState, ErrorBanner, LoadingBlock, PageHeader, Panel, StatusPill } from "../components";
-import { formatInstant, humanize, triggerLabel } from "../format";
+import { formatInstant, triggerLabel } from "../format";
 import { usePagedCollection } from "../hooks";
 
 function VersionsPanel({ automationId, changeNonce, onChanged }: { readonly automationId: string; readonly changeNonce: number; readonly onChanged: () => void }) {
   const { session } = useConnection();
-  const [versions, setVersions] = useState<readonly AutomationRegistryEntry[]>([]);
-  const [error, setError] = useState<Error | null>(null);
+  const [actionError, setActionError] = useState<Error | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!session) return;
-    let active = true;
-    setError(null);
-    void session.client.listAutomationVersions(automationId, { limit: 100 }).then((page) => {
-      if (active) setVersions(page.items);
-    }).catch((cause) => {
-      if (active) setError(cause instanceof Error ? cause : new Error("Version history failed"));
+  const loader = useCallback((cursor?: string) => {
+    if (!session) return Promise.resolve({ items: [] });
+    return session.client.listAutomationVersions(automationId, {
+      limit: 50,
+      ...(cursor ? { cursor } : {}),
     });
-    return () => { active = false; };
-  }, [automationId, changeNonce, session]);
+  }, [automationId, session]);
+  const collection = usePagedCollection(`automation-versions:${automationId}:${changeNonce}`, loader);
 
   const activate = async (entry: AutomationRegistryEntry) => {
     if (!session) return;
     setBusy(entry.definition.version);
-    setError(null);
+    setActionError(null);
     try {
       await session.client.activateAutomation(automationId, entry.definition.version, { enabled: true });
       onChanged();
     } catch (cause) {
-      setError(cause instanceof Error ? cause : new Error("Activation failed"));
+      setActionError(cause instanceof Error ? cause : new Error("Activation failed"));
     } finally {
       setBusy(null);
     }
@@ -42,17 +37,21 @@ function VersionsPanel({ automationId, changeNonce, onChanged }: { readonly auto
 
   return (
     <Panel title="Version history" meta={<Link to="/automations">Close</Link>} className="automation-detail">
-      <ErrorBanner error={error} />
-      <div className="version-list">
-        {versions.map((entry) => (
-          <div className="version-row" key={entry.definition.version}>
-            <div><strong>v{entry.definition.version}</strong><small>{formatInstant(entry.registeredAt)}</small></div>
-            <span>{entry.definition.steps.length} steps · {triggerLabel(entry.definition.trigger.kind)}</span>
-            <StatusPill value={entry.isActiveVersion ? (entry.enabled ? "enabled" : "disabled") : "inactive"} />
-            {!entry.isActiveVersion ? <button className="button button--quiet" type="button" disabled={busy === entry.definition.version} onClick={() => void activate(entry)}>{busy === entry.definition.version ? "Activating…" : "Activate"}</button> : null}
-          </div>
-        ))}
-      </div>
+      <ErrorBanner error={actionError ?? collection.error} />
+      {collection.loading ? <LoadingBlock /> : (
+        <div className="version-list">
+          {collection.items.map((entry) => (
+            <div className="version-row" key={entry.definition.version}>
+              <div><strong>v{entry.definition.version}</strong><small>{formatInstant(entry.registeredAt)}</small></div>
+              <span>{entry.definition.steps.length} steps · {triggerLabel(entry.definition.trigger.kind)}</span>
+              <StatusPill value={entry.isActiveVersion ? (entry.enabled ? "enabled" : "disabled") : "inactive"} />
+              {!entry.isActiveVersion ? <button className="button button--quiet" type="button" disabled={busy === entry.definition.version} onClick={() => void activate(entry)}>{busy === entry.definition.version ? "Activating…" : "Activate"}</button> : null}
+            </div>
+          ))}
+          {collection.items.length === 0 ? <EmptyState title="No versions found">No immutable versions are available for this automation.</EmptyState> : null}
+        </div>
+      )}
+      <CollectionFooter hasMore={Boolean(collection.nextCursor)} busy={collection.loadingMore} onLoadMore={() => void collection.loadMore()} />
     </Panel>
   );
 }
@@ -66,7 +65,7 @@ export function AutomationsPage() {
   const loader = useCallback((cursor?: string) => {
     if (!session) return Promise.resolve({ items: [] });
     return session.client.listAutomations({ limit: 30, ...(cursor ? { cursor } : {}) });
-  }, [session, changeNonce]);
+  }, [session]);
   const collection = usePagedCollection(`automations:${changeNonce}`, loader);
 
   const toggle = async (entry: AutomationRegistryEntry) => {
