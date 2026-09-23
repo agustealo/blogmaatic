@@ -1,7 +1,20 @@
-import { validateAutomationDefinition, type AutomationDefinition } from "@blogmaatic/automation";
-import type {
-  AutomationScheduleInput,
-  PublicationAutomationEvent,
+import {
+  validateAutomationDefinition,
+  type AutomationDefinition,
+  type AutomationRunPhase,
+} from "@blogmaatic/automation";
+import {
+  canonicalInstant,
+  decodeCursor,
+  type AuditLedgerPhase,
+  type AuditListQuery,
+  type AutomationListQuery,
+  type AutomationScheduleInput,
+  type AutomationVersionListQuery,
+  type ControlPlaneRunDispatchState,
+  type PublicationAutomationEvent,
+  type RunListQuery,
+  type ScheduleListQuery,
 } from "@blogmaatic/control-plane";
 import {
   validatePublication,
@@ -10,6 +23,8 @@ import {
   type PublicationGroup,
 } from "@blogmaatic/core";
 
+import type { OperatorOperationKind, OperatorOperationsQuery } from "./operations.js";
+import type { OperatorRunListQuery } from "./runs.js";
 import type {
   ActivationBody,
   ApprovalBody,
@@ -32,6 +47,11 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function queryRecord(value: unknown): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  return asRecord(value, "query");
+}
+
 function stringField(record: Record<string, unknown>, key: string, label = key): string {
   const value = record[key];
   if (typeof value !== "string" || !value.trim()) {
@@ -47,6 +67,13 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
   return value;
 }
 
+function optionalQueryString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value.trim()) throw new OperatorRequestError(`${key} must be a non-empty string`);
+  return value;
+}
+
 function optionalPositiveInteger(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   if (value === undefined) return undefined;
@@ -54,6 +81,57 @@ function optionalPositiveInteger(record: Record<string, unknown>, key: string): 
     throw new OperatorRequestError(`${key} must be a positive integer`);
   }
   return value as number;
+}
+
+function optionalQueryLimit(record: Record<string, unknown>): number | undefined {
+  const value = record.limit;
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    throw new OperatorRequestError("limit must be an integer between 1 and 200");
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 200) {
+    throw new OperatorRequestError("limit must be an integer between 1 and 200");
+  }
+  return parsed;
+}
+
+function optionalQueryBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new OperatorRequestError(`${key} must be true or false`);
+}
+
+function optionalQueryInstant(record: Record<string, unknown>, key: string): string | undefined {
+  const value = optionalQueryString(record, key);
+  if (value === undefined) return undefined;
+  try {
+    return canonicalInstant(value);
+  } catch {
+    throw new OperatorRequestError(`${key} must be an ISO date-time with an offset or Z suffix`);
+  }
+}
+
+function pagination(
+  record: Record<string, unknown>,
+  kind: string,
+  valueCount: number,
+): { readonly limit?: number; readonly cursor?: string } {
+  const limit = optionalQueryLimit(record);
+  const cursor = optionalQueryString(record, "cursor");
+  if (cursor !== undefined) {
+    try {
+      decodeCursor(kind, cursor, valueCount);
+    } catch {
+      throw new OperatorRequestError("cursor is invalid for this resource");
+    }
+  }
+  return {
+    ...(limit === undefined ? {} : { limit }),
+    ...(cursor === undefined ? {} : { cursor }),
+  };
 }
 
 function publicationField(record: Record<string, unknown>): Publication {
@@ -195,6 +273,126 @@ export function parseScheduleDispatchBody(body: unknown): ScheduleDispatchBody {
   return {
     ...(now === undefined ? {} : { now }),
     ...(limit === undefined ? {} : { limit: limit as number }),
+  };
+}
+
+export function parseAutomationListQuery(value: unknown): AutomationListQuery {
+  const record = queryRecord(value);
+  const enabled = optionalQueryBoolean(record, "enabled");
+  return { ...pagination(record, "automations", 1), ...(enabled === undefined ? {} : { enabled }) };
+}
+
+export function parseAutomationVersionListQuery(value: unknown): AutomationVersionListQuery {
+  const record = queryRecord(value);
+  const page = pagination(record, "automation-versions", 1);
+  if (page.cursor) {
+    const values = decodeCursor("automation-versions", page.cursor, 1)!;
+    const version = Number(values[0]);
+    if (!Number.isSafeInteger(version) || version < 1) {
+      throw new OperatorRequestError("cursor is invalid for automation versions");
+    }
+  }
+  return page;
+}
+
+const dispatchStates = new Set<ControlPlaneRunDispatchState>(["prepared", "started", "launch_failed"]);
+const runPhases = new Set<AutomationRunPhase>(["running", "waiting_approval", "delaying", "completed", "stopped", "rejected"]);
+
+function parseRunFilters(record: Record<string, unknown>): Omit<OperatorRunListQuery, "limit" | "cursor"> {
+  const automationId = optionalQueryString(record, "automationId");
+  const publicationId = optionalQueryString(record, "publicationId");
+  const dispatchState = optionalQueryString(record, "dispatchState");
+  const runtimePhase = optionalQueryString(record, "runtimePhase");
+  if (dispatchState !== undefined && !dispatchStates.has(dispatchState as ControlPlaneRunDispatchState)) {
+    throw new OperatorRequestError("dispatchState is invalid");
+  }
+  if (runtimePhase !== undefined && !runPhases.has(runtimePhase as AutomationRunPhase)) {
+    throw new OperatorRequestError("runtimePhase is invalid");
+  }
+  const createdFrom = optionalQueryInstant(record, "createdFrom");
+  const createdTo = optionalQueryInstant(record, "createdTo");
+  return {
+    ...(automationId ? { automationId } : {}),
+    ...(publicationId ? { publicationId } : {}),
+    ...(dispatchState ? { dispatchState: dispatchState as ControlPlaneRunDispatchState } : {}),
+    ...(runtimePhase ? { runtimePhase: runtimePhase as AutomationRunPhase } : {}),
+    ...(createdFrom ? { createdFrom } : {}),
+    ...(createdTo ? { createdTo } : {}),
+  };
+}
+
+export function parseRunListQuery(value: unknown): OperatorRunListQuery {
+  const record = queryRecord(value);
+  return {
+    ...pagination(record, "runs", 2),
+    ...parseRunFilters(record),
+  };
+}
+
+export function parseScheduleListQuery(value: unknown): ScheduleListQuery {
+  const record = queryRecord(value);
+  const automationId = optionalQueryString(record, "automationId");
+  const enabled = optionalQueryBoolean(record, "enabled");
+  const nextFireFrom = optionalQueryInstant(record, "nextFireFrom");
+  const nextFireTo = optionalQueryInstant(record, "nextFireTo");
+  return {
+    ...pagination(record, "schedules", 2),
+    ...(automationId ? { automationId } : {}),
+    ...(enabled === undefined ? {} : { enabled }),
+    ...(nextFireFrom ? { nextFireFrom } : {}),
+    ...(nextFireTo ? { nextFireTo } : {}),
+  };
+}
+
+const auditPhases = new Set<AuditLedgerPhase>(["intent", "succeeded", "failed"]);
+
+export function parseAuditListQuery(value: unknown): AuditListQuery {
+  const record = queryRecord(value);
+  const actorId = optionalQueryString(record, "actorId");
+  const action = optionalQueryString(record, "action");
+  const resourceType = optionalQueryString(record, "resourceType");
+  const resourceId = optionalQueryString(record, "resourceId");
+  const correlationId = optionalQueryString(record, "correlationId");
+  const phase = optionalQueryString(record, "phase");
+  if (phase !== undefined && !auditPhases.has(phase as AuditLedgerPhase)) {
+    throw new OperatorRequestError("phase is invalid");
+  }
+  const occurredFrom = optionalQueryInstant(record, "occurredFrom");
+  const occurredTo = optionalQueryInstant(record, "occurredTo");
+  return {
+    ...pagination(record, "audit", 2),
+    ...(actorId ? { actorId } : {}),
+    ...(action ? { action } : {}),
+    ...(resourceType ? { resourceType } : {}),
+    ...(resourceId ? { resourceId } : {}),
+    ...(correlationId ? { correlationId } : {}),
+    ...(phase ? { phase: phase as AuditLedgerPhase } : {}),
+    ...(occurredFrom ? { occurredFrom } : {}),
+    ...(occurredTo ? { occurredTo } : {}),
+  };
+}
+
+const operationKinds = new Set<OperatorOperationKind>([
+  "approval_required",
+  "launch_failed",
+  "run_stopped",
+  "run_rejected",
+  "delivery_blocked",
+  "delivery_awaiting_approval",
+  "delivery_drifted",
+  "delivery_unreachable",
+]);
+
+export function parseOperationsQuery(value: unknown): OperatorOperationsQuery {
+  const record = queryRecord(value);
+  const kind = optionalQueryString(record, "kind");
+  if (kind !== undefined && !operationKinds.has(kind as OperatorOperationKind)) {
+    throw new OperatorRequestError("kind is invalid");
+  }
+  return {
+    ...pagination(record, "operations", 3),
+    ...parseRunFilters(record),
+    ...(kind ? { kind: kind as OperatorOperationKind } : {}),
   };
 }
 

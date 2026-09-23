@@ -10,6 +10,8 @@ export const OPERATOR_PERMISSIONS = [
   "runs:read",
   "runs:write",
   "approvals:write",
+  "operations:read",
+  "audit:read",
 ] as const;
 
 export type OperatorPermission = (typeof OPERATOR_PERMISSIONS)[number];

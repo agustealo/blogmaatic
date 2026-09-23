@@ -9,13 +9,23 @@ import {
 } from "@blogmaatic/automation";
 
 import { stableJson } from "./json.js";
+import { decodeCursor, encodeCursor, normalizePageLimit } from "./query.js";
+import { canonicalInstant } from "./schedule.js";
 import type {
+  AuditLedgerEntry,
+  AuditLedgerInput,
+  AuditListQuery,
+  AutomationListQuery,
   AutomationRegistryEntry,
   AutomationSchedule,
+  AutomationVersionListQuery,
   ControlPlaneRunRecord,
   ControlPlaneStore,
   ControlPlaneTriggerEvidence,
+  Page,
+  RunListQuery,
   ScheduleClaim,
+  ScheduleListQuery,
 } from "./types.js";
 
 interface VersionRow {
@@ -49,6 +59,21 @@ interface ScheduleRow {
   readonly claim_expires_at: string | null;
   readonly created_at: string;
   readonly updated_at: string;
+}
+
+interface AuditRow {
+  readonly audit_id: string;
+  readonly correlation_id: string;
+  readonly phase: AuditLedgerEntry["phase"];
+  readonly actor_id: string;
+  readonly actor_kind: AuditLedgerEntry["actor"]["kind"];
+  readonly action: string;
+  readonly resource_type: string;
+  readonly resource_id: string;
+  readonly request_id: string | null;
+  readonly run_id: string | null;
+  readonly evidence_json: string;
+  readonly occurred_at: string;
 }
 
 function parseDefinition(row: VersionRow): AutomationRegistryEntry {
@@ -90,10 +115,35 @@ function parseSchedule(row: ScheduleRow): AutomationSchedule {
   };
 }
 
+function parseAudit(row: AuditRow): AuditLedgerEntry {
+  return {
+    id: row.audit_id,
+    correlationId: row.correlation_id,
+    phase: row.phase,
+    actor: { id: row.actor_id, kind: row.actor_kind },
+    action: row.action,
+    resource: { type: row.resource_type, id: row.resource_id },
+    ...(row.request_id ? { requestId: row.request_id } : {}),
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    evidence: JSON.parse(row.evidence_json) as AuditLedgerEntry["evidence"],
+    occurredAt: row.occurred_at,
+  };
+}
+
 function triggerDiscriminator(definition: AutomationDefinition): string | null {
   if (definition.trigger.kind === "event") return definition.trigger.eventType;
   if (definition.trigger.kind === "schedule") return definition.trigger.scheduleId ?? null;
   return null;
+}
+
+function page<T>(itemsWithSentinel: readonly T[], limit: number, cursorFor: (item: T) => string): Page<T> {
+  const hasMore = itemsWithSentinel.length > limit;
+  const items = hasMore ? itemsWithSentinel.slice(0, limit) : [...itemsWithSentinel];
+  const tail = items.at(-1);
+  return {
+    items,
+    ...(hasMore && tail !== undefined ? { nextCursor: cursorFor(tail) } : {}),
+  };
 }
 
 export class SqliteControlPlaneStore implements ControlPlaneStore {
@@ -152,6 +202,8 @@ export class SqliteControlPlaneStore implements ControlPlaneStore {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS automation_runs_trigger_idx
         ON automation_runs(trigger_key, created_at, run_id);
+      CREATE INDEX IF NOT EXISTS automation_runs_query_idx
+        ON automation_runs(created_at DESC, run_id DESC, automation_id, publication_id);
 
       CREATE TABLE IF NOT EXISTS automation_schedules (
         schedule_id TEXT PRIMARY KEY,
@@ -170,6 +222,29 @@ export class SqliteControlPlaneStore implements ControlPlaneStore {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS automation_schedule_due_idx
         ON automation_schedules(enabled, next_fire_at, claim_expires_at);
+      CREATE INDEX IF NOT EXISTS automation_schedule_query_idx
+        ON automation_schedules(updated_at DESC, schedule_id DESC);
+
+      CREATE TABLE IF NOT EXISTS audit_ledger (
+        audit_id TEXT PRIMARY KEY,
+        correlation_id TEXT NOT NULL,
+        phase TEXT NOT NULL CHECK (phase IN ('intent', 'succeeded', 'failed')),
+        actor_id TEXT NOT NULL,
+        actor_kind TEXT NOT NULL CHECK (actor_kind IN ('operator', 'integration', 'system')),
+        action TEXT NOT NULL,
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        request_id TEXT,
+        run_id TEXT,
+        evidence_json TEXT NOT NULL,
+        occurred_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS audit_ledger_order_idx
+        ON audit_ledger(occurred_at DESC, audit_id DESC);
+      CREATE INDEX IF NOT EXISTS audit_ledger_correlation_idx
+        ON audit_ledger(correlation_id, occurred_at, audit_id);
+      CREATE INDEX IF NOT EXISTS audit_ledger_resource_idx
+        ON audit_ledger(resource_type, resource_id, occurred_at DESC);
     `);
   }
 
@@ -293,6 +368,63 @@ export class SqliteControlPlaneStore implements ControlPlaneStore {
     return rows.map(parseDefinition);
   }
 
+  async listAutomations(query: AutomationListQuery = {}): Promise<Page<AutomationRegistryEntry>> {
+    this.#assertOpen();
+    const limit = normalizePageLimit(query.limit);
+    const cursor = decodeCursor("automations", query.cursor, 1);
+    const where: string[] = [];
+    const values: Array<string | number> = [];
+    if (query.enabled !== undefined) {
+      where.push("h.enabled = ?");
+      values.push(query.enabled ? 1 : 0);
+    }
+    if (cursor) {
+      where.push("h.automation_id > ?");
+      values.push(cursor[0]!);
+    }
+    const rows = this.#database.prepare(`
+      SELECT v.automation_id, v.version, v.definition_json, v.registered_at,
+             h.active_version, h.enabled AS head_enabled
+      FROM automation_heads h
+      JOIN automation_versions v
+        ON v.automation_id = h.automation_id AND v.version = h.active_version
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY h.automation_id ASC
+      LIMIT ?
+    `).all(...values, limit + 1) as unknown as VersionRow[];
+    const entries = rows.map(parseDefinition);
+    return page(entries, limit, (entry) => encodeCursor("automations", [entry.definition.id]));
+  }
+
+  async listAutomationVersions(
+    automationId: string,
+    query: AutomationVersionListQuery = {},
+  ): Promise<Page<AutomationRegistryEntry>> {
+    this.#assertOpen();
+    if (!automationId.trim()) throw new Error("Automation id is required");
+    const limit = normalizePageLimit(query.limit);
+    const cursor = decodeCursor("automation-versions", query.cursor, 1);
+    const values: Array<string | number> = [automationId];
+    let cursorClause = "";
+    if (cursor) {
+      const version = Number(cursor[0]);
+      if (!Number.isSafeInteger(version) || version < 1) throw new Error("Automation version cursor is invalid");
+      cursorClause = "AND v.version < ?";
+      values.push(version);
+    }
+    const rows = this.#database.prepare(`
+      SELECT v.automation_id, v.version, v.definition_json, v.registered_at,
+             h.active_version, h.enabled AS head_enabled
+      FROM automation_versions v
+      LEFT JOIN automation_heads h ON h.automation_id = v.automation_id
+      WHERE v.automation_id = ? ${cursorClause}
+      ORDER BY v.version DESC
+      LIMIT ?
+    `).all(...values, limit + 1) as unknown as VersionRow[];
+    const entries = rows.map(parseDefinition);
+    return page(entries, limit, (entry) => encodeCursor("automation-versions", [String(entry.definition.version)]));
+  }
+
   async reserveRuns(
     trigger: ControlPlaneTriggerEvidence,
     requests: readonly AutomationRunRequest[],
@@ -351,6 +483,34 @@ export class SqliteControlPlaneStore implements ControlPlaneStore {
       FROM automation_runs WHERE run_id = ?
     `).get(runId) as RunRow | undefined;
     return row ? parseRun(row) : undefined;
+  }
+
+  async listRuns(query: RunListQuery = {}): Promise<Page<ControlPlaneRunRecord>> {
+    this.#assertOpen();
+    const limit = normalizePageLimit(query.limit);
+    const cursor = decodeCursor("runs", query.cursor, 2);
+    const where: string[] = [];
+    const values: Array<string | number> = [];
+    if (query.automationId) { where.push("automation_id = ?"); values.push(query.automationId); }
+    if (query.publicationId) { where.push("publication_id = ?"); values.push(query.publicationId); }
+    if (query.dispatchState) { where.push("dispatch_state = ?"); values.push(query.dispatchState); }
+    if (query.runtimePhase) { where.push("runtime_phase = ?"); values.push(query.runtimePhase); }
+    if (query.createdFrom) { where.push("created_at >= ?"); values.push(canonicalInstant(query.createdFrom)); }
+    if (query.createdTo) { where.push("created_at <= ?"); values.push(canonicalInstant(query.createdTo)); }
+    if (cursor) {
+      where.push("(created_at < ? OR (created_at = ? AND run_id < ?))");
+      values.push(cursor[0]!, cursor[0]!, cursor[1]!);
+    }
+    const rows = this.#database.prepare(`
+      SELECT run_id, trigger_key, request_json, dispatch_state, runtime_id,
+             runtime_phase, last_error, created_at, updated_at
+      FROM automation_runs
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY created_at DESC, run_id DESC
+      LIMIT ?
+    `).all(...values, limit + 1) as unknown as RunRow[];
+    const entries = rows.map(parseRun);
+    return page(entries, limit, (entry) => encodeCursor("runs", [entry.createdAt, entry.runId]));
   }
 
   async markRunStarted(runId: string, runtimeId: string, updatedAt: string): Promise<void> {
@@ -430,6 +590,32 @@ export class SqliteControlPlaneStore implements ControlPlaneStore {
       FROM automation_schedules WHERE schedule_id = ?
     `).get(scheduleId) as ScheduleRow | undefined;
     return row ? parseSchedule(row) : undefined;
+  }
+
+  async listSchedules(query: ScheduleListQuery = {}): Promise<Page<AutomationSchedule>> {
+    this.#assertOpen();
+    const limit = normalizePageLimit(query.limit);
+    const cursor = decodeCursor("schedules", query.cursor, 2);
+    const where: string[] = [];
+    const values: Array<string | number> = [];
+    if (query.automationId) { where.push("automation_id = ?"); values.push(query.automationId); }
+    if (query.enabled !== undefined) { where.push("enabled = ?"); values.push(query.enabled ? 1 : 0); }
+    if (query.nextFireFrom) { where.push("next_fire_at >= ?"); values.push(canonicalInstant(query.nextFireFrom)); }
+    if (query.nextFireTo) { where.push("next_fire_at <= ?"); values.push(canonicalInstant(query.nextFireTo)); }
+    if (cursor) {
+      where.push("(updated_at < ? OR (updated_at = ? AND schedule_id < ?))");
+      values.push(cursor[0]!, cursor[0]!, cursor[1]!);
+    }
+    const rows = this.#database.prepare(`
+      SELECT schedule_id, schedule_json, enabled, next_fire_at, last_fire_at,
+             claim_token, claim_expires_at, created_at, updated_at
+      FROM automation_schedules
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY updated_at DESC, schedule_id DESC
+      LIMIT ?
+    `).all(...values, limit + 1) as unknown as ScheduleRow[];
+    const entries = rows.map(parseSchedule);
+    return page(entries, limit, (entry) => encodeCursor("schedules", [entry.updatedAt, entry.id]));
   }
 
   async claimDueSchedules(now: string, claimExpiresAt: string, limit: number): Promise<readonly ScheduleClaim[]> {
@@ -519,6 +705,77 @@ export class SqliteControlPlaneStore implements ControlPlaneStore {
       SET claim_token = NULL, claim_expires_at = NULL, updated_at = ?
       WHERE schedule_id = ? AND claim_token = ?
     `).run(updatedAt, scheduleId, token);
+  }
+
+  async appendAudit(input: AuditLedgerInput): Promise<AuditLedgerEntry> {
+    this.#assertOpen();
+    if (!input.correlationId.trim()) throw new Error("Audit correlation id is required");
+    if (!input.actor.id.trim()) throw new Error("Audit actor id is required");
+    if (!input.action.trim()) throw new Error("Audit action is required");
+    if (!input.resource.type.trim() || !input.resource.id.trim()) throw new Error("Audit resource is required");
+    const occurredAt = canonicalInstant(input.occurredAt);
+    const entry: AuditLedgerEntry = {
+      id: input.id ?? randomUUID(),
+      correlationId: input.correlationId,
+      phase: input.phase,
+      actor: input.actor,
+      action: input.action,
+      resource: input.resource,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      ...(input.runId ? { runId: input.runId } : {}),
+      evidence: input.evidence,
+      occurredAt,
+    };
+    this.#database.prepare(`
+      INSERT INTO audit_ledger (
+        audit_id, correlation_id, phase, actor_id, actor_kind, action,
+        resource_type, resource_id, request_id, run_id, evidence_json, occurred_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.id,
+      entry.correlationId,
+      entry.phase,
+      entry.actor.id,
+      entry.actor.kind,
+      entry.action,
+      entry.resource.type,
+      entry.resource.id,
+      entry.requestId ?? null,
+      entry.runId ?? null,
+      stableJson(entry.evidence),
+      entry.occurredAt,
+    );
+    return entry;
+  }
+
+  async listAudit(query: AuditListQuery = {}): Promise<Page<AuditLedgerEntry>> {
+    this.#assertOpen();
+    const limit = normalizePageLimit(query.limit);
+    const cursor = decodeCursor("audit", query.cursor, 2);
+    const where: string[] = [];
+    const values: Array<string | number> = [];
+    if (query.actorId) { where.push("actor_id = ?"); values.push(query.actorId); }
+    if (query.action) { where.push("action = ?"); values.push(query.action); }
+    if (query.resourceType) { where.push("resource_type = ?"); values.push(query.resourceType); }
+    if (query.resourceId) { where.push("resource_id = ?"); values.push(query.resourceId); }
+    if (query.phase) { where.push("phase = ?"); values.push(query.phase); }
+    if (query.correlationId) { where.push("correlation_id = ?"); values.push(query.correlationId); }
+    if (query.occurredFrom) { where.push("occurred_at >= ?"); values.push(canonicalInstant(query.occurredFrom)); }
+    if (query.occurredTo) { where.push("occurred_at <= ?"); values.push(canonicalInstant(query.occurredTo)); }
+    if (cursor) {
+      where.push("(occurred_at < ? OR (occurred_at = ? AND audit_id < ?))");
+      values.push(cursor[0]!, cursor[0]!, cursor[1]!);
+    }
+    const rows = this.#database.prepare(`
+      SELECT audit_id, correlation_id, phase, actor_id, actor_kind, action,
+             resource_type, resource_id, request_id, run_id, evidence_json, occurred_at
+      FROM audit_ledger
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY occurred_at DESC, audit_id DESC
+      LIMIT ?
+    `).all(...values, limit + 1) as unknown as AuditRow[];
+    const entries = rows.map(parseAudit);
+    return page(entries, limit, (entry) => encodeCursor("audit", [entry.occurredAt, entry.id]));
   }
 
   close(): void {

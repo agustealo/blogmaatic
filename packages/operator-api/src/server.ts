@@ -13,21 +13,30 @@ import {
   type PublicationAutomationEvent,
 } from "@blogmaatic/control-plane";
 
+import { auditedMutation } from "./audit.js";
 import {
   OperatorAuthError,
   type OperatorPermission,
   type OperatorPrincipal,
 } from "./auth.js";
+import { listOperatorOperations } from "./operations.js";
+import { listOperatorRuns } from "./runs.js";
 import type { ManualRunBody, OperatorApiListenOptions, OperatorApiOptions } from "./types.js";
 import {
   OperatorRequestError,
   parseActivationBody,
   parseApprovalBody,
+  parseAuditListQuery,
+  parseAutomationListQuery,
   parseAutomationRegistration,
+  parseAutomationVersionListQuery,
   parseEventBody,
   parseManualRunBody,
+  parseOperationsQuery,
+  parseRunListQuery,
   parseScheduleBody,
   parseScheduleDispatchBody,
+  parseScheduleListQuery,
   requireIdempotencyKey,
   requirePathString,
   requirePathVersion,
@@ -49,6 +58,10 @@ const systemClock = { now: () => new Date().toISOString() };
 
 function params(request: FastifyRequest): Record<string, unknown> {
   return request.params as Record<string, unknown>;
+}
+
+function query(request: FastifyRequest): unknown {
+  return request.query;
 }
 
 function errorBody(request: FastifyRequest, code: string, message: string) {
@@ -147,10 +160,24 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
     service: "blogmaatic-operator-api",
   }));
 
+  app.get("/v1/automations", async (request) => {
+    await authorize(request, "automations:read");
+    return domainCall(() => options.store.listAutomations(parseAutomationListQuery(query(request))));
+  });
+
   app.post("/v1/automations", async (request, reply) => {
-    await authorize(request, "automations:write");
+    const principal = await authorize(request, "automations:write");
     const definition = parseAutomationRegistration(request.body);
-    await domainCall(() => options.controlPlane.registerAutomation(definition));
+    await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "automation.register",
+      resource: { type: "automation", id: definition.id },
+      evidence: { version: definition.version, enabled: definition.enabled },
+      now: () => clock.now(),
+      execute: () => domainCall(() => options.controlPlane.registerAutomation(definition)),
+    });
     const stored = await options.store.getAutomationVersion(definition.id, definition.version);
     if (!stored) throw new OperatorApiError(500, "REGISTRY_INCONSISTENT", "Registered automation could not be read back");
     return reply.code(201).send(stored);
@@ -164,6 +191,15 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
     return stored;
   });
 
+  app.get("/v1/automations/:automationId/versions", async (request) => {
+    await authorize(request, "automations:read");
+    const automationId = requirePathString(params(request).automationId, "automationId");
+    return domainCall(() => options.store.listAutomationVersions(
+      automationId,
+      parseAutomationVersionListQuery(query(request)),
+    ));
+  });
+
   app.get("/v1/automations/:automationId/versions/:version", async (request) => {
     await authorize(request, "automations:read");
     const routeParams = params(request);
@@ -175,12 +211,21 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
   });
 
   app.post("/v1/automations/:automationId/versions/:version/activate", async (request) => {
-    await authorize(request, "automations:write");
+    const principal = await authorize(request, "automations:write");
     const routeParams = params(request);
     const automationId = requirePathString(routeParams.automationId, "automationId");
     const version = requirePathVersion(routeParams.version);
     const body = parseActivationBody(request.body);
-    await domainCall(() => options.controlPlane.activateAutomation(automationId, version, body.enabled));
+    await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "automation.activate",
+      resource: { type: "automation", id: automationId },
+      evidence: { version, enabled: body.enabled },
+      now: () => clock.now(),
+      execute: () => domainCall(() => options.controlPlane.activateAutomation(automationId, version, body.enabled)),
+    });
     const stored = await options.store.getAutomationVersion(automationId, version);
     if (!stored) throw new OperatorApiError(500, "REGISTRY_INCONSISTENT", "Activated automation could not be read back");
     return stored;
@@ -193,8 +238,26 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       ...body,
       source: principal.source ?? principal.id,
     };
-    const runs = await domainCall(() => options.controlPlane.routeEvent(event));
+    const runs = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "event.ingest",
+      resource: { type: "event", id: `${event.source}/${body.id}` },
+      evidence: { type: body.type, source: event.source, publicationId: body.publication.id },
+      now: () => clock.now(),
+      execute: () => domainCall(() => options.controlPlane.routeEvent(event)),
+      success: (result) => ({ evidence: { runIds: result.map((run) => run.runId) } }),
+    });
     return reply.code(202).send({ runs });
+  });
+
+  app.get("/v1/runs", async (request) => {
+    await authorize(request, "runs:read");
+    const parsed = parseRunListQuery(query(request));
+    return parsed.runtimePhase === undefined
+      ? domainCall(() => options.store.listRuns(parsed))
+      : runtimeCall(() => listOperatorRuns(options.store, options.runtime, parsed));
   });
 
   app.post("/v1/runs/manual", async (request, reply) => {
@@ -210,7 +273,21 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       publication: body.publication,
       groups: body.groups,
     };
-    const run = await domainCall(() => options.controlPlane.startManual(command));
+    const run = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "run.start.manual",
+      resource: { type: "automation", id: body.automationId },
+      evidence: {
+        commandId: command.id,
+        publicationId: body.publication.id,
+        revisionId: body.publication.current.id,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => options.controlPlane.startManual(command)),
+      success: (result) => ({ runId: result.runId }),
+    });
     return reply.code(202).send(run);
   });
 
@@ -247,11 +324,28 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       decidedAt: clock.now(),
       ...(body.note === undefined ? {} : { note: body.note }),
     };
-    const response = await runtimeCall(() => options.runtime.approve(approval));
-    if (!response.accepted) {
-      throw new OperatorApiError(409, "APPROVAL_REJECTED", response.reason ?? "The runtime rejected this approval");
-    }
-    return reply.code(202).send({ accepted: true, approval });
+    const response = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: body.decision === "approve" ? "run.approve" : "run.reject",
+      resource: { type: "run", id: runId },
+      evidence: {
+        stepId: expected.stepId,
+        revisionId: expected.revisionId,
+        role: expected.role,
+      },
+      now: () => clock.now(),
+      execute: async () => {
+        const result = await runtimeCall(() => options.runtime.approve(approval));
+        if (!result.accepted) {
+          throw new OperatorApiError(409, "APPROVAL_REJECTED", result.reason ?? "The runtime rejected this approval");
+        }
+        return result;
+      },
+      success: () => ({ runId }),
+    });
+    return reply.code(202).send({ accepted: response.accepted, approval });
   });
 
   app.get("/v1/runs/:runId/result", async (request) => {
@@ -267,10 +361,28 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
     return runtimeCall(() => options.runtime.result(runId));
   });
 
+  app.get("/v1/schedules", async (request) => {
+    await authorize(request, "schedules:read");
+    return domainCall(() => options.store.listSchedules(parseScheduleListQuery(query(request))));
+  });
+
   app.post("/v1/schedules", async (request, reply) => {
-    await authorize(request, "schedules:write");
+    const principal = await authorize(request, "schedules:write");
     const input = parseScheduleBody(request.body);
-    const schedule = await domainCall(() => options.controlPlane.createSchedule(input));
+    const schedule = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "schedule.upsert",
+      resource: { type: "schedule", id: input.id },
+      evidence: {
+        automationId: input.automationId,
+        automationVersion: input.automationVersion,
+        timezone: input.timezone,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => options.controlPlane.createSchedule(input)),
+    });
     return reply.code(201).send(schedule);
   });
 
@@ -283,10 +395,45 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
   });
 
   app.post("/v1/scheduler/dispatch", async (request) => {
-    await authorize(request, "schedules:dispatch");
+    const principal = await authorize(request, "schedules:dispatch");
     const body = parseScheduleDispatchBody(request.body);
-    const results = await domainCall(() => options.controlPlane.dispatchDueSchedules(body));
+    const results = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "scheduler.dispatch",
+      resource: { type: "scheduler", id: "default" },
+      evidence: {
+        ...(body.now ? { now: body.now } : {}),
+        ...(body.limit ? { limit: body.limit } : {}),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => options.controlPlane.dispatchDueSchedules(body)),
+      success: (result) => ({
+        evidence: {
+          results: result.map((item) => ({
+            scheduleId: item.scheduleId,
+            outcome: item.outcome,
+            ...(item.run ? { runId: item.run.runId } : {}),
+          })),
+        },
+      }),
+    });
     return { results };
+  });
+
+  app.get("/v1/operations", async (request) => {
+    await authorize(request, "operations:read");
+    return runtimeCall(() => listOperatorOperations(
+      options.store,
+      options.runtime,
+      parseOperationsQuery(query(request)),
+    ));
+  });
+
+  app.get("/v1/audit", async (request) => {
+    await authorize(request, "audit:read");
+    return domainCall(() => options.store.listAudit(parseAuditListQuery(query(request))));
   });
 
   return app;
