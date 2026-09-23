@@ -52,7 +52,12 @@ function encodeMaterial(material: Uint8Array): string {
   if (material.byteLength === 0 || material.byteLength > MAX_SECRET_BYTES) {
     throw new Error(`Vault secret must be between 1 and ${MAX_SECRET_BYTES} bytes`);
   }
-  return `${STORED_PREFIX}${Buffer.from(material).toString("base64")}`;
+  const copy = Buffer.from(material);
+  try {
+    return `${STORED_PREFIX}${copy.toString("base64")}`;
+  } finally {
+    copy.fill(0);
+  }
 }
 
 function decodeMaterial(output: string): Uint8Array {
@@ -67,15 +72,18 @@ function decodeMaterial(output: string): Uint8Array {
     throw vaultError("OS credential store returned invalid Blogmaatic material");
   }
   const bytes = Buffer.from(encoded, "base64");
-  if (
-    bytes.byteLength === 0 ||
-    bytes.byteLength > MAX_SECRET_BYTES ||
-    bytes.toString("base64") !== encoded
-  ) {
+  try {
+    if (
+      bytes.byteLength === 0 ||
+      bytes.byteLength > MAX_SECRET_BYTES ||
+      bytes.toString("base64") !== encoded
+    ) {
+      throw vaultError("OS credential store returned invalid Blogmaatic material");
+    }
+    return Uint8Array.from(bytes);
+  } finally {
     bytes.fill(0);
-    throw vaultError("OS credential store returned invalid Blogmaatic material");
   }
-  return Uint8Array.from(bytes);
 }
 
 function quoteSecurityInteractive(value: string): string {
