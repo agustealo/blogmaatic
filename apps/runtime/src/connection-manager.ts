@@ -287,7 +287,7 @@ export class ConnectionManager {
 
       const replaced = Object.keys(staged.refs)
         .map((key) => existing.secretRefs[key])
-        .filter((reference): reference is string => Boolean(reference) && isManagerOwnedVaultReference(reference));
+        .filter((reference): reference is string => typeof reference === "string" && isManagerOwnedVaultReference(reference));
       await this.#cleanupReferences(replaced, "superseded connection credential");
       return view(this.#connections.get(connectionId));
     });
