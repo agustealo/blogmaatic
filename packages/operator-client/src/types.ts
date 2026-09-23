@@ -75,6 +75,10 @@ export interface ConnectionsResponse {
   readonly items: readonly OperatorConnectionView[];
 }
 
+export interface PublicationGroupOptionsResponse {
+  readonly policySetIds: readonly string[];
+}
+
 export interface ApprovalDecisionInput {
   readonly decision: "approve" | "reject";
   readonly note?: string;
