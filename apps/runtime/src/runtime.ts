@@ -12,9 +12,18 @@ import {
 } from "@blogmaatic/automation-restate";
 import { AutomationControlPlane, SqliteControlPlaneStore } from "@blogmaatic/control-plane";
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
-import { JEKYLL_GIT_EXTENSION_ID, JekyllGitPublisher } from "@blogmaatic/extension-jekyll-git";
+import { FacebookPagesPublisher } from "@blogmaatic/extension-facebook-pages";
+import { JekyllGitPublisher } from "@blogmaatic/extension-jekyll-git";
+import { LinkedInRestPublisher } from "@blogmaatic/extension-linkedin-rest";
 import { ConnectionAuthority, ExtensionRuntime } from "@blogmaatic/extension-sdk";
+import { WordPressRestPublisher } from "@blogmaatic/extension-wordpress-rest";
 import { StaticBearerAuthorizer, closeOperatorApi, startOperatorApi } from "@blogmaatic/operator-api";
+import {
+  EnvironmentSecretProvider,
+  OsCredentialSecretProvider,
+  SecretAuthority,
+  type SecretProvider,
+} from "@blogmaatic/secrets";
 import { SqliteProjectionStateStore } from "@blogmaatic/state-sqlite";
 
 import type { RuntimeConfig, RuntimePaths } from "./config.js";
@@ -33,6 +42,14 @@ export interface RunningRuntime {
 
 function controlRoomDist(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "../../control-room/dist");
+}
+
+function createSecretAuthority(): SecretAuthority {
+  const providers: SecretProvider[] = [new EnvironmentSecretProvider()];
+  if (process.platform === "darwin" || process.platform === "linux") {
+    providers.push(new OsCredentialSecretProvider());
+  }
+  return new SecretAuthority(providers);
 }
 
 async function startWorkflowEndpoint(workflow: ReturnType<typeof createPublicationAutomationWorkflow>, host: string, port: number): Promise<Http2Server> {
@@ -106,11 +123,17 @@ export async function startRuntime(options: {
     }
 
     const connections = new ConnectionAuthority(config.connections);
+    const secrets = createSecretAuthority();
     const extensions = new ExtensionRuntime(connections);
     extensions.registerPublisher(new JekyllGitPublisher(connections));
+    extensions.registerPublisher(new WordPressRestPublisher(connections, secrets));
+    extensions.registerPublisher(new LinkedInRestPublisher(connections, secrets));
+    extensions.registerPublisher(new FacebookPagesPublisher(connections, secrets));
+
     for (const connection of connections.list()) {
-      if (connection.extensionId !== JEKYLL_GIT_EXTENSION_ID) {
-        throw new Error(`Runtime connection ${connection.id} references an extension that is not wired in this slice: ${connection.extensionId}`);
+      const validation = await extensions.validateConnection(connection.id);
+      if (!validation.valid) {
+        throw new Error(`Connection ${connection.id} is invalid: ${validation.errors.join("; ")}`);
       }
       if (connection.status === "active") {
         const health = await extensions.checkHealth(connection.id);
