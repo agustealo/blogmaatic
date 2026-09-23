@@ -131,10 +131,14 @@ async function expectStatus(response, expected) {
   }
 }
 
-function sessionCookie(response) {
+function browserSession(response, origin) {
   const header = response.headers.get("set-cookie");
   assert.ok(header, "Control Room bootstrap did not return a session cookie");
-  return header.split(";", 1)[0];
+  const location = response.headers.get("location");
+  assert.ok(location, "Control Room bootstrap did not return a location");
+  const proof = new URL(location, origin).hash.replace(/^#session=/, "");
+  assert.match(proof, /^[A-Za-z0-9_-]{32,128}$/);
+  return { cookie: header.split(";", 1)[0], proof };
 }
 
 async function terminalResult(origin, token, runId) {
@@ -197,9 +201,9 @@ test("managed runtime publishes through Restate and survives a full restart", {
       headers: { "sec-fetch-site": "none" },
     });
     await expectStatus(bootstrap, 303);
-    const cookie = sessionCookie(bootstrap);
+    const session = browserSession(bootstrap, first.controlRoomAddress);
 
-    const controlRoom = await fetch(first.controlRoomAddress, { headers: { cookie } });
+    const controlRoom = await fetch(first.controlRoomAddress, { headers: { cookie: session.cookie } });
     await expectStatus(controlRoom, 200);
     assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
@@ -212,11 +216,7 @@ test("managed runtime publishes through Restate and survives a full restart", {
     const launch = await api(first.operatorAddress, credential.token, "/v1/runs/manual", {
       method: "POST",
       headers: { "idempotency-key": "managed-runtime-proof-1" },
-      body: JSON.stringify({
-        automationId: "runtime-proof",
-        publication: publication(),
-        groups: [group()],
-      }),
+      body: JSON.stringify({ automationId: "runtime-proof", publication: publication(), groups: [group()] }),
     });
     await expectStatus(launch, 202);
     const run = await launch.json();
@@ -236,7 +236,8 @@ test("managed runtime publishes through Restate and survives a full restart", {
 
     const proxiedRun = await fetch(`${first.controlRoomAddress}/api/v1/runs/${encodeURIComponent(run.runId)}`, {
       headers: {
-        cookie,
+        cookie: session.cookie,
+        "x-blogmaatic-session-proof": session.proof,
         origin: first.controlRoomAddress,
         "sec-fetch-site": "same-origin",
       },
