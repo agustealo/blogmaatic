@@ -8,6 +8,7 @@ import "./styles.css";
 import "./confirmations.css";
 import "./connections.css";
 import "./publication-groups.css";
+import "./publications.css";
 import "./setup.css";
 
 const root = document.getElementById("root");
