@@ -6,11 +6,12 @@ import { useConnection } from "./connection";
 const nav = [
   ["/", "Overview"],
   ["/connections", "Connections"],
+  ["/publication-groups", "Publication Groups"],
+  ["/automations", "Automations"],
+  ["/schedules", "Schedules"],
   ["/operations", "Operations"],
   ["/approvals", "Approvals"],
   ["/runs", "Runs"],
-  ["/automations", "Automations"],
-  ["/schedules", "Schedules"],
   ["/audit", "Audit"],
 ] as const;
 
