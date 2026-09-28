@@ -9,6 +9,8 @@ import "./confirmations.css";
 import "./connections.css";
 import "./publication-groups.css";
 import "./automations.css";
+import "./publish.css";
+import "./consumer.css";
 import "./setup.css";
 
 const root = document.getElementById("root");
