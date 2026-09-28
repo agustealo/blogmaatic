@@ -91,7 +91,7 @@ test("consumer mutation routes are exposed through the canonical operator client
   assert.equal(manualHeaders.get("authorization"), `Bearer ${token}`);
 });
 
-test("manual run rejects an empty idempotency key before fetch", async () => {
+test("manual run rejects an empty idempotency key before fetch", () => {
   let called = false;
   const client = new OperatorClient({
     baseUrl: "/api",
@@ -101,8 +101,8 @@ test("manual run rejects an empty idempotency key before fetch", async () => {
       throw new Error("should not be called");
     },
   });
-  await assert.rejects(
-    client.startManualRun({ automationId: "publish-now", publication: publication(), groups: [group()] }, "  "),
+  assert.throws(
+    () => client.startManualRun({ automationId: "publish-now", publication: publication(), groups: [group()] }, "  "),
     /idempotency key is required/,
   );
   assert.equal(called, false);
