@@ -10,6 +10,7 @@ import { ConnectionsPage } from "./pages/connections";
 import { OperationsPage } from "./pages/operations";
 import { OverviewPage } from "./pages/overview";
 import { PublicationGroupsPage } from "./pages/publication-groups";
+import { PublicationsPage } from "./pages/publications";
 import { RunDetailPage, RunsPage } from "./pages/runs";
 import { SchedulesPage } from "./pages/schedules";
 import { FirstRunEntry, SetupPage } from "./pages/setup";
@@ -28,6 +29,8 @@ export function App() {
         <Route path="setup" element={<SetupPage />} />
         <Route path="connections" element={<ConnectionsPage />} />
         <Route index element={gated(<OverviewPage />)} />
+        <Route path="publications" element={gated(<PublicationsPage />)} />
+        <Route path="publications/:publicationId" element={gated(<PublicationsPage />)} />
         <Route path="publication-groups" element={gated(<PublicationGroupsPage />)} />
         <Route path="publication-groups/:groupId" element={gated(<PublicationGroupsPage />)} />
         <Route path="operations" element={gated(<OperationsPage />)} />
