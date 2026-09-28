@@ -3,7 +3,14 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import { auditedMutation } from "./audit.js";
-import type { OperatorPrincipal } from "./auth.js";
+import type { OperatorPermission, OperatorPrincipal } from "./auth.js";
+import {
+  parsePublicationWorkspaceCreateBody,
+  parsePublicationWorkspaceDispatchBody,
+  parsePublicationWorkspaceListQuery,
+  parsePublicationWorkspaceUpdateBody,
+  parsePublicationWorkspaceVersionListQuery,
+} from "./publication-workspace-validation.js";
 import {
   parsePublicationGroupActivationBody,
   parsePublicationGroupCreateBody,
@@ -14,6 +21,7 @@ import {
 import type {
   OperatorApiOptions,
   OperatorPublicationGroupManager,
+  OperatorPublicationWorkspaceManager,
 } from "./types.js";
 import { requirePathString, requirePathVersion } from "./validation.js";
 
@@ -47,10 +55,27 @@ function manager(options: OperatorApiOptions): OperatorPublicationGroupManager {
   return options.publicationGroups;
 }
 
+function publicationManager(options: OperatorApiOptions): OperatorPublicationWorkspaceManager {
+  if (!options.publications) {
+    throw new PublicationGroupApiError(
+      503,
+      "PUBLICATION_WORKSPACE_UNAVAILABLE",
+      "Publication Workspace is unavailable",
+    );
+  }
+  return options.publications;
+}
+
 async function authorize(
   options: OperatorApiOptions,
   request: FastifyRequest,
-  permission: "publication-groups:read" | "publication-groups:write",
+  permission: Extract<OperatorPermission,
+    | "publication-groups:read"
+    | "publication-groups:write"
+    | "publications:read"
+    | "publications:write"
+    | "publications:publish"
+  >,
 ): Promise<OperatorPrincipal> {
   return options.authorizer.authorize(request.headers.authorization, permission);
 }
@@ -60,9 +85,9 @@ async function domainCall<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } catch (error) {
     if (error instanceof PublicationGroupApiError) throw error;
-    const message = error instanceof Error ? error.message : "Publication group operation was rejected";
+    const message = error instanceof Error ? error.message : "Publication operation was rejected";
     if (/changed from version \d+ to \d+/.test(message)) {
-      throw new PublicationGroupApiError(409, "PUBLICATION_GROUP_VERSION_CONFLICT", message);
+      throw new PublicationGroupApiError(409, "VERSION_CONFLICT", message);
     }
     throw new PublicationGroupApiError(422, "DOMAIN_REJECTED", message);
   }
@@ -74,6 +99,131 @@ async function currentOr404(groupManager: OperatorPublicationGroupManager, group
     throw new PublicationGroupApiError(404, "PUBLICATION_GROUP_NOT_FOUND", "Publication group was not found");
   }
   return entry;
+}
+
+async function publicationOr404(publications: OperatorPublicationWorkspaceManager, publicationId: string) {
+  const entry = await domainCall(() => publications.get(publicationId));
+  if (!entry) {
+    throw new PublicationGroupApiError(404, "PUBLICATION_NOT_FOUND", "Publication was not found");
+  }
+  return entry;
+}
+
+function registerPublicationWorkspaceRoutes(app: FastifyInstance, options: OperatorApiOptions): void {
+  const clock = options.clock ?? { now: () => new Date().toISOString() };
+
+  app.get("/v1/publications", async (request) => {
+    await authorize(options, request, "publications:read");
+    return domainCall(() => publicationManager(options).list(parsePublicationWorkspaceListQuery(query(request))));
+  });
+
+  app.post("/v1/publications", async (request, reply) => {
+    const principal = await authorize(options, request, "publications:write");
+    const body = parsePublicationWorkspaceCreateBody(request.body);
+    const created = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "publication.create",
+      resource: { type: "publication", id: `request:${request.id}` },
+      evidence: { status: body.status ?? "draft", titleLength: body.title.trim().length },
+      now: () => clock.now(),
+      execute: () => domainCall(() => publicationManager(options).create(body)),
+      success: (result) => ({
+        evidence: {
+          publicationId: result.publication.id,
+          revisionId: result.publication.current.id,
+          version: result.version,
+          status: result.publication.status,
+        },
+      }),
+    });
+    return reply.code(201).send(created);
+  });
+
+  app.get("/v1/publications/:publicationId", async (request) => {
+    await authorize(options, request, "publications:read");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    return publicationOr404(publicationManager(options), publicationId);
+  });
+
+  app.get("/v1/publications/:publicationId/versions", async (request) => {
+    await authorize(options, request, "publications:read");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    const publications = publicationManager(options);
+    await publicationOr404(publications, publicationId);
+    return domainCall(() => publications.listVersions(
+      publicationId,
+      parsePublicationWorkspaceVersionListQuery(query(request)),
+    ));
+  });
+
+  app.get("/v1/publications/:publicationId/versions/:version", async (request) => {
+    await authorize(options, request, "publications:read");
+    const routeParams = params(request);
+    const publicationId = requirePathString(routeParams.publicationId, "publicationId");
+    const version = requirePathVersion(routeParams.version);
+    const entry = await domainCall(() => publicationManager(options).getVersion(publicationId, version));
+    if (!entry) {
+      throw new PublicationGroupApiError(404, "PUBLICATION_VERSION_NOT_FOUND", "Publication version was not found");
+    }
+    return entry;
+  });
+
+  app.patch("/v1/publications/:publicationId", async (request) => {
+    const principal = await authorize(options, request, "publications:write");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    const publications = publicationManager(options);
+    const current = await publicationOr404(publications, publicationId);
+    const body = parsePublicationWorkspaceUpdateBody(request.body);
+    return auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "publication.update",
+      resource: { type: "publication", id: publicationId },
+      evidence: { expectedVersion: body.expectedVersion, currentVersion: current.version },
+      now: () => clock.now(),
+      execute: () => domainCall(() => publications.update(publicationId, body)),
+      success: (result) => ({
+        evidence: {
+          revisionId: result.publication.current.id,
+          version: result.version,
+          status: result.publication.status,
+        },
+      }),
+    });
+  });
+
+  app.post("/v1/publications/:publicationId/publish", async (request) => {
+    const principal = await authorize(options, request, "publications:publish");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    const publications = publicationManager(options);
+    const current = await publicationOr404(publications, publicationId);
+    const body = parsePublicationWorkspaceDispatchBody(request.body);
+    return auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "publication.approve-and-dispatch",
+      resource: { type: "publication", id: publicationId },
+      evidence: {
+        expectedVersion: body.expectedVersion,
+        currentVersion: current.version,
+        currentStatus: current.publication.status,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => publications.approveAndDispatch(publicationId, body.expectedVersion)),
+      success: (result) => ({
+        evidence: {
+          version: result.publication.version,
+          revisionId: result.publication.publication.current.id,
+          runCount: result.runs.length,
+          runIds: result.runs.map((run) => run.runId),
+        },
+      }),
+    });
+  });
 }
 
 export function registerPublicationGroupRoutes(app: FastifyInstance, options: OperatorApiOptions): void {
@@ -207,4 +357,6 @@ export function registerPublicationGroupRoutes(app: FastifyInstance, options: Op
       )),
     });
   });
+
+  registerPublicationWorkspaceRoutes(app, options);
 }
