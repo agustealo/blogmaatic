@@ -5,10 +5,11 @@ import { useConnection } from "./connection";
 
 const nav = [
   ["/", "Overview"],
+  ["/publications", "Publications"],
   ["/connections", "Connections"],
   ["/publication-groups", "Publication Groups"],
   ["/automations", "Automations"],
-  ["/schedules", "Schedules"],
+  ["/schedules", "Schedule Monitor"],
   ["/operations", "Operations"],
   ["/approvals", "Approvals"],
   ["/runs", "Runs"],
@@ -55,7 +56,7 @@ export function AppShell() {
       <div className="workspace">
         <header className="topbar">
           <div>
-            <span className="topbar__product">Operator workspace</span>
+            <span className="topbar__product">Publishing workspace</span>
           </div>
           <div className="topbar__actions">
             <button className="icon-button" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">
