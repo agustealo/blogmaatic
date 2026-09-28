@@ -122,21 +122,22 @@ export class PublicationWorkspaceManager {
 
   async create(input: PublicationWorkspaceCreateInput): Promise<PublicationWorkspaceEntry> {
     const now = this.#now();
-    const publicationId = `publication_${this.#id()}`;
-    const revisionId = `revision_${this.#id()}`;
+    const slug = trimmed(input.slug);
+    const summary = trimmed(input.summary);
+    const canonicalUrl = trimmed(input.canonicalUrl);
     const publication: Publication = {
-      id: publicationId,
+      id: `publication_${this.#id()}`,
       createdAt: now,
-      ...(trimmed(input.slug) ? { slug: trimmed(input.slug) } : {}),
+      ...(slug ? { slug } : {}),
       status: input.status ?? "draft",
       current: {
-        id: revisionId,
+        id: `revision_${this.#id()}`,
         ordinal: 1,
         createdAt: now,
         content: {
           schemaVersion: 1,
           title: requireText(input.title, "Publication title"),
-          ...(trimmed(input.summary) ? { summary: trimmed(input.summary) } : {}),
+          ...(summary ? { summary } : {}),
           language: trimmed(input.language) ?? "en",
           blocks: blocksFromBody(input.body),
           assets: [],
@@ -144,7 +145,7 @@ export class PublicationWorkspaceManager {
           attributes: {},
         },
       },
-      ...(trimmed(input.canonicalUrl) ? { canonicalUrl: trimmed(input.canonicalUrl) } : {}),
+      ...(canonicalUrl ? { canonicalUrl } : {}),
       provenance: { source: "blogmaatic.publication-workspace" },
     };
     return this.#store.create(publication, now);
@@ -156,19 +157,18 @@ export class PublicationWorkspaceManager {
     if (current.version !== input.expectedVersion) {
       throw new Error(`Publication ${publicationId} changed from version ${input.expectedVersion} to ${current.version}`);
     }
+
     const now = this.#now();
-    const changed = contentChanged(input);
     const oldContent = current.publication.current.content;
-    const nextCurrent = changed ? {
+    const summary = input.summary === undefined ? oldContent.summary : trimmed(input.summary);
+    const nextCurrent = contentChanged(input) ? {
       id: `revision_${this.#id()}`,
       ordinal: current.publication.current.ordinal + 1,
       createdAt: now,
       content: {
         schemaVersion: 1 as const,
         title: input.title === undefined ? oldContent.title : requireText(input.title, "Publication title"),
-        ...((input.summary === undefined ? oldContent.summary : trimmed(input.summary)) ? {
-          summary: input.summary === undefined ? oldContent.summary : trimmed(input.summary),
-        } : {}),
+        ...(summary ? { summary } : {}),
         language: input.language === undefined ? oldContent.language : requireText(input.language, "Publication language"),
         blocks: input.body === undefined ? oldContent.blocks : blocksFromBody(input.body),
         assets: oldContent.assets,
@@ -177,21 +177,18 @@ export class PublicationWorkspaceManager {
       },
     } : current.publication.current;
 
+    const slug = input.slug === undefined ? current.publication.slug : trimmed(input.slug);
+    const canonicalUrl = input.canonicalUrl === undefined ? current.publication.canonicalUrl : trimmed(input.canonicalUrl);
     const publication: Publication = {
-      ...current.publication,
-      ...(input.slug === undefined
-        ? {}
-        : trimmed(input.slug) ? { slug: trimmed(input.slug) } : { slug: undefined }),
-      ...(input.canonicalUrl === undefined
-        ? {}
-        : trimmed(input.canonicalUrl) ? { canonicalUrl: trimmed(input.canonicalUrl) } : { canonicalUrl: undefined }),
+      id: current.publication.id,
+      createdAt: current.publication.createdAt,
+      ...(slug ? { slug } : {}),
       status: input.status ?? current.publication.status,
       current: nextCurrent,
+      ...(canonicalUrl ? { canonicalUrl } : {}),
+      provenance: current.publication.provenance,
     };
-
-    // Delete optional undefined values before core JSON validation/persistence.
-    const normalized: Publication = JSON.parse(JSON.stringify(publication)) as Publication;
-    return this.#store.update(normalized, input.expectedVersion, now);
+    return this.#store.update(publication, input.expectedVersion, now);
   }
 
   async approveAndDispatch(publicationId: string, expectedVersion: number): Promise<PublicationWorkspaceDispatchResult> {
@@ -202,18 +199,14 @@ export class PublicationWorkspaceManager {
     }
     if (entry.publication.status === "archived") throw new Error("Archived publications cannot be dispatched");
     if (entry.publication.status !== "approved") {
-      entry = await this.update(publicationId, {
-        expectedVersion,
-        status: "approved",
-      });
+      entry = await this.update(publicationId, { expectedVersion, status: "approved" });
     }
 
-    const groups: Publication["current"] extends never ? never : Awaited<ReturnType<PublicationGroupManager["list"]>>["items"] = [] as never;
-    const snapshots = [];
+    const groups = [];
     let cursor: string | undefined;
     do {
       const page = await this.#publicationGroups.list({ enabled: true, limit: 100, ...(cursor ? { cursor } : {}) });
-      snapshots.push(...page.items.map((groupEntry) => groupEntry.group));
+      groups.push(...page.items.map((groupEntry) => groupEntry.group));
       cursor = page.nextCursor;
     } while (cursor);
 
@@ -223,9 +216,8 @@ export class PublicationWorkspaceManager {
       source: "blogmaatic.publication-workspace",
       occurredAt: this.#now(),
       publication: entry.publication,
-      groups: snapshots,
+      groups,
     });
-    void groups;
     return { publication: entry, runs };
   }
 }
