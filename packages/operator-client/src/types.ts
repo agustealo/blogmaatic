@@ -7,9 +7,12 @@ import type {
   AutomationSchedule,
   AutomationVersionListQuery,
   Page,
+  PageRequest,
   PublicationGroupListQuery,
   PublicationGroupRegistryEntry,
   PublicationGroupVersionListQuery,
+  PublicationWorkspaceEntry,
+  PublicationWorkspaceListQuery,
   RunListQuery,
   ScheduleListQuery,
   ControlPlaneRunRecord,
@@ -28,6 +31,11 @@ import type {
   PublicationGroupActivationBody,
   PublicationGroupCreateBody,
   PublicationGroupUpdateBody,
+  PublicationWorkspaceCreateBody,
+  PublicationWorkspaceDispatchBody,
+  PublicationWorkspaceDispatchResult,
+  PublicationWorkspaceUpdateBody,
+  WorkspacePublicationStatus,
 } from "@blogmaatic/operator-api";
 
 export type {
@@ -52,14 +60,22 @@ export type {
   OperatorOperationsPage,
   OperatorOperationsQuery,
   Page,
+  PageRequest,
   PublicationGroupActivationBody,
   PublicationGroupCreateBody,
   PublicationGroupListQuery,
   PublicationGroupRegistryEntry,
   PublicationGroupUpdateBody,
   PublicationGroupVersionListQuery,
+  PublicationWorkspaceCreateBody,
+  PublicationWorkspaceDispatchBody,
+  PublicationWorkspaceDispatchResult,
+  PublicationWorkspaceEntry,
+  PublicationWorkspaceListQuery,
+  PublicationWorkspaceUpdateBody,
   RunListQuery,
   ScheduleListQuery,
+  WorkspacePublicationStatus,
 };
 
 export interface OperatorHealth {
@@ -122,6 +138,8 @@ export type AutomationPage = Page<AutomationRegistryEntry>;
 export type AutomationVersionPage = Page<AutomationRegistryEntry>;
 export type PublicationGroupPage = Page<PublicationGroupRegistryEntry>;
 export type PublicationGroupVersionPage = Page<PublicationGroupRegistryEntry>;
+export type PublicationWorkspacePage = Page<PublicationWorkspaceEntry>;
+export type PublicationWorkspaceVersionPage = Page<PublicationWorkspaceEntry>;
 export type RunPage = Page<ControlPlaneRunRecord>;
 export type SchedulePage = Page<AutomationSchedule>;
 export type AuditPage = Page<AuditLedgerEntry>;
