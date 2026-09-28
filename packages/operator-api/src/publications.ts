@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import { auditedMutation } from "./audit.js";
 import type { OperatorPermission, OperatorPrincipal } from "./auth.js";
+import { PublicationGroupApiError } from "./publication-groups.js";
 import {
   parsePublicationWorkspaceCreateBody,
   parsePublicationWorkspaceDispatchBody,
@@ -12,13 +13,9 @@ import {
 import type { OperatorApiOptions, OperatorPublicationWorkspaceManager } from "./types.js";
 import { requirePathString, requirePathVersion } from "./validation.js";
 
-export class PublicationWorkspaceApiError extends Error {
-  constructor(
-    readonly statusCode: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
+export class PublicationWorkspaceApiError extends PublicationGroupApiError {
+  constructor(statusCode: number, code: string, message: string) {
+    super(statusCode, code, message);
     this.name = "PublicationWorkspaceApiError";
   }
 }
