@@ -243,7 +243,6 @@ function AutomationStep({ readiness, onCreated }: {
   const client = session!.client;
   const [groupId, setGroupId] = useState(readiness.runnableGroups[0]?.group.id ?? "");
   const [name, setName] = useState("Publish approved content");
-  const [trigger, setTrigger] = useState<"manual" | "approved">("manual");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -263,9 +262,7 @@ function AutomationStep({ readiness, onCreated }: {
         version: 1,
         name: name.trim(),
         enabled: true,
-        trigger: trigger === "manual"
-          ? { kind: "manual" }
-          : { kind: "event", eventType: "publication.approved" },
+        trigger: { kind: "event", eventType: "publication.approved" },
         steps: [{ id: "publish", kind: "publish_group", groupId }],
       };
       await client.registerAutomation(definition);
@@ -275,13 +272,16 @@ function AutomationStep({ readiness, onCreated }: {
     } finally {
       setBusy(false);
     }
-  }, [client, groupId, name, onCreated, trigger]);
+  }, [client, groupId, name, onCreated]);
 
   return (
     <Panel title="Create your first Automation" meta="Uses the existing automation registry">
       <form className="setup-step setup-form" onSubmit={create}>
         <ErrorBanner error={error} />
-        <p>Start with a small real automation. You can expand its trigger and workflow later from Automations.</p>
+        <p>
+          Start with the consumer-safe publishing trigger: Blogmaatic will run this automation when a canonical
+          <code> publication.approved </code>event arrives. Manual runs are not offered here until the Control Room has a real Publication input/catalog to run against.
+        </p>
         <label className="field">
           <span>Automation name</span>
           <input value={name} onChange={(event) => setName(event.target.value)} required autoComplete="off" />
@@ -296,10 +296,8 @@ function AutomationStep({ readiness, onCreated }: {
         </label>
         <label className="field">
           <span>Trigger</span>
-          <select value={trigger} onChange={(event) => setTrigger(event.target.value as "manual" | "approved")}>
-            <option value="manual">Manual</option>
-            <option value="approved">When a publication is approved</option>
-          </select>
+          <input value="When a publication is approved" readOnly aria-readonly="true" />
+          <small>After setup you can create additional publishing automations from the Automations screen.</small>
         </label>
         <div className="setup-actions">
           <button className="button button--primary" type="submit" disabled={busy}>{busy ? "Creating…" : "Create Automation"}</button>
@@ -323,6 +321,7 @@ function ReadyStep({ readiness }: { readonly readiness: OnboardingReadiness }) {
           <span><strong>{readiness.runnableAutomations.length}</strong> publishing automation{readiness.runnableAutomations.length === 1 ? "" : "s"}</span>
         </div>
         <div className="setup-actions">
+          <Link className="button button--quiet" to="/publication-groups">Review Publication Groups</Link>
           <Link className="button button--primary" to="/">Enter Control Room</Link>
         </div>
       </div>
