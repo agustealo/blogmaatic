@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { validatePublication, type Publication, type PublicationStatus } from "@blogmaatic/core";
 
+import { stableJson } from "./json.js";
 import { decodeCursor, encodeCursor, normalizePageLimit } from "./query.js";
 import type { Page, PageRequest } from "./types.js";
 
@@ -92,60 +93,79 @@ export class SqlitePublicationWorkspaceStore implements PublicationWorkspaceStor
           REFERENCES publication_workspace_versions(publication_id, version)
       ) STRICT;
 
-      CREATE INDEX IF NOT EXISTS idx_publication_workspace_heads_status_updated
+      CREATE INDEX IF NOT EXISTS publication_workspace_head_query_idx
         ON publication_workspace_heads(status, updated_at DESC, publication_id DESC);
     `);
+  }
+
+  #assertOpen(): void {
+    if (this.#closed) throw new Error("Publication Workspace store is closed");
+  }
+
+  #transaction<T>(fn: () => T): T {
+    this.#assertOpen();
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      this.#database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   async create(publication: Publication, recordedAt: string): Promise<PublicationWorkspaceEntry> {
     this.#assertOpen();
     validatePublication(publication);
-    requireId(publication.id, "Publication id");
-    const transaction = this.#database.transaction(() => {
+    const publicationId = requireId(publication.id, "Publication id");
+    this.#transaction(() => {
       const existing = this.#database.prepare(
-        "SELECT publication_id FROM publication_workspace_heads WHERE publication_id = ?",
-      ).get(publication.id);
-      if (existing) throw new Error(`Publication is already registered: ${publication.id}`);
+        "SELECT 1 AS present FROM publication_workspace_heads WHERE publication_id = ?",
+      ).get(publicationId) as { readonly present: number } | undefined;
+      if (existing) throw new Error(`Publication is already registered: ${publicationId}`);
       this.#database.prepare(`
         INSERT INTO publication_workspace_versions(publication_id, version, publication_json, recorded_at)
         VALUES (?, 1, ?, ?)
-      `).run(publication.id, JSON.stringify(publication), recordedAt);
+      `).run(publicationId, stableJson(publication), recordedAt);
       this.#database.prepare(`
         INSERT INTO publication_workspace_heads(publication_id, version, status, updated_at)
         VALUES (?, 1, ?, ?)
-      `).run(publication.id, publication.status, recordedAt);
+      `).run(publicationId, publication.status, recordedAt);
     });
-    transaction();
-    return { publication, version: 1, recordedAt, updatedAt: recordedAt };
+    const created = await this.get(publicationId);
+    if (!created) throw new Error(`Publication could not be read after create: ${publicationId}`);
+    return created;
   }
 
   async update(publication: Publication, expectedVersion: number, recordedAt: string): Promise<PublicationWorkspaceEntry> {
     this.#assertOpen();
     validatePublication(publication);
-    requireId(publication.id, "Publication id");
-    requireVersion(expectedVersion, "Expected Publication Workspace version");
-    const nextVersion = expectedVersion + 1;
-    const transaction = this.#database.transaction(() => {
+    const publicationId = requireId(publication.id, "Publication id");
+    const expected = requireVersion(expectedVersion, "Expected Publication Workspace version");
+    this.#transaction(() => {
       const head = this.#database.prepare(
         "SELECT version FROM publication_workspace_heads WHERE publication_id = ?",
-      ).get(publication.id) as { readonly version: number } | undefined;
-      if (!head) throw new Error(`Publication is not registered: ${publication.id}`);
-      if (head.version !== expectedVersion) {
-        throw new Error(`Publication ${publication.id} changed from version ${expectedVersion} to ${head.version}`);
+      ).get(publicationId) as { readonly version: number } | undefined;
+      if (!head) throw new Error(`Publication is not registered: ${publicationId}`);
+      if (head.version !== expected) {
+        throw new Error(`Publication ${publicationId} changed from version ${expected} to ${head.version}`);
       }
+      const nextVersion = expected + 1;
       this.#database.prepare(`
         INSERT INTO publication_workspace_versions(publication_id, version, publication_json, recorded_at)
         VALUES (?, ?, ?, ?)
-      `).run(publication.id, nextVersion, JSON.stringify(publication), recordedAt);
+      `).run(publicationId, nextVersion, stableJson(publication), recordedAt);
       const result = this.#database.prepare(`
         UPDATE publication_workspace_heads
         SET version = ?, status = ?, updated_at = ?
         WHERE publication_id = ? AND version = ?
-      `).run(nextVersion, publication.status, recordedAt, publication.id, expectedVersion);
-      if (result.changes !== 1) throw new Error(`Publication ${publication.id} changed during update`);
+      `).run(nextVersion, publication.status, recordedAt, publicationId, expected);
+      if (result.changes !== 1) throw new Error(`Publication ${publicationId} changed during update`);
     });
-    transaction();
-    return { publication, version: nextVersion, recordedAt, updatedAt: recordedAt };
+    const updated = await this.get(publicationId);
+    if (!updated) throw new Error(`Publication could not be read after update: ${publicationId}`);
+    return updated;
   }
 
   async get(publicationId: string): Promise<PublicationWorkspaceEntry | undefined> {
@@ -165,76 +185,74 @@ export class SqlitePublicationWorkspaceStore implements PublicationWorkspaceStor
   async getVersion(publicationId: string, version: number): Promise<PublicationWorkspaceEntry | undefined> {
     this.#assertOpen();
     const id = requireId(publicationId, "Publication id");
-    requireVersion(version, "Publication Workspace version");
+    const requestedVersion = requireVersion(version, "Publication Workspace version");
     const row = this.#database.prepare(`
       SELECT v.publication_id, v.version, v.publication_json, v.recorded_at,
              h.version AS head_version, h.updated_at
       FROM publication_workspace_versions v
       LEFT JOIN publication_workspace_heads h ON h.publication_id = v.publication_id
       WHERE v.publication_id = ? AND v.version = ?
-    `).get(id, version) as PublicationRow | undefined;
+    `).get(id, requestedVersion) as PublicationRow | undefined;
     return row ? parseRow(row) : undefined;
   }
 
   async list(query: PublicationWorkspaceListQuery = {}): Promise<Page<PublicationWorkspaceEntry>> {
     this.#assertOpen();
     const limit = normalizePageLimit(query.limit);
-    const cursor = query.cursor ? decodeCursor(query.cursor, "publication workspace") : undefined;
+    const cursor = decodeCursor("publication-workspace", query.cursor, 2);
     const clauses: string[] = [];
-    const values: (string | number)[] = [];
+    const values: Array<string | number> = [];
     if (query.status) {
       clauses.push("h.status = ?");
       values.push(query.status);
     }
     if (cursor) {
       clauses.push("(h.updated_at < ? OR (h.updated_at = ? AND h.publication_id < ?))");
-      values.push(cursor.occurredAt, cursor.occurredAt, cursor.id);
+      values.push(cursor[0]!, cursor[0]!, cursor[1]!);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.#database.prepare(`
       SELECT v.publication_id, v.version, v.publication_json, v.recorded_at,
              h.version AS head_version, h.updated_at
       FROM publication_workspace_heads h
       JOIN publication_workspace_versions v
         ON v.publication_id = h.publication_id AND v.version = h.version
-      ${where}
+      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
       ORDER BY h.updated_at DESC, h.publication_id DESC
       LIMIT ?
     `).all(...values, limit + 1) as unknown as PublicationRow[];
-    const items = rows.map(parseRow);
-    return page(items, limit, (entry) => encodeCursor({ occurredAt: entry.updatedAt, id: entry.publication.id }));
+    const entries = rows.map(parseRow);
+    return page(entries, limit, (entry) => encodeCursor("publication-workspace", [entry.updatedAt, entry.publication.id]));
   }
 
   async listVersions(publicationId: string, query: PageRequest = {}): Promise<Page<PublicationWorkspaceEntry>> {
     this.#assertOpen();
     const id = requireId(publicationId, "Publication id");
     const limit = normalizePageLimit(query.limit);
-    const cursor = query.cursor ? decodeCursor(query.cursor, "publication workspace versions") : undefined;
-    const upperVersion = cursor ? Number(cursor.id) : undefined;
-    if (upperVersion !== undefined && (!Number.isSafeInteger(upperVersion) || upperVersion < 1)) {
-      throw new Error("Publication Workspace version cursor is invalid");
+    const cursor = decodeCursor("publication-workspace-versions", query.cursor, 1);
+    const values: Array<string | number> = [id];
+    let cursorClause = "";
+    if (cursor) {
+      const version = Number(cursor[0]);
+      requireVersion(version, "Publication Workspace version cursor");
+      cursorClause = "AND v.version < ?";
+      values.push(version);
     }
     const rows = this.#database.prepare(`
       SELECT v.publication_id, v.version, v.publication_json, v.recorded_at,
              h.version AS head_version, h.updated_at
       FROM publication_workspace_versions v
       LEFT JOIN publication_workspace_heads h ON h.publication_id = v.publication_id
-      WHERE v.publication_id = ?
-        AND (? IS NULL OR v.version < ?)
+      WHERE v.publication_id = ? ${cursorClause}
       ORDER BY v.version DESC
       LIMIT ?
-    `).all(id, upperVersion ?? null, upperVersion ?? null, limit + 1) as unknown as PublicationRow[];
-    const items = rows.map(parseRow);
-    return page(items, limit, (entry) => encodeCursor({ occurredAt: entry.recordedAt, id: String(entry.version) }));
+    `).all(...values, limit + 1) as unknown as PublicationRow[];
+    const entries = rows.map(parseRow);
+    return page(entries, limit, (entry) => encodeCursor("publication-workspace-versions", [String(entry.version)]));
   }
 
   close(): void {
     if (this.#closed) return;
-    this.#closed = true;
     this.#database.close();
-  }
-
-  #assertOpen(): void {
-    if (this.#closed) throw new Error("Publication Workspace store is closed");
+    this.#closed = true;
   }
 }
