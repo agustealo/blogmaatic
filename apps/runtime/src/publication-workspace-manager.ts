@@ -9,7 +9,7 @@ import type {
   PublicationWorkspaceListQuery,
   PublicationWorkspaceStore,
 } from "@blogmaatic/control-plane";
-import type { Publication, PublicationBlock, PublicationStatus } from "@blogmaatic/core";
+import type { Publication, PublicationBlock, PublicationGroup, PublicationStatus } from "@blogmaatic/core";
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
 
@@ -202,7 +202,7 @@ export class PublicationWorkspaceManager {
       entry = await this.update(publicationId, { expectedVersion, status: "approved" });
     }
 
-    const groups = [];
+    const groups: PublicationGroup[] = [];
     let cursor: string | undefined;
     do {
       const page = await this.#publicationGroups.list({ enabled: true, limit: 100, ...(cursor ? { cursor } : {}) });
