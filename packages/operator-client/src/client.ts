@@ -9,6 +9,7 @@ import type {
   AutomationPage,
   AutomationRegistryEntry,
   AutomationRunResult,
+  AutomationSchedule,
   AutomationVersionListQuery,
   AutomationVersionPage,
   ConnectionCreateBody,
@@ -16,6 +17,9 @@ import type {
   ConnectionsResponse,
   ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  EventIngestBody,
+  EventIngestResponse,
+  ManualRunBody,
   OperatorConnectionTestResult,
   OperatorConnectionView,
   OperatorErrorBody,
@@ -35,6 +39,7 @@ import type {
   RunPage,
   ScheduleListQuery,
   SchedulePage,
+  ScheduleRegistrationBody,
   SchedulerDispatchInput,
   SchedulerDispatchResponse,
 } from "./types.js";
@@ -128,6 +133,7 @@ export class OperatorClient {
       readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
       readonly body?: unknown;
       readonly authenticated?: boolean;
+      readonly headers?: Readonly<Record<string, string>>;
     } = {},
   ): Promise<T> {
     const headers = new Headers({ accept: "application/json" });
@@ -136,6 +142,7 @@ export class OperatorClient {
       headers.set("x-blogmaatic-session-proof", this.#sessionProof);
     }
     if (options.body !== undefined) headers.set("content-type", "application/json");
+    for (const [name, value] of Object.entries(options.headers ?? {})) headers.set(name, value);
     const response = await this.#fetch(joinBase(this.#baseUrl, path), {
       method: options.method ?? "GET",
       headers,
@@ -260,6 +267,10 @@ export class OperatorClient {
     return this.#request<AutomationPage>(pathWithQuery("/v1/automations", query));
   }
 
+  getAutomation(automationId: string): Promise<AutomationRegistryEntry> {
+    return this.#request<AutomationRegistryEntry>(`/v1/automations/${encodeURIComponent(automationId)}`);
+  }
+
   registerAutomation(input: AutomationDefinition): Promise<AutomationRegistryEntry> {
     return this.#request<AutomationRegistryEntry>("/v1/automations", {
       method: "POST",
@@ -284,8 +295,25 @@ export class OperatorClient {
     );
   }
 
+  ingestEvent(input: EventIngestBody): Promise<EventIngestResponse> {
+    return this.#request<EventIngestResponse>("/v1/events", {
+      method: "POST",
+      body: input,
+    });
+  }
+
   listRuns(query: RunListQuery = {}): Promise<RunPage> {
     return this.#request<RunPage>(pathWithQuery("/v1/runs", query));
+  }
+
+  startManualRun(input: ManualRunBody, idempotencyKey: string): Promise<ControlPlaneRunRecord> {
+    const key = idempotencyKey.trim();
+    if (!key) throw new Error("Manual run idempotency key is required");
+    return this.#request<ControlPlaneRunRecord>("/v1/runs/manual", {
+      method: "POST",
+      body: input,
+      headers: { "idempotency-key": key },
+    });
   }
 
   getRun(runId: string): Promise<ControlPlaneRunRecord> {
@@ -305,6 +333,17 @@ export class OperatorClient {
 
   listSchedules(query: ScheduleListQuery = {}): Promise<SchedulePage> {
     return this.#request<SchedulePage>(pathWithQuery("/v1/schedules", query));
+  }
+
+  createSchedule(input: ScheduleRegistrationBody): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>("/v1/schedules", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  getSchedule(scheduleId: string): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>(`/v1/schedules/${encodeURIComponent(scheduleId)}`);
   }
 
   dispatchSchedules(input: SchedulerDispatchInput = {}): Promise<SchedulerDispatchResponse> {

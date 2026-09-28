@@ -17,6 +17,8 @@ import type {
 import type {
   ConnectionCreateBody,
   ConnectionUpdateBody,
+  EventIngestBody,
+  ManualRunBody,
   OperatorConnectionSettingField,
   OperatorConnectionTestResult,
   OperatorConnectionType,
@@ -28,6 +30,7 @@ import type {
   PublicationGroupActivationBody,
   PublicationGroupCreateBody,
   PublicationGroupUpdateBody,
+  ScheduleRegistrationBody,
 } from "@blogmaatic/operator-api";
 
 export type {
@@ -43,6 +46,8 @@ export type {
   ConnectionCreateBody,
   ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  EventIngestBody,
+  ManualRunBody,
   OperatorConnectionSettingField,
   OperatorConnectionTestResult,
   OperatorConnectionType,
@@ -60,6 +65,7 @@ export type {
   PublicationGroupVersionListQuery,
   RunListQuery,
   ScheduleListQuery,
+  ScheduleRegistrationBody,
 };
 
 export interface OperatorHealth {
@@ -77,6 +83,10 @@ export interface ConnectionsResponse {
 
 export interface PublicationGroupOptionsResponse {
   readonly policySetIds: readonly string[];
+}
+
+export interface EventIngestResponse {
+  readonly runs: readonly ControlPlaneRunRecord[];
 }
 
 export interface ApprovalDecisionInput {
