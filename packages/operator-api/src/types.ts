@@ -8,12 +8,16 @@ import type {
 import type {
   AutomationControlPlane,
   AutomationScheduleInput,
+  ControlPlaneRunRecord,
   ControlPlaneStore,
   PublicationAutomationEvent,
   PublicationGroupListQuery,
   PublicationGroupRegistryEntry,
   PublicationGroupVersionListQuery,
+  PublicationWorkspaceEntry,
+  PublicationWorkspaceListQuery,
   Page,
+  PageRequest,
 } from "@blogmaatic/control-plane";
 import type {
   ExtensionCapability,
@@ -21,6 +25,7 @@ import type {
   Publication,
   PublicationGroup,
   PublicationRoute,
+  PublicationStatus,
 } from "@blogmaatic/core";
 
 import type { OperatorAuthorizer } from "./auth.js";
@@ -183,12 +188,57 @@ export interface OperatorPublicationGroupManager {
   ): Promise<PublicationGroupRegistryEntry>;
 }
 
+export type WorkspacePublicationStatus = Extract<PublicationStatus, "idea" | "draft" | "ready" | "approved" | "archived">;
+
+export interface PublicationWorkspaceCreateBody {
+  readonly title: string;
+  readonly body?: string;
+  readonly summary?: string;
+  readonly language?: string;
+  readonly tags?: readonly string[];
+  readonly slug?: string;
+  readonly canonicalUrl?: string;
+  readonly status?: WorkspacePublicationStatus;
+}
+
+export interface PublicationWorkspaceUpdateBody {
+  readonly expectedVersion: number;
+  readonly title?: string;
+  readonly body?: string;
+  readonly summary?: string;
+  readonly language?: string;
+  readonly tags?: readonly string[];
+  readonly slug?: string;
+  readonly canonicalUrl?: string;
+  readonly status?: WorkspacePublicationStatus;
+}
+
+export interface PublicationWorkspaceDispatchBody {
+  readonly expectedVersion: number;
+}
+
+export interface PublicationWorkspaceDispatchResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly runs: readonly ControlPlaneRunRecord[];
+}
+
+export interface OperatorPublicationWorkspaceManager {
+  list(query?: PublicationWorkspaceListQuery): Promise<Page<PublicationWorkspaceEntry>>;
+  get(publicationId: string): Promise<PublicationWorkspaceEntry | undefined>;
+  listVersions(publicationId: string, query?: PageRequest): Promise<Page<PublicationWorkspaceEntry>>;
+  getVersion(publicationId: string, version: number): Promise<PublicationWorkspaceEntry | undefined>;
+  create(input: PublicationWorkspaceCreateBody): Promise<PublicationWorkspaceEntry>;
+  update(publicationId: string, input: PublicationWorkspaceUpdateBody): Promise<PublicationWorkspaceEntry>;
+  approveAndDispatch(publicationId: string, expectedVersion: number): Promise<PublicationWorkspaceDispatchResult>;
+}
+
 export interface OperatorApiOptions {
   readonly controlPlane: AutomationControlPlane;
   readonly store: ControlPlaneStore;
   readonly runtime: OperatorAutomationRuntime;
   readonly connections?: OperatorConnectionManager;
   readonly publicationGroups?: OperatorPublicationGroupManager;
+  readonly publications?: OperatorPublicationWorkspaceManager;
   readonly authorizer: OperatorAuthorizer;
   readonly clock?: OperatorClock;
   readonly logger?: boolean;
