@@ -9,6 +9,7 @@ import { AutomationsPage } from "./pages/automations";
 import { ConnectionsPage } from "./pages/connections";
 import { OperationsPage } from "./pages/operations";
 import { OverviewPage } from "./pages/overview";
+import { PublicationGroupsPage } from "./pages/publication-groups";
 import { RunDetailPage, RunsPage } from "./pages/runs";
 import { SchedulesPage } from "./pages/schedules";
 import { FirstRunEntry, SetupPage } from "./pages/setup";
@@ -27,6 +28,8 @@ export function App() {
         <Route path="setup" element={<SetupPage />} />
         <Route path="connections" element={<ConnectionsPage />} />
         <Route index element={gated(<OverviewPage />)} />
+        <Route path="groups" element={gated(<PublicationGroupsPage />)} />
+        <Route path="groups/:groupId" element={gated(<PublicationGroupsPage />)} />
         <Route path="operations" element={gated(<OperationsPage />)} />
         <Route path="approvals" element={gated(<ApprovalsPage />)} />
         <Route path="runs" element={gated(<RunsPage />)} />
