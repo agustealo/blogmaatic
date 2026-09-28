@@ -73,12 +73,45 @@
   padding-top: 10px;
   border-top: 1px dashed var(--line);
   line-height: 1.5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.connection-row__references a,
+.connection-reference-links a {
+  color: var(--text);
+  font-weight: 750;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  text-underline-offset: 3px;
 }
 
 .connection-editor__form {
   padding: 18px;
   display: grid;
   gap: 16px;
+}
+
+.connection-reference-warning {
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--warn) 42%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+}
+
+.connection-reference-warning p {
+  margin: 5px 0 9px;
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.5;
+}
+
+.connection-reference-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  font-size: .78rem;
 }
 
 .form-section-title {
