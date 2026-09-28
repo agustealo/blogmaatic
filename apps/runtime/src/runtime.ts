@@ -14,6 +14,7 @@ import {
   AutomationControlPlane,
   SqliteControlPlaneStore,
   SqlitePublicationGroupStore,
+  SqlitePublicationWorkspaceStore,
 } from "@blogmaatic/control-plane";
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
 import {
@@ -49,6 +50,7 @@ import { ControlRoomServer } from "./control-room-server.js";
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
 import { PublicationGroupManager } from "./publication-group-manager.js";
+import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
 
 export interface RunningRuntime {
@@ -155,6 +157,7 @@ export async function startRuntime(options: {
   let scheduler: SchedulerLoop | undefined;
   let controlPlaneStore: SqliteControlPlaneStore | undefined;
   let publicationGroupStore: SqlitePublicationGroupStore | undefined;
+  let publicationWorkspaceStore: SqlitePublicationWorkspaceStore | undefined;
   let projectionState: SqliteProjectionStateStore | undefined;
 
   try {
@@ -187,6 +190,7 @@ export async function startRuntime(options: {
 
     controlPlaneStore = new SqliteControlPlaneStore(paths.controlPlanePath);
     publicationGroupStore = new SqlitePublicationGroupStore(paths.controlPlanePath);
+    publicationWorkspaceStore = new SqlitePublicationWorkspaceStore(paths.controlPlanePath);
     const publicationGroups = new PublicationGroupManager({
       store: publicationGroupStore,
       connections,
@@ -218,12 +222,18 @@ export async function startRuntime(options: {
 
     const runtime = new RestateAutomationLauncher({ url: config.restate.ingressUrl });
     const controlPlane = new AutomationControlPlane({ store: controlPlaneStore, launcher: runtime });
+    const publications = new PublicationWorkspaceManager({
+      store: publicationWorkspaceStore,
+      publicationGroups,
+      controlPlane,
+    });
     operator = await startOperatorApi({
       controlPlane,
       store: controlPlaneStore,
       runtime,
       connections: connectionManager,
       publicationGroups,
+      publications,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
         token: options.operatorToken,
@@ -268,6 +278,7 @@ export async function startRuntime(options: {
         if (workflowServer) await closeHttp2(workflowServer);
         if (managedRestate) await managedRestate.close();
         projectionState?.close();
+        publicationWorkspaceStore?.close();
         publicationGroupStore?.close();
         controlPlaneStore?.close();
       },
@@ -279,6 +290,7 @@ export async function startRuntime(options: {
     if (workflowServer) await closeHttp2(workflowServer).catch(() => undefined);
     if (managedRestate) await managedRestate.close().catch(() => undefined);
     projectionState?.close();
+    publicationWorkspaceStore?.close();
     publicationGroupStore?.close();
     controlPlaneStore?.close();
     throw error;
