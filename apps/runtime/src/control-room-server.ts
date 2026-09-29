@@ -89,6 +89,12 @@ function secretMatches(received: string | undefined, expected: string): boolean 
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function localAuthorityAuthorized(request: IncomingMessage, controlRoomOrigin: string, operatorToken: string): boolean {
+  return request.method === "POST"
+    && requestMatchesBoundOrigin(request, controlRoomOrigin)
+    && secretMatches(bearerValue(request), operatorToken);
+}
+
 function sessionAuthorized(
   request: IncomingMessage,
   controlRoomOrigin: string,
@@ -121,8 +127,8 @@ function forbiddenLauncher(response: ServerResponse): void {
   response.setHeader("cache-control", "no-store");
   response.end(JSON.stringify({
     error: {
-      code: "CONTROL_ROOM_LAUNCH_FORBIDDEN",
-      message: "A local Blogmaatic launcher credential is required",
+      code: "CONTROL_ROOM_LOCAL_AUTHORITY_REQUIRED",
+      message: "A local Blogmaatic operator credential is required",
     },
   }));
 }
@@ -170,11 +176,7 @@ function mintLaunch(
   operatorToken: string,
   mint: () => string,
 ): void {
-  if (
-    request.method !== "POST"
-    || !requestMatchesBoundOrigin(request, controlRoomOrigin)
-    || !secretMatches(bearerValue(request), operatorToken)
-  ) {
+  if (!localAuthorityAuthorized(request, controlRoomOrigin, operatorToken)) {
     forbiddenLauncher(response);
     return;
   }
@@ -183,6 +185,31 @@ function mintLaunch(
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("cache-control", "no-store");
   response.end(JSON.stringify({ launchAddress }));
+}
+
+function requestShutdown(
+  request: IncomingMessage,
+  response: ServerResponse,
+  controlRoomOrigin: string,
+  operatorToken: string,
+  onShutdown: (() => void) | undefined,
+): void {
+  if (!localAuthorityAuthorized(request, controlRoomOrigin, operatorToken)) {
+    forbiddenLauncher(response);
+    return;
+  }
+  if (!onShutdown) {
+    response.statusCode = 409;
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("cache-control", "no-store");
+    response.end(JSON.stringify({ error: { code: "CONTROL_ROOM_SHUTDOWN_UNAVAILABLE", message: "This runtime was not started with local shutdown ownership" } }));
+    return;
+  }
+  response.statusCode = 202;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.end(JSON.stringify({ accepted: true }));
+  setImmediate(onShutdown);
 }
 
 async function proxy(
@@ -296,6 +323,7 @@ export class ControlRoomServer {
     readonly port: number;
     readonly operatorOrigin: string;
     readonly operatorToken: string;
+    readonly onShutdown?: () => void;
   }): Promise<ControlRoomServer> {
     const root = resolve(options.root);
     const index = resolve(root, "index.html");
@@ -338,6 +366,9 @@ export class ControlRoomServer {
       let task: Promise<void>;
       if (pathname === "/local/launch") {
         mintLaunch(request, response, controlRoomOrigin, options.operatorToken, mintBootstrap);
+        task = Promise.resolve();
+      } else if (pathname === "/local/shutdown") {
+        requestShutdown(request, response, controlRoomOrigin, options.operatorToken, options.onShutdown);
         task = Promise.resolve();
       } else if (pathname.startsWith("/session/")) {
         bootstrapSession(
