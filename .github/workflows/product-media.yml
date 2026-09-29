@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: product-media-${{ github.ref }}
@@ -70,19 +70,18 @@ jobs:
             test -s "docs/screenshots/${asset}"
           done
           test "$(find docs/screenshots -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 8
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("docs/screenshots/capture-manifest.json", "utf8"));
+            if (manifest.sourceCommit !== process.env.GITHUB_SHA) {
+              throw new Error(`Screenshot manifest source ${manifest.sourceCommit} does not match exact head ${process.env.GITHUB_SHA}`);
+            }
+            if (manifest.source !== "real-runtime-capture") throw new Error("Screenshot manifest is not a real-runtime capture");
+          '
 
-      - name: Commit captured product media
+      - name: Report exact-head media evidence
         shell: bash
-        env:
-          BRANCH_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          git config user.name "blogmaatic-product-media[bot]"
-          git config user.email "blogmaatic-product-media[bot]@users.noreply.github.com"
-          git add docs/screenshots/*.png docs/screenshots/capture-manifest.json
-          if git diff --cached --quiet; then
-            echo "Product screenshots already match this runtime/UI state."
-            exit 0
-          fi
-          git commit -m "docs: refresh real Control Room screenshots"
-          git push origin "HEAD:${BRANCH_NAME}"
+          sha256sum docs/screenshots/*.png docs/screenshots/capture-manifest.json
+          echo "Product Media is evidence-only. It never rewrites the candidate SHA it is certifying."
