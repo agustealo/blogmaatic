@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, open as openFile, readFile } from "node:fs/promises";
-import { dirname, join, parse, resolve } from "node:path";
+import { access, mkdir, open as openFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createBackup, restoreBackup, verifyBackup } from "./backup.js";
@@ -11,6 +11,7 @@ import { ensureOperatorToken, readOperatorToken } from "./credentials.js";
 import { configForFirstRun } from "./init.js";
 import { httpOrigin } from "./network.js";
 import { resolveLocalBinary } from "./processes.js";
+import { productVersion } from "./product-version.js";
 import { startRuntime } from "./runtime.js";
 import { checkForUpdate, openPreparedInstaller, prepareUpdate, verifyPreparedUpdate } from "./update.js";
 
@@ -65,27 +66,6 @@ function dataDir(args: ParsedArgs): string {
 
 function usage(): void {
   console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  stop [--data-dir PATH]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  update [--data-dir PATH] [--check] [--download-only]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. On first launch it initializes an empty secure runtime automatically, then reuses a running local runtime or starts one in the background and mints a fresh one-use Control Room browser capability. Use \`blogmaatic stop\` before offline backup or restore.\n\nUpdates are explicit and never replace a running process. Blogmaatic checks the trusted GitHub release, verifies the exact native installer against release-manifest.json, then opens that verified installer with the operating system. Use --check to inspect without downloading or --download-only to stage without opening the installer.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
-}
-
-async function productVersion(): Promise<string> {
-  const starts = [dirname(fileURLToPath(import.meta.url)), process.cwd()];
-  const visited = new Set<string>();
-  for (const start of starts) {
-    let current = resolve(start);
-    while (!visited.has(current)) {
-      visited.add(current);
-      try {
-        const parsed = JSON.parse(await readFile(join(current, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
-        if (parsed.name === "blogmaatic" && typeof parsed.version === "string") return parsed.version;
-      } catch {
-        // Continue toward the filesystem root.
-      }
-      const parent = dirname(current);
-      if (parent === current || current === parse(current).root) break;
-      current = parent;
-    }
-  }
-  throw new Error("Blogmaatic product metadata is unavailable; the installation may be incomplete");
 }
 
 async function controlRoomIndex(): Promise<string> {
