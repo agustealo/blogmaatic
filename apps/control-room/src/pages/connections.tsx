@@ -226,6 +226,7 @@ export function ConnectionsPage() {
   const [health, setHealth] = useState<Readonly<Record<string, OperatorConnectionTestResult>>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
   const load = useCallback(async () => {
@@ -269,6 +270,7 @@ export function ConnectionsPage() {
   const startCreate = useCallback((type?: OperatorConnectionType) => {
     const selected = type ?? types[0];
     if (!selected) return;
+    setPendingRemove(null);
     setError(null);
     setEditor(editorForCreate(selected));
   }, [types]);
@@ -279,6 +281,7 @@ export function ConnectionsPage() {
       setError(new Error(`Publisher contract is unavailable for ${connection.extensionId}`));
       return;
     }
+    setPendingRemove(null);
     setError(null);
     setEditor(editorForConnection(type, connection));
   }, [typeById]);
@@ -350,14 +353,15 @@ export function ConnectionsPage() {
   const remove = useCallback(async (connection: OperatorConnectionView) => {
     const references = groupReferences[connection.id] ?? [];
     if (references.length > 0) {
+      setPendingRemove(null);
       setError(new Error(`Remove is blocked because ${connection.displayName} is used by ${references.length} enabled Publication Group${references.length === 1 ? "" : "s"}. Open the referenced groups and remove or disable that route first.`));
       return;
     }
-    if (!window.confirm(`Remove ${connection.displayName}? This deletes the managed connection and its stored credentials.`)) return;
     setBusy(`remove:${connection.id}`);
     setError(null);
     try {
       await client.removeConnection(connection.id);
+      setPendingRemove(null);
       setConnections((current) => current.filter((item) => item.id !== connection.id));
       setHealth((current) => {
         const next = { ...current };
@@ -402,6 +406,7 @@ export function ConnectionsPage() {
                   const type = typeById.get(connection.extensionId);
                   const result = health[connection.id];
                   const references = groupReferences[connection.id] ?? [];
+                  const confirmingRemove = pendingRemove === connection.id;
                   return (
                     <article className="connection-row" key={connection.id}>
                       <div className="connection-row__identity">
@@ -419,11 +424,22 @@ export function ConnectionsPage() {
                         <button className="button button--quiet" type="button" onClick={() => startEdit(connection)} disabled={busy !== null}>Edit</button>
                         {references.length > 0 ? (
                           <Link className="button button--quiet" to={`/publication-groups/${encodeURIComponent(references[0]!.group.id)}`}>Used by {references.length} group{references.length === 1 ? "" : "s"}</Link>
+                        ) : confirmingRemove ? (
+                          <div className="inline-confirm-actions" role="group" aria-label={`Remove ${connection.displayName}`}>
+                            <button className="button button--quiet" type="button" onClick={() => setPendingRemove(null)} disabled={busy !== null}>Cancel</button>
+                            <button className="button button--danger" type="button" autoFocus onClick={() => void remove(connection)} disabled={busy !== null}>
+                              {busy === `remove:${connection.id}` ? "Removing…" : "Confirm remove"}
+                            </button>
+                          </div>
                         ) : (
-                          <button className="button button--danger" type="button" onClick={() => void remove(connection)} disabled={busy !== null}>Remove</button>
+                          <button className="button button--danger" type="button" onClick={() => setPendingRemove(connection.id)} disabled={busy !== null}>Remove</button>
                         )}
                       </div>
-                      {result || references.length > 0 ? (
+                      {confirmingRemove ? (
+                        <div className="connection-row__detail" role="status">
+                          <span>Removing this connection also removes its managed stored credentials. This cannot be undone from the Control Room.</span>
+                        </div>
+                      ) : result || references.length > 0 ? (
                         <div className="connection-row__detail">
                           {result ? (
                             <span>
@@ -482,6 +498,7 @@ export function ConnectionsPage() {
                 <label className="field">
                   <span>Connection name *</span>
                   <input
+                    autoFocus
                     value={editor.displayName}
                     onChange={(event) => setEditor((current) => current ? { ...current, displayName: event.target.value } : current)}
                     required
