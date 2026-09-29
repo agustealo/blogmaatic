@@ -15,6 +15,7 @@ on:
       - "packages/operator-client/**"
       - "scripts/capture-product-screenshots.mjs"
       - "scripts/smoke-consumer-publishing.mjs"
+      - "scripts/smoke-control-room-keyboard.mjs"
       - "docs/screenshots/**"
       - "package.json"
       - "package-lock.json"
@@ -49,6 +50,9 @@ jobs:
 
       - name: Build production workspaces
         run: npm run build
+
+      - name: Burn real keyboard accessibility contract
+        run: node scripts/smoke-control-room-keyboard.mjs
 
       - name: Burn canonical consumer publishing journey
         run: node scripts/smoke-consumer-publishing.mjs
