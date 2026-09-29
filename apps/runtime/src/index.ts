@@ -9,3 +9,4 @@ export * from "./publication-group-manager.js";
 export * from "./publication-workspace-manager.js";
 export * from "./runtime.js";
 export * from "./scheduler.js";
+export * from "./update.js";
