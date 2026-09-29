@@ -46,12 +46,26 @@ async function liveRun(
   };
 }
 
+async function livePage(
+  store: ControlPlaneStore,
+  runtime: OperatorAutomationRuntime,
+  page: Page<ControlPlaneRunRecord>,
+): Promise<Page<ControlPlaneRunRecord>> {
+  const items = await Promise.all(page.items.map((run) => liveRun(store, runtime, run)));
+  return {
+    items,
+    ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+  };
+}
+
 export async function listOperatorRuns(
   store: ControlPlaneStore,
   runtime: OperatorAutomationRuntime,
   query: OperatorRunListQuery = {},
 ): Promise<Page<ControlPlaneRunRecord>> {
-  if (query.runtimePhase === undefined) return store.listRuns(query);
+  if (query.runtimePhase === undefined) {
+    return livePage(store, runtime, await store.listRuns(query));
+  }
 
   const limit = normalizePageLimit(query.limit);
   const matches: ControlPlaneRunRecord[] = [];
