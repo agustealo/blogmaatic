@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Reject force pushes and commits without merged-PR provenance
+      - name: Reject destructive master updates and commits without merged-PR provenance
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE_SHA: ${{ github.event.before }}
@@ -31,16 +31,29 @@ jobs:
         run: |
           set -euo pipefail
 
+          zero_sha="0000000000000000000000000000000000000000"
+
           if [[ "${FORCED_PUSH}" == "true" ]]; then
             echo "::error::Force-pushing master is not allowed."
             exit 1
           fi
 
-          if [[ "${BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
-            commits=("${AFTER_SHA}")
-          else
-            mapfile -t commits < <(git rev-list --reverse "${BEFORE_SHA}..${AFTER_SHA}")
+          if [[ "${BEFORE_SHA}" == "${zero_sha}" ]]; then
+            echo "::error::Recreating master is not allowed. A zero before-SHA indicates branch creation/recreation and cannot establish continuity with the previously governed master history."
+            exit 1
           fi
+
+          if [[ "${AFTER_SHA}" == "${zero_sha}" ]]; then
+            echo "::error::Deleting master is not allowed."
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "${BEFORE_SHA}" "${AFTER_SHA}"; then
+            echo "::error::Master update is not a fast-forward from ${BEFORE_SHA} to ${AFTER_SHA}."
+            exit 1
+          fi
+
+          mapfile -t commits < <(git rev-list --reverse "${BEFORE_SHA}..${AFTER_SHA}")
 
           if (( ${#commits[@]} == 0 )); then
             echo "::error::No commits were found in the master update."
@@ -63,4 +76,4 @@ jobs:
             fi
           done
 
-          echo "Verified ${#commits[@]} commit(s): every master commit in this push is associated with a merged pull request targeting master."
+          echo "Verified ${#commits[@]} commit(s): master advanced by fast-forward only and every introduced commit is associated with a merged pull request targeting master."
