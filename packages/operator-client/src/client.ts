@@ -9,6 +9,7 @@ import type {
   AutomationPage,
   AutomationRegistryEntry,
   AutomationRunResult,
+  AutomationSchedule,
   AutomationVersionListQuery,
   AutomationVersionPage,
   ConnectionCreateBody,
@@ -43,8 +44,10 @@ import type {
   PublicationWorkspaceVersionPage,
   RunListQuery,
   RunPage,
+  ScheduleActivationBody,
   ScheduleListQuery,
   SchedulePage,
+  ScheduleRegistrationBody,
   SchedulerDispatchInput,
   SchedulerDispatchResponse,
 } from "./types.js";
@@ -333,6 +336,21 @@ export class OperatorClient {
 
   listSchedules(query: ScheduleListQuery = {}): Promise<SchedulePage> {
     return this.#request<SchedulePage>(pathWithQuery("/v1/schedules", query));
+  }
+
+  createSchedule(input: ScheduleRegistrationBody): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>("/v1/schedules", { method: "POST", body: input });
+  }
+
+  getSchedule(scheduleId: string): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>(`/v1/schedules/${encodeURIComponent(scheduleId)}`);
+  }
+
+  setScheduleEnabled(scheduleId: string, input: ScheduleActivationBody): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>(`/v1/schedules/${encodeURIComponent(scheduleId)}/activation`, {
+      method: "POST",
+      body: input,
+    });
   }
 
   dispatchSchedules(input: SchedulerDispatchInput = {}): Promise<SchedulerDispatchResponse> {
