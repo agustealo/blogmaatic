@@ -36,6 +36,8 @@ import type {
   PublicationWorkspaceDispatchBody,
   PublicationWorkspaceDispatchResult,
   PublicationWorkspaceUpdateBody,
+  ScheduleActivationBody,
+  ScheduleRegistrationBody,
   WorkspacePublicationStatus,
 } from "@blogmaatic/operator-api";
 
@@ -76,7 +78,9 @@ export type {
   PublicationWorkspaceListQuery,
   PublicationWorkspaceUpdateBody,
   RunListQuery,
+  ScheduleActivationBody,
   ScheduleListQuery,
+  ScheduleRegistrationBody,
   WorkspacePublicationStatus,
 };
 
