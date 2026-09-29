@@ -1,10 +1,11 @@
-import { useCallback, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams } from "react-router";
 
 import type {
   AutomationDefinition,
   AutomationRegistryEntry,
   PublicationGroupRegistryEntry,
+  PublicationWorkspaceEntry,
 } from "@blogmaatic/operator-client";
 
 import { useConnection } from "../connection";
@@ -123,7 +124,7 @@ function CreateAutomationPanel({
     <Panel title="Create Automation" meta="Consumer-safe starter" className="automation-detail">
       <form className="setup-step setup-form" onSubmit={submit}>
         <ErrorBanner error={error} />
-        <p>Create a real publishing automation without leaving the Control Room. The starter automation listens for a canonical <code>publication.approved</code> event and publishes through the selected group.</p>
+        <p>Create a real publishing automation without leaving the Control Room. The starter automation listens for the canonical <code>publication.approved</code> event and publishes through the selected group.</p>
         <label className="field">
           <span>Automation name</span>
           <input value={name} onChange={(event) => setName(event.target.value)} required autoComplete="off" />
@@ -138,7 +139,7 @@ function CreateAutomationPanel({
         <label className="field">
           <span>Trigger</span>
           <input value="When a publication is approved" readOnly aria-readonly="true" />
-          <small>Manual runs remain an advanced API capability until Blogmaatic has a first-class consumer publication-input flow. The UI does not create a button that cannot actually run.</small>
+          <small>Starter Automations use the normal Publication Workspace flow. Existing manual Automations can be launched with Run now from this screen.</small>
         </label>
         {groupsLoading ? <LoadingBlock /> : null}
         {!groupsLoading && groups.length === 0 ? (
@@ -156,6 +157,126 @@ function CreateAutomationPanel({
   );
 }
 
+function RunNowPanel({ entry, onCancel }: { readonly entry: AutomationRegistryEntry; readonly onCancel: () => void }) {
+  const { session } = useConnection();
+  const navigate = useNavigate();
+  const [publications, setPublications] = useState<readonly PublicationWorkspaceEntry[]>([]);
+  const [groups, setGroups] = useState<readonly PublicationGroupRegistryEntry[]>([]);
+  const [publicationId, setPublicationId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const publicationItems: PublicationWorkspaceEntry[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await session.client.listPublications({ limit: 200, ...(cursor ? { cursor } : {}) });
+          publicationItems.push(...page.items.filter((item) => item.publication.status !== "archived"));
+          cursor = page.nextCursor;
+        } while (cursor);
+
+        const groupIds = [...new Set(entry.definition.steps
+          .filter((step): step is Extract<typeof step, { kind: "publish_group" }> => step.kind === "publish_group")
+          .map((step) => step.groupId))];
+        const groupItems = await Promise.all(groupIds.map((id) => session.client.getPublicationGroup(id)));
+        if (cancelled) return;
+        setPublications(publicationItems);
+        setPublicationId((current) => current || publicationItems[0]?.publication.id || "");
+        setGroups(groupItems);
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause : new Error("Run Now inputs could not be loaded"));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [entry, session]);
+
+  const unavailableGroups = groups.filter((group) => !group.enabled);
+
+  const run = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!session) return;
+    setError(null);
+    setBusy(true);
+    try {
+      if (!entry.enabled || !entry.isActiveVersion) throw new Error("Only the enabled active Automation version can run now");
+      if (entry.definition.trigger.kind !== "manual") throw new Error("Run now is only available for manual Automations");
+      if (unavailableGroups.length) throw new Error("Enable every Publication Group used by this Automation before running it");
+      const publication = publications.find((item) => item.publication.id === publicationId);
+      if (!publication) throw new Error("Choose a Publication from the Workspace");
+      const result = await session.client.startManualRun({
+        automationId: entry.definition.id,
+        automationVersion: entry.definition.version,
+        publication: publication.publication,
+        groups: groups.map((group) => group.group),
+      }, `control-room-${crypto.randomUUID()}`);
+      navigate(`/runs/${encodeURIComponent(result.runId)}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Manual Automation could not be started"));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel title={`Run ${entry.definition.name}`} meta="Manual trigger" className="automation-detail">
+      <form className="setup-step setup-form" onSubmit={run}>
+        <ErrorBanner error={error} />
+        <p>Run this Automation with a durable Publication Workspace snapshot. Blogmaatic resolves its current Publication Groups before dispatch and records the run normally.</p>
+        {loading ? <LoadingBlock /> : null}
+        {!loading ? (
+          <>
+            {publications.length ? (
+              <label className="field">
+                <span>Publication</span>
+                <select value={publicationId} onChange={(event) => setPublicationId(event.target.value)} required>
+                  {publications.map((item) => (
+                    <option key={item.publication.id} value={item.publication.id}>
+                      {item.publication.current.content.title} · {item.publication.status}
+                    </option>
+                  ))}
+                </select>
+                <small>The immutable current Workspace snapshot is sent to the durable run.</small>
+              </label>
+            ) : (
+              <div className="automation-create-empty">
+                <EmptyState title="No runnable Publications">Create a Publication in the Workspace before using Run now.</EmptyState>
+                <Link className="button button--primary" to="/publications">Open Publications</Link>
+              </div>
+            )}
+
+            {groups.length ? (
+              <div className="setup-checks">
+                {groups.map((group) => (
+                  <div className="setup-check" key={group.group.id}>
+                    <div><strong>{group.group.name}</strong><small>{group.group.id} · v{group.version}</small></div>
+                    <StatusPill value={group.enabled ? "enabled" : "disabled"} tone={group.enabled ? "good" : "bad"} />
+                    {!group.enabled ? <p><Link to={`/publication-groups/${encodeURIComponent(group.group.id)}`}>Enable or repair this Publication Group.</Link></p> : null}
+                  </div>
+                ))}
+              </div>
+            ) : <p className="security-note">This Automation has no publish-group steps. The manual run will use an empty Publication Group snapshot set.</p>}
+          </>
+        ) : null}
+        <div className="setup-actions">
+          <button className="button button--quiet" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button className="button button--primary" type="submit" disabled={busy || loading || publications.length === 0 || unavailableGroups.length > 0}>
+            {busy ? "Starting…" : "Run now"}
+          </button>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
 export function AutomationsPage() {
   const { automationId } = useParams();
   const { session } = useConnection();
@@ -166,6 +287,7 @@ export function AutomationsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [groups, setGroups] = useState<readonly PublicationGroupRegistryEntry[]>([]);
+  const [runTarget, setRunTarget] = useState<AutomationRegistryEntry | null>(null);
   const loader = useCallback((cursor?: string) => {
     if (!session) return Promise.resolve({ items: [] });
     return session.client.listAutomations({ limit: 30, ...(cursor ? { cursor } : {}) });
@@ -174,6 +296,7 @@ export function AutomationsPage() {
 
   const openCreate = useCallback(async () => {
     if (!session) return;
+    setRunTarget(null);
     setCreateOpen(true);
     setGroupsLoading(true);
     setActionError(null);
@@ -211,6 +334,7 @@ export function AutomationsPage() {
     try {
       await session.client.activateAutomation(entry.definition.id, entry.definition.version, { enabled: !entry.enabled });
       setPendingToggle(null);
+      if (runTarget?.definition.id === entry.definition.id) setRunTarget(null);
       setChangeNonce((value) => value + 1);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause : new Error("Automation update failed"));
@@ -219,14 +343,14 @@ export function AutomationsPage() {
     }
   };
 
-  const detailOpen = Boolean(automationId || createOpen);
+  const detailOpen = Boolean(automationId || createOpen || runTarget);
 
   return (
     <>
       <PageHeader
         eyebrow="Automation registry"
         title="Automations"
-        description="Create and manage publishing automations through the canonical immutable registry. No Operator API detour is required for normal setup."
+        description="Create and manage publishing automations through the canonical immutable registry. Manual Automations can run against real Publication Workspace snapshots without an API detour."
         actions={<button className="button button--primary" type="button" onClick={() => void openCreate()} disabled={busy !== null}>New Automation</button>}
       />
       <ErrorBanner error={actionError ?? collection.error} />
@@ -236,7 +360,7 @@ export function AutomationsPage() {
             <div className="automation-list">
               {collection.items.map((entry) => (
                 <article className="automation-row" key={entry.definition.id}>
-                  <Link className="automation-row__identity" to={`/automations/${encodeURIComponent(entry.definition.id)}`} onClick={() => setCreateOpen(false)}>
+                  <Link className="automation-row__identity" to={`/automations/${encodeURIComponent(entry.definition.id)}`} onClick={() => { setCreateOpen(false); setRunTarget(null); }}>
                     <strong>{entry.definition.name}</strong>
                     <small>{entry.definition.id}</small>
                   </Link>
@@ -249,7 +373,14 @@ export function AutomationsPage() {
                       <button className="button button--quiet" type="button" disabled={busy === entry.definition.id} onClick={() => setPendingToggle(null)}>Cancel</button>
                       <button className={entry.enabled ? "button button--danger" : "button button--primary"} type="button" disabled={busy === entry.definition.id} onClick={() => void toggle(entry)}>{busy === entry.definition.id ? "Saving…" : `Confirm ${entry.enabled ? "disable" : "enable"}`}</button>
                     </div>
-                  ) : <button className="button button--quiet" type="button" disabled={busy === entry.definition.id} onClick={() => setPendingToggle(entry.definition.id)}>{entry.enabled ? "Disable" : "Enable"}</button>}
+                  ) : (
+                    <div className="inline-confirm-actions">
+                      {entry.enabled && entry.isActiveVersion && entry.definition.trigger.kind === "manual" ? (
+                        <button className="button button--primary" type="button" disabled={busy !== null} onClick={() => { setCreateOpen(false); setRunTarget(entry); }}>Run now</button>
+                      ) : null}
+                      <button className="button button--quiet" type="button" disabled={busy === entry.definition.id} onClick={() => setPendingToggle(entry.definition.id)}>{entry.enabled ? "Disable" : "Enable"}</button>
+                    </div>
+                  )}
                 </article>
               ))}
               {collection.items.length === 0 ? (
@@ -270,7 +401,8 @@ export function AutomationsPage() {
             onCreate={createAutomation}
             onCancel={() => setCreateOpen(false)}
           />
-        ) : automationId ? <VersionsPanel key={automationId} automationId={automationId} changeNonce={changeNonce} onChanged={() => setChangeNonce((value) => value + 1)} /> : null}
+        ) : runTarget ? <RunNowPanel entry={runTarget} onCancel={() => setRunTarget(null)} />
+          : automationId ? <VersionsPanel key={automationId} automationId={automationId} changeNonce={changeNonce} onChanged={() => setChangeNonce((value) => value + 1)} /> : null}
       </div>
     </>
   );
