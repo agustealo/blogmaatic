@@ -52,6 +52,8 @@ export interface PreparedUpdate extends UpdateCheck {
   readonly packagePath: string;
 }
 
+export type PrepareUpdateResult = PreparedUpdate | (UpdateCheck & { readonly updateAvailable: false });
+
 function releaseVersion(value: string, label: string): { readonly raw: string; readonly parts: readonly [number, number, number] } {
   const match = /^(?:v)?(\d+)\.(\d+)\.(\d+)$/.exec(value.trim());
   if (!match) throw new Error(`${label} must be a stable semantic version`);
@@ -186,24 +188,23 @@ async function downloadFile(url: string, destination: string, expectedSize: numb
   await writeFile(destination, bytes, { mode: 0o600, flag: "wx" });
 }
 
-export async function prepareUpdate(currentVersion: string, dataDir: string): Promise<PreparedUpdate | UpdateCheck> {
+export async function prepareUpdate(currentVersion: string, dataDir: string): Promise<PrepareUpdateResult> {
   const authority = await releaseAuthority(currentVersion);
   const updateAvailable = compareVersion(authority.latest.parts, authority.current.parts) > 0;
   const packageName = nativePackageName(authority.latest.raw);
   const manifestAsset = authority.manifest.assets.find((asset) => asset.name === packageName);
   const releaseAsset = authority.release.assets.find((asset) => asset.name === packageName);
   if (!manifestAsset || !releaseAsset) throw new Error(`Latest release does not contain ${packageName}`);
-  const base: UpdateCheck = {
+  const common = {
     currentVersion: authority.current.raw,
     latestVersion: authority.latest.raw,
     tag: authority.release.tag_name,
     releaseUrl: authority.release.html_url,
-    updateAvailable,
     packageName,
     packageSha256: manifestAsset.sha256,
     packageSize: manifestAsset.size,
   };
-  if (!updateAvailable) return base;
+  if (!updateAvailable) return { ...common, updateAvailable: false };
 
   const updateDir = resolve(dataDir, "updates", authority.latest.raw);
   await mkdir(updateDir, { recursive: true, mode: 0o700 });
@@ -220,7 +221,7 @@ export async function prepareUpdate(currentVersion: string, dataDir: string): Pr
     throw error;
   }
 
-  return { ...base, updateAvailable: true, packagePath: destination } as PreparedUpdate;
+  return { ...common, updateAvailable: true, packagePath: destination };
 }
 
 export function openPreparedInstaller(update: PreparedUpdate): void {
