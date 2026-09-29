@@ -13,6 +13,7 @@ import { OperatorClient } from "@blogmaatic/operator-client";
 interface OperatorSession {
   readonly client: OperatorClient;
   readonly baseUrl: string;
+  readonly localRequest: (path: string, init?: RequestInit) => Promise<Response>;
 }
 
 interface ConnectionContextValue {
@@ -50,7 +51,22 @@ export function ConnectionProvider({ children }: PropsWithChildren) {
     const health = await client.health();
     if (health.status !== "ok") throw new Error("Operator API health check did not return ok");
     await client.listAutomations({ limit: 1 });
-    setSession({ client, baseUrl: client.baseUrl });
+
+    const localRequest = async (path: string, init: RequestInit = {}): Promise<Response> => {
+      if (!path.startsWith("/local/")) throw new Error("Local runtime requests must target /local/*");
+      if (!sessionProof) throw new Error("Control Room session proof is unavailable");
+      const headers = new Headers(init.headers);
+      headers.set("x-blogmaatic-session-proof", sessionProof);
+      return fetch(path, {
+        ...init,
+        headers,
+        credentials: "same-origin",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+      });
+    };
+
+    setSession({ client, baseUrl: client.baseUrl, localRequest });
   }, []);
 
   const value = useMemo<ConnectionContextValue>(() => ({ session, connect }), [connect, session]);
