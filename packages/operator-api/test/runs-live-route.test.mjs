@@ -75,3 +75,42 @@ test("GET /v1/runs without a phase filter returns reconciled live runtime state"
     await app.close();
   }
 });
+
+test("GET /v1/runs keeps durable history available when runtime status is unavailable", async () => {
+  const store = {
+    async listRuns(query) {
+      assert.deepEqual(query, { limit: 30 });
+      return { items: [storedRun] };
+    },
+    async updateRunPhase() {
+      throw new Error("stored fallback must not update phase");
+    },
+  };
+  const runtime = {
+    async status() {
+      throw new Error("Restate unavailable");
+    },
+  };
+  const app = createOperatorApi({
+    store,
+    runtime,
+    controlPlane: {},
+    authorizer: authorizer(),
+  });
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/runs?limit=30",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const page = response.json();
+    assert.equal(page.items.length, 1);
+    assert.equal(page.items[0].runId, storedRun.runId);
+    assert.equal(page.items[0].dispatchState, "started");
+    assert.equal(page.items[0].updatedAt, storedRun.updatedAt);
+  } finally {
+    await app.close();
+  }
+});
