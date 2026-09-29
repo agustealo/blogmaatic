@@ -99,3 +99,11 @@ jobs:
           set -euo pipefail
           sha256sum docs/screenshots/*.png docs/screenshots/capture-manifest.json
           echo "Product Media is evidence-only. It never rewrites the candidate SHA it is certifying."
+
+      - name: Retain exact-head product media artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-room-product-media-${{ github.sha }}
+          path: docs/screenshots/
+          if-no-files-found: error
+          retention-days: 30
