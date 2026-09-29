@@ -253,11 +253,26 @@ export function AutomationsPage() {
       navigate("/schedules");
       return;
     }
+    if (!session) return;
     setCreateOpen(false);
     setRunTarget(null);
-    setEditTarget(entry);
-    await loadGroups();
-  }, [loadGroups, navigate]);
+    setActionError(null);
+    try {
+      const versions = await session.client.listAutomationVersions(entry.definition.id, { limit: 1 });
+      const latestVersion = versions.items[0]?.definition.version ?? entry.definition.version;
+      setEditTarget({
+        ...entry,
+        definition: {
+          ...entry.definition,
+          version: Math.max(entry.definition.version, latestVersion),
+        },
+      });
+      await loadGroups();
+    } catch (cause) {
+      setEditTarget(null);
+      setActionError(cause instanceof Error ? cause : new Error("Automation version history could not be loaded"));
+    }
+  }, [loadGroups, navigate, session]);
 
   const saveAutomation = useCallback(async (definition: AutomationDefinition) => {
     if (!session) return;
