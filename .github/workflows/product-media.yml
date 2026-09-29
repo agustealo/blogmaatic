@@ -3,7 +3,7 @@ name: Product Media
 on:
   push:
     branches:
-      - feat/connection-manager-onboarding-slice-15
+      - "**"
     paths:
       - ".github/workflows/product-media.yml"
       - "apps/control-room/**"
