@@ -1,0 +1,66 @@
+name: Master Governance
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  master-provenance:
+    name: master-provenance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Reject force pushes and commits without merged-PR provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          FORCED_PUSH: ${{ github.event.forced }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${FORCED_PUSH}" == "true" ]]; then
+            echo "::error::Force-pushing master is not allowed."
+            exit 1
+          fi
+
+          if [[ "${BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+            commits=("${AFTER_SHA}")
+          else
+            mapfile -t commits < <(git rev-list --reverse "${BEFORE_SHA}..${AFTER_SHA}")
+          fi
+
+          if (( ${#commits[@]} == 0 )); then
+            echo "::error::No commits were found in the master update."
+            exit 1
+          fi
+
+          for sha in "${commits[@]}"; do
+            pulls_json="$({
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "/repos/${REPOSITORY}/commits/${sha}/pulls"
+            })"
+
+            merged_count="$(jq '[.[] | select(.merged_at != null and .base.ref == "master")] | length' <<<"${pulls_json}")"
+
+            if [[ "${merged_count}" -lt 1 ]]; then
+              echo "::error::Commit ${sha} reached master without provenance from a merged pull request targeting master."
+              exit 1
+            fi
+          done
+
+          echo "Verified ${#commits[@]} commit(s): every master commit in this push is associated with a merged pull request targeting master."
