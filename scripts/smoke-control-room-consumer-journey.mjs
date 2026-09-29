@@ -304,7 +304,7 @@ try {
   await clickText("Create Automation");
   await waitForText("Blogmaatic is ready", 30_000);
   await clickText("Enter Control Room");
-  await waitForText("Publishing workspace");
+  await waitForText("A live operational view over the canonical control plane and durable runtime.");
 
   await clickText("Publications", "nav a");
   await waitForText("Content workspace");
