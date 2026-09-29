@@ -1,3 +1,4 @@
+export * from "./backup.js";
 export * from "./config.js";
 export * from "./connection-manager.js";
 export * from "./control-room-server.js";
