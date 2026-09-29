@@ -49,6 +49,7 @@ import { ConnectionManager } from "./connection-manager.js";
 import { ControlRoomServer, type ControlRoomUpdateStatus } from "./control-room-server.js";
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
+import { productVersion as installedProductVersion } from "./product-version.js";
 import { PublicationGroupManager } from "./publication-group-manager.js";
 import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 import { ScheduleManager } from "./schedule-manager.js";
@@ -163,6 +164,7 @@ export async function startRuntime(options: {
 }): Promise<RunningRuntime> {
   const { config, paths } = options;
   const logger = options.logger ?? console;
+  const currentProductVersion = options.productVersion ?? await installedProductVersion();
   await mkdir(paths.dataDir, { recursive: true, mode: 0o700 });
   await mkdir(paths.restateDataDir, { recursive: true, mode: 0o700 });
 
@@ -268,16 +270,16 @@ export async function startRuntime(options: {
       onError: (error) => logger.error(`Scheduler dispatch failed: ${error.message}`),
     });
 
-    const updates = options.productVersion ? {
-      check: async () => browserUpdateStatus(await checkForUpdate(options.productVersion!)),
+    const updates = {
+      check: async () => browserUpdateStatus(await checkForUpdate(currentProductVersion)),
       install: async () => {
-        const prepared = await prepareUpdate(options.productVersion!, paths.dataDir);
+        const prepared = await prepareUpdate(currentProductVersion, paths.dataDir);
         if (!prepared.updateAvailable) return browserUpdateStatus(prepared);
         await verifyPreparedUpdate(prepared);
         openPreparedInstaller(prepared);
         return browserUpdateStatus(prepared, true);
       },
-    } : undefined;
+    };
 
     controlRoom = await ControlRoomServer.start({
       root: options.controlRoomRoot ?? controlRoomDist(),
@@ -286,7 +288,7 @@ export async function startRuntime(options: {
       operatorOrigin: operator.address.replace(/\/$/, ""),
       operatorToken: options.operatorToken,
       ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
-      ...(updates ? { updates } : {}),
+      updates,
     });
 
     scheduler.start();
