@@ -16,6 +16,7 @@ import type {
   ConnectionsResponse,
   ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  ManualRunBody,
   OperatorConnectionTestResult,
   OperatorConnectionView,
   OperatorErrorBody,
@@ -137,6 +138,7 @@ export class OperatorClient {
       readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
       readonly body?: unknown;
       readonly authenticated?: boolean;
+      readonly idempotencyKey?: string;
     } = {},
   ): Promise<T> {
     const headers = new Headers({ accept: "application/json" });
@@ -145,6 +147,11 @@ export class OperatorClient {
       headers.set("x-blogmaatic-session-proof", this.#sessionProof);
     }
     if (options.body !== undefined) headers.set("content-type", "application/json");
+    if (options.idempotencyKey !== undefined) {
+      const idempotencyKey = options.idempotencyKey.trim();
+      if (!idempotencyKey) throw new Error("Idempotency key must be non-empty");
+      headers.set("idempotency-key", idempotencyKey);
+    }
     const response = await this.#fetch(joinBase(this.#baseUrl, path), {
       method: options.method ?? "GET",
       headers,
@@ -302,6 +309,14 @@ export class OperatorClient {
 
   listRuns(query: RunListQuery = {}): Promise<RunPage> {
     return this.#request<RunPage>(pathWithQuery("/v1/runs", query));
+  }
+
+  startManualRun(input: ManualRunBody, idempotencyKey: string): Promise<ControlPlaneRunRecord> {
+    return this.#request<ControlPlaneRunRecord>("/v1/runs/manual", {
+      method: "POST",
+      body: input,
+      idempotencyKey,
+    });
   }
 
   getRun(runId: string): Promise<ControlPlaneRunRecord> {
