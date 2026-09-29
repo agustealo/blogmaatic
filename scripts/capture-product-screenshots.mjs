@@ -302,34 +302,6 @@ async function capture(name) {
   await writeFile(join(outputDir, `${name}.png`), buffer);
 }
 
-function publication() {
-  return {
-    id: "pub-product-media",
-    createdAt: "2026-09-23T12:00:00.000Z",
-    slug: "durable-publishing",
-    status: "approved",
-    current: {
-      id: "rev-product-media-1",
-      ordinal: 1,
-      createdAt: "2026-09-23T12:00:00.000Z",
-      content: {
-        schemaVersion: 1,
-        title: "Why durable publishing needs a control plane",
-        language: "en",
-        blocks: [
-          { id: "heading", kind: "heading", data: { level: 2, text: "One publication, many destinations" } },
-          { id: "paragraph", kind: "paragraph", data: { text: "Blogmaatic keeps delivery, policy, verification, and reconciliation behind one durable publishing authority." } },
-        ],
-        assets: [],
-        tags: ["publishing", "automation"],
-        attributes: {},
-      },
-    },
-    canonicalUrl: "https://journal.example.test/durable-publishing/",
-    provenance: { source: "product-media-capture" },
-  };
-}
-
 async function seedProductState(token) {
   const connectionResponse = await api(token, "/v1/connections", {
     method: "POST",
@@ -388,7 +360,7 @@ async function seedProductState(token) {
     version: 1,
     name: "Publish approved content",
     enabled: true,
-    trigger: { kind: "manual" },
+    trigger: { kind: "event", eventType: "publication.approved" },
     steps: [{ id: "publish", kind: "publish_group", groupId: group.group.id }],
   };
   const automationResponse = await api(token, "/v1/automations", {
@@ -397,17 +369,31 @@ async function seedProductState(token) {
   });
   await expectStatus(automationResponse, 201);
 
-  const runResponse = await api(token, "/v1/runs/manual", {
+  const publicationResponse = await api(token, "/v1/publications", {
     method: "POST",
-    headers: { "idempotency-key": "product-media-run-1" },
     body: JSON.stringify({
-      automationId: automation.id,
-      publication: publication(),
-      groups: [group.group],
+      title: "Why durable publishing needs a control plane",
+      summary: "One publication, many destinations, one durable authority.",
+      body: "Blogmaatic keeps delivery, policy, verification, and reconciliation behind one durable publishing authority.",
+      language: "en",
+      tags: ["publishing", "automation"],
+      slug: "durable-publishing",
+      canonicalUrl: "https://journal.example.test/durable-publishing/",
+      status: "ready",
     }),
   });
-  await expectStatus(runResponse, 202);
-  const run = await runResponse.json();
+  await expectStatus(publicationResponse, 201);
+  const workspace = await publicationResponse.json();
+
+  const publishResponse = await api(token, `/v1/publications/${encodeURIComponent(workspace.publication.id)}/publish`, {
+    method: "POST",
+    body: JSON.stringify({ expectedVersion: workspace.version }),
+  });
+  await expectStatus(publishResponse, 200);
+  const dispatch = await publishResponse.json();
+  assert.equal(dispatch.runs.length, 1);
+  const run = dispatch.runs[0];
+  assert.ok(run?.runId);
 
   const deadline = Date.now() + 25_000;
   while (Date.now() < deadline) {
@@ -415,7 +401,7 @@ async function seedProductState(token) {
     if (resultResponse.status === 200) {
       const result = await resultResponse.json();
       assert.equal(result.outcome, "completed");
-      return { connection, group, automation, run };
+      return { connection, group, automation, workspace: dispatch.publication, run };
     }
     if (resultResponse.status !== 409) {
       throw new Error(`Unexpected run result status ${resultResponse.status}: ${await resultResponse.text()}`);
@@ -482,6 +468,12 @@ try {
   await navigate(origin, "/operations", "Operations");
   await capture("08-operations");
 
+  await navigate(origin, "/publication-groups", "Publication Groups");
+  await capture("09-publication-groups");
+
+  await navigate(origin, "/publications", "Publications");
+  await capture("10-publications");
+
   const manifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -494,8 +486,9 @@ try {
       publisher: "Jekyll/Git",
       connection: "created through Operator API",
       publicationGroup: "created through canonical Publication Group authority",
-      automation: "registered through canonical automation registry",
-      run: "real completed durable publication run",
+      publication: "created and approved through canonical Publication Workspace authority",
+      automation: "publication.approved automation registered through canonical automation registry",
+      run: "real completed durable publication run dispatched by Publication Workspace",
     },
     captures: [
       { file: "01-first-run-setup.png", route: "/setup", feature: "fresh first-run setup" },
@@ -506,6 +499,8 @@ try {
       { file: "06-runs.png", route: "/runs", feature: "durable run history" },
       { file: "07-run-detail.png", route: `/runs/${state.run.runId}`, feature: "verified run detail" },
       { file: "08-operations.png", route: "/operations", feature: "operator attention surface" },
+      { file: "09-publication-groups.png", route: "/publication-groups", feature: "durable publication topology management" },
+      { file: "10-publications.png", route: "/publications", feature: "canonical Publication Workspace" },
     ],
   };
   await writeFile(join(outputDir, "capture-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
