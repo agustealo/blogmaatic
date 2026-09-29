@@ -34,7 +34,12 @@ async function liveRun(
   run: ControlPlaneRunRecord,
 ): Promise<ControlPlaneRunRecord> {
   if (run.dispatchState !== "started") return run;
-  const status = await runtime.status(run.runId);
+  let status;
+  try {
+    status = await runtime.status(run.runId);
+  } catch {
+    return run;
+  }
   if (!status) return run;
   if (run.runtimePhase !== status.phase) {
     await store.updateRunPhase(run.runId, status.phase, status.updatedAt);
