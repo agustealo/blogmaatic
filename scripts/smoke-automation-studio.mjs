@@ -23,6 +23,20 @@ function appendOutput(state, chunk) {
   state.output = `${state.output}${chunk.toString("utf8")}`.slice(-100_000);
 }
 
+async function rmEventually(path, attempts = 20) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      const transient = code === "ENOTEMPTY" || code === "EBUSY" || code === "EPERM";
+      if (!transient || attempt === attempts) throw error;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    }
+  }
+}
+
 async function git(args) {
   const result = await execFileAsync("git", args, { cwd: repository, encoding: "utf8" });
   return result.stdout.trim();
@@ -402,6 +416,7 @@ try {
   await waitForText("A live operational view over the canonical control plane and durable runtime.");
   await clickText("Automations", "nav a");
   await waitForText("Compose manual and event publishing workflows");
+  await waitForText("Schedule ownership guard");
 
   const scheduleActions = await cdp.evaluate(`(() => {
     const row = [...document.querySelectorAll("article.automation-row")].find((item) => item.textContent?.includes("Schedule ownership guard"));
@@ -503,5 +518,5 @@ try {
   if (cdp) cdp.close();
   if (browser) await stopBrowser(browser);
   await stopRuntime(runtime).catch(() => undefined);
-  await Promise.all([dataDir, repository, chromeProfile].map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all([dataDir, repository, chromeProfile].map((path) => rmEventually(path)));
 }
