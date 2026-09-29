@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -57,6 +57,7 @@ async function cleanupInstall() {
   } else if (process.platform === "darwin") {
     await exec("sudo", ["rm", "-f", "/usr/local/bin/blogmaatic"]).catch(() => undefined);
     await exec("sudo", ["rm", "-rf", "/opt/blogmaatic"]).catch(() => undefined);
+    await exec("sudo", ["rm", "-rf", "/Applications/Blogmaatic.app"]).catch(() => undefined);
     await exec("sudo", ["pkgutil", "--forget", "com.blogmaatic.runtime"]).catch(() => undefined);
   }
 }
@@ -75,6 +76,29 @@ async function verifyMacNodeSigning() {
   const diagnostic = `${details.stdout}\n${details.stderr}`;
   assert.match(diagnostic, /runtime/i, `Bundled Node is not Hardened Runtime signed: ${diagnostic}`);
   assert.match(diagnostic, /com\.apple\.security\.cs\.allow-jit/, `Bundled Node lacks JIT entitlement: ${diagnostic}`);
+}
+
+async function verifyInstalledLauncherSurface() {
+  if (process.platform === "linux") {
+    const desktopPath = "/usr/share/applications/blogmaatic.desktop";
+    const desktop = await readFile(desktopPath, "utf8");
+    assert.match(desktop, /^\[Desktop Entry\]$/m);
+    assert.match(desktop, /^Name=Blogmaatic$/m);
+    assert.match(desktop, /^TryExec=\/usr\/local\/bin\/blogmaatic$/m);
+    assert.match(desktop, /^Exec=\/usr\/local\/bin\/blogmaatic open$/m);
+    assert.match(desktop, /^Terminal=false$/m);
+    return;
+  }
+
+  const app = "/Applications/Blogmaatic.app";
+  const executable = `${app}/Contents/MacOS/Blogmaatic`;
+  const plist = `${app}/Contents/Info.plist`;
+  await exec("test", ["-x", executable]);
+  const bundleExecutable = (await exec("plutil", ["-extract", "CFBundleExecutable", "raw", "-o", "-", plist])).stdout.trim();
+  assert.equal(bundleExecutable, "Blogmaatic");
+  const identifier = (await exec("plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plist])).stdout.trim();
+  assert.equal(identifier, "com.blogmaatic.controlroom");
+  await exec("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
 }
 
 function startInstalledRuntime(binary) {
@@ -127,6 +151,7 @@ async function controlRoomSession(state, timeoutMs = 20_000) {
       assert.match(proof, /^[A-Za-z0-9_-]{32,128}$/);
       return {
         origin,
+        launchAddress,
         cookie: setCookie.split(";", 1)[0],
         proof,
       };
@@ -146,6 +171,29 @@ async function controlRoomApi(session, path) {
       accept: "application/json",
     },
   });
+}
+
+async function burnInstalledReopen(binary, initialSession) {
+  const reopened = await exec(binary, ["open", "--no-browser", "--data-dir", dataDir]);
+  const match = reopened.stdout.match(/Control Room: (http:\/\/[^\s]+)/);
+  assert.ok(match?.[1], `Installed open command did not return a Control Room capability: ${reopened.stdout}${reopened.stderr}`);
+  const launchAddress = match[1];
+  assert.notEqual(launchAddress, initialSession.launchAddress);
+  assert.equal(new URL(launchAddress).origin, initialSession.origin);
+
+  const bootstrap = await fetch(launchAddress, {
+    redirect: "manual",
+    headers: { "sec-fetch-site": "none" },
+  });
+  assert.equal(bootstrap.status, 303, `Installed reopen capability returned ${bootstrap.status}: ${await bootstrap.text()}`);
+  assert.ok(bootstrap.headers.get("set-cookie"));
+  assert.match(bootstrap.headers.get("location") ?? "", /^\/#session=[A-Za-z0-9_-]{32,128}$/);
+
+  const replay = await fetch(launchAddress, {
+    redirect: "manual",
+    headers: { "sec-fetch-site": "none" },
+  });
+  assert.equal(replay.status, 410, "Installed reopen capability was not one-use");
 }
 
 async function stopInstalledRuntime(handle) {
@@ -196,6 +244,7 @@ function automation(groupId) {
 
 try {
   await install();
+  await verifyInstalledLauncherSurface();
   if (process.platform === "darwin") await verifyMacNodeSigning();
 
   const binary = "/usr/local/bin/blogmaatic";
@@ -229,6 +278,7 @@ try {
   assert.match(await controlRoom.text(), /Blogmaatic Control Room/);
 
   const session = await controlRoomSession(runtime.state);
+  await burnInstalledReopen(binary, session);
   const emptyConnections = await controlRoomApi(session, "/v1/connections");
   await expectStatus(emptyConnections, 200);
   assert.equal((await emptyConnections.json()).items.length, 0);
@@ -300,7 +350,7 @@ try {
   await stopInstalledRuntime(runtime);
   runtime = undefined;
 
-  console.log(`Native installer first-run + restart smoke passed: ${basename(packagePath)}`);
+  console.log(`Native installer launcher + first-run + reopen + restart smoke passed: ${basename(packagePath)}`);
 } finally {
   if (runtime) await stopInstalledRuntime(runtime).catch(() => undefined);
   await cleanupInstall();
