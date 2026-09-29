@@ -145,6 +145,7 @@ export async function startRuntime(options: {
   readonly operatorToken: string;
   readonly controlRoomRoot?: string;
   readonly logger?: Pick<Console, "info" | "error">;
+  readonly onShutdown?: () => void;
 }): Promise<RunningRuntime> {
   const { config, paths } = options;
   const logger = options.logger ?? console;
@@ -259,6 +260,7 @@ export async function startRuntime(options: {
       port: config.controlRoom.port,
       operatorOrigin: operator.address.replace(/\/$/, ""),
       operatorToken: options.operatorToken,
+      ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
     });
 
     // Startup becomes externally active only after every fallible listener is ready.
