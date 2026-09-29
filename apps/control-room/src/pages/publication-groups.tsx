@@ -29,6 +29,7 @@ interface EditorState {
   readonly name: string;
   readonly policySetId: string;
   readonly selectedConnectionIds: ReadonlySet<string>;
+  readonly enabledConnectionIds: ReadonlySet<string>;
   readonly existingRoutes: readonly GroupRoute[];
   readonly enabled: boolean;
 }
@@ -59,6 +60,7 @@ function createEditor(policySetId: string): EditorState {
     name: "",
     policySetId,
     selectedConnectionIds: new Set(),
+    enabledConnectionIds: new Set(),
     existingRoutes: [],
     enabled: true,
   };
@@ -72,6 +74,9 @@ function editEditor(entry: PublicationGroupRegistryEntry): EditorState {
     name: entry.group.name,
     policySetId: entry.group.policySetId,
     selectedConnectionIds: new Set(entry.group.routes.map((route) => route.destination.connectionId)),
+    enabledConnectionIds: new Set(
+      entry.group.routes.filter((route) => route.enabled).map((route) => route.destination.connectionId),
+    ),
     existingRoutes: entry.group.routes,
     enabled: entry.enabled,
   };
@@ -186,10 +191,26 @@ export function PublicationGroupsPage() {
   const toggleConnection = useCallback((connectionId: string, checked: boolean) => {
     setEditor((current) => {
       if (!current) return current;
-      const next = new Set(current.selectedConnectionIds);
-      if (checked) next.add(connectionId);
-      else next.delete(connectionId);
-      return { ...current, selectedConnectionIds: next };
+      const selected = new Set(current.selectedConnectionIds);
+      const enabledRoutes = new Set(current.enabledConnectionIds);
+      if (checked) {
+        selected.add(connectionId);
+        enabledRoutes.add(connectionId);
+      } else {
+        selected.delete(connectionId);
+        enabledRoutes.delete(connectionId);
+      }
+      return { ...current, selectedConnectionIds: selected, enabledConnectionIds: enabledRoutes };
+    });
+  }, []);
+
+  const toggleRoute = useCallback((connectionId: string, checked: boolean) => {
+    setEditor((current) => {
+      if (!current || !current.selectedConnectionIds.has(connectionId)) return current;
+      const enabledRoutes = new Set(current.enabledConnectionIds);
+      if (checked) enabledRoutes.add(connectionId);
+      else enabledRoutes.delete(connectionId);
+      return { ...current, enabledConnectionIds: enabledRoutes };
     });
   }, []);
 
@@ -206,15 +227,22 @@ export function PublicationGroupsPage() {
 
       const existingByConnection = new Map(editor.existingRoutes.map((route) => [route.destination.connectionId, route]));
       const routes = chosen.map((connection) => {
+        const enabled = editor.enabledConnectionIds.has(connection.id);
         const existing = existingByConnection.get(connection.id);
-        if (existing) return existing;
+        if (existing) return { ...existing, enabled };
         const type = typeById.get(connection.extensionId);
         if (!type) throw new Error(`Publisher contract is unavailable for ${connection.extensionId}`);
-        return defaultRoute(connection, type);
+        return { ...defaultRoute(connection, type), enabled };
       });
 
       if (editor.enabled && routes.every((route) => !route.enabled)) {
         throw new Error("An enabled Publication Group needs at least one enabled destination");
+      }
+      const unavailableEnabledRoute = chosen.find(
+        (connection) => editor.enabledConnectionIds.has(connection.id) && connection.status !== "active",
+      );
+      if (editor.enabled && unavailableEnabledRoute) {
+        throw new Error(`Enable ${unavailableEnabledRoute.displayName} before publishing through that destination`);
       }
 
       let saved: PublicationGroupRegistryEntry;
@@ -345,15 +373,29 @@ export function PublicationGroupsPage() {
                 {activeConnections.map((connection) => {
                   const type = typeById.get(connection.extensionId);
                   const selected = editor.selectedConnectionIds.has(connection.id);
+                  const routeEnabled = editor.enabledConnectionIds.has(connection.id);
                   return (
-                    <label key={connection.id}>
-                      <input type="checkbox" checked={selected} onChange={(event) => toggleConnection(connection.id, event.target.checked)} />
-                      <span>
-                        <strong>{connection.displayName}</strong>
-                        <small>{type?.manifest.displayName ?? connection.extensionId} · {connection.status}</small>
-                      </span>
+                    <div className="publication-group-destination-row" key={connection.id}>
+                      <label className="publication-group-destination-select">
+                        <input type="checkbox" checked={selected} onChange={(event) => toggleConnection(connection.id, event.target.checked)} />
+                        <span>
+                          <strong>{connection.displayName}</strong>
+                          <small>{type?.manifest.displayName ?? connection.extensionId} · {connection.status}</small>
+                        </span>
+                      </label>
+                      {selected ? (
+                        <label className="publication-group-route-toggle">
+                          <input
+                            type="checkbox"
+                            checked={routeEnabled}
+                            onChange={(event) => toggleRoute(connection.id, event.target.checked)}
+                            disabled={connection.status !== "active" && editor.enabled}
+                          />
+                          <span>Publish through this destination</span>
+                        </label>
+                      ) : <span />}
                       <StatusPill value={connection.status === "active" ? "enabled" : "disabled"} tone={connection.status === "active" ? "good" : "warn"} />
-                    </label>
+                    </div>
                   );
                 })}
                 {activeConnections.length === 0 ? <EmptyState title="No publishing destinations">Create or enable a Connection before building a Publication Group.</EmptyState> : null}
