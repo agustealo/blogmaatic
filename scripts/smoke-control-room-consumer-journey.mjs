@@ -178,7 +178,7 @@ async function waitForExpression(expression, timeoutMs = 30_000) {
 }
 
 async function waitForText(text, timeoutMs = 30_000) {
-  await waitForExpression(`document.body?.innerText.includes(${JSON.stringify(text)}) === true`, timeoutMs);
+  await waitForExpression(`document.body?.innerText.toLowerCase().includes(${JSON.stringify(text.toLowerCase())}) === true`, timeoutMs);
 }
 
 async function clickText(text, selector = "button, a") {
