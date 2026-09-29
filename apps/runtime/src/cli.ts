@@ -12,6 +12,7 @@ import { configForFirstRun } from "./init.js";
 import { httpOrigin } from "./network.js";
 import { resolveLocalBinary } from "./processes.js";
 import { startRuntime } from "./runtime.js";
+import { checkForUpdate, openPreparedInstaller, prepareUpdate, verifyPreparedUpdate } from "./update.js";
 
 interface ParsedArgs {
   readonly command: string;
@@ -63,7 +64,7 @@ function dataDir(args: ParsedArgs): string {
 }
 
 function usage(): void {
-  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  stop [--data-dir PATH]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. On first launch it initializes an empty secure runtime automatically, then reuses a running local runtime or starts one in the background and mints a fresh one-use Control Room browser capability. Use \`blogmaatic stop\` before offline backup or restore.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
+  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  stop [--data-dir PATH]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  update [--data-dir PATH] [--check] [--download-only]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. On first launch it initializes an empty secure runtime automatically, then reuses a running local runtime or starts one in the background and mints a fresh one-use Control Room browser capability. Use \`blogmaatic stop\` before offline backup or restore.\n\nUpdates are explicit and never replace a running process. Blogmaatic checks the trusted GitHub release, verifies the exact native installer against release-manifest.json, then opens that verified installer with the operating system. Use --check to inspect without downloading or --download-only to stage without opening the installer.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
 }
 
 async function productVersion(): Promise<string> {
@@ -309,6 +310,33 @@ async function token(args: ParsedArgs): Promise<void> {
   process.stdout.write(`${await readOperatorToken(paths.operatorTokenPath)}\n`);
 }
 
+async function updateProduct(args: ParsedArgs): Promise<void> {
+  const currentVersion = await productVersion();
+  if (flag(args, "check")) {
+    const status = await checkForUpdate(currentVersion);
+    if (!status.updateAvailable) {
+      console.log(`Blogmaatic ${status.currentVersion} is current.`);
+      return;
+    }
+    console.log(`Blogmaatic ${status.latestVersion} is available (installed ${status.currentVersion}).`);
+    console.log(`Trusted release: ${status.releaseUrl}`);
+    console.log(`Native installer: ${status.packageName}`);
+    return;
+  }
+
+  const prepared = await prepareUpdate(currentVersion, dataDir(args));
+  if (!prepared.updateAvailable) {
+    console.log(`Blogmaatic ${prepared.currentVersion} is current.`);
+    return;
+  }
+  await verifyPreparedUpdate(prepared);
+  console.log(`Verified Blogmaatic ${prepared.latestVersion} installer: ${prepared.packagePath}`);
+  console.log(`SHA-256: ${prepared.packageSha256}`);
+  if (flag(args, "download-only")) return;
+  console.log("Opening the verified installer. The operating system owns installation approval and privileges.");
+  openPreparedInstaller(prepared);
+}
+
 async function backup(args: ParsedArgs): Promise<void> {
   const source = dataDir(args);
   const output = requiredValue(args, "output");
@@ -393,6 +421,7 @@ async function main(): Promise<void> {
   if (args.command === "start") return start(args);
   if (args.command === "token") return token(args);
   if (args.command === "doctor") return doctor(args);
+  if (args.command === "update") return updateProduct(args);
   if (args.command === "backup") return backup(args);
   if (args.command === "verify-backup") return verifyBackupCommand(args);
   if (args.command === "restore") return restore(args);
