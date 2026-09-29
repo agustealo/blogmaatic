@@ -1,13 +1,15 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, open as openFile, readFile } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createBackup, restoreBackup, verifyBackup } from "./backup.js";
-import { defaultDataDir, loadRuntimeConfig, runtimePaths, writeRuntimeConfig } from "./config.js";
+import { defaultDataDir, loadRuntimeConfig, runtimePaths, writeRuntimeConfig, type RuntimeConfig, type RuntimePaths } from "./config.js";
 import { ensureOperatorToken, readOperatorToken } from "./credentials.js";
 import { configForFirstRun } from "./init.js";
+import { httpOrigin } from "./network.js";
 import { resolveLocalBinary } from "./processes.js";
 import { startRuntime } from "./runtime.js";
 
@@ -61,7 +63,7 @@ function dataDir(args: ParsedArgs): string {
 }
 
 function usage(): void {
-  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
+  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. It reuses a running local runtime or starts one in the background, then mints a fresh one-use Control Room browser capability.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
 }
 
 async function productVersion(): Promise<string> {
@@ -124,7 +126,7 @@ async function init(args: ParsedArgs): Promise<void> {
   console.log(`Local operator authority: ${credential.created ? "created" : "present"}`);
   if (config.connections.length === 0) console.log("No publisher connection was configured. Add a real extension connection before publishing.");
   else console.log(`Configured ${config.connections.length} real publisher connection(s).`);
-  console.log("Start Blogmaatic and open the one-time Control Room launch URL; browser authentication is handled by the local runtime.");
+  console.log("Run `blogmaatic open` to launch the Control Room; browser authentication is handled by the local runtime.");
 }
 
 async function start(args: ParsedArgs): Promise<void> {
@@ -132,9 +134,11 @@ async function start(args: ParsedArgs): Promise<void> {
   const config = await loadRuntimeConfig(paths.configPath);
   const token = await readOperatorToken(paths.operatorTokenPath);
   const runtime = await startRuntime({ config, paths, operatorToken: token });
-  console.log(`Operator API: ${runtime.operatorAddress}`);
-  console.log(`Control Room: ${runtime.controlRoomLaunchAddress}`);
-  console.log("Control Room authentication: one-time launch capability → HttpOnly runtime session");
+  if (!flag(args, "background")) {
+    console.log(`Operator API: ${runtime.operatorAddress}`);
+    console.log(`Control Room: ${runtime.controlRoomLaunchAddress}`);
+    console.log("Control Room authentication: one-time launch capability → HttpOnly runtime session");
+  }
 
   let resolveSignal!: () => void;
   const signal = new Promise<void>((resolveStop) => { resolveSignal = resolveStop; });
@@ -148,6 +152,99 @@ async function start(args: ParsedArgs): Promise<void> {
     process.off("SIGTERM", onSignal);
     await runtime.close();
   }
+}
+
+async function requestLaunch(config: RuntimeConfig, operatorToken: string): Promise<string | undefined> {
+  const origin = httpOrigin(config.controlRoom.host, config.controlRoom.port);
+  let response: Response;
+  try {
+    response = await fetch(`${origin}/local/launch`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${operatorToken}`, accept: "application/json" },
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+    });
+  } catch {
+    return undefined;
+  }
+  if (response.status === 403) {
+    throw new Error("A Control Room is already running on the configured port but rejected this data directory's local launcher credential");
+  }
+  if (response.status === 404) {
+    throw new Error("The running Control Room does not support secure reopen. Restart Blogmaatic using the current installation.");
+  }
+  if (response.status !== 201) {
+    throw new Error(`Control Room reopen failed with HTTP ${response.status}`);
+  }
+  const body = await response.json() as { readonly launchAddress?: unknown };
+  if (typeof body.launchAddress !== "string") throw new Error("Control Room reopen response did not contain a launch address");
+  const launch = new URL(body.launchAddress);
+  if (launch.origin !== origin || !launch.pathname.startsWith("/session/") || launch.search || launch.hash) {
+    throw new Error("Control Room returned an invalid launch address");
+  }
+  return launch.toString();
+}
+
+async function startBackgroundRuntime(paths: RuntimePaths): Promise<string> {
+  await mkdir(paths.dataDir, { recursive: true, mode: 0o700 });
+  const logPath = join(paths.dataDir, "runtime.log");
+  const log = await openFile(logPath, "a", 0o600);
+  try {
+    const child = spawn(process.execPath, [
+      fileURLToPath(import.meta.url),
+      "start",
+      "--data-dir",
+      paths.dataDir,
+      "--background",
+    ], {
+      detached: true,
+      stdio: ["ignore", log.fd, log.fd],
+    });
+    child.unref();
+  } finally {
+    await log.close();
+  }
+  return logPath;
+}
+
+function launchDefaultBrowser(url: string): void {
+  let command: string;
+  let args: string[];
+  if (process.platform === "darwin") {
+    command = "open";
+    args = [url];
+  } else if (process.platform === "win32") {
+    command = "cmd.exe";
+    args = ["/d", "/s", "/c", "start", "", url];
+  } else {
+    command = "xdg-open";
+    args = [url];
+  }
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.once("error", () => undefined);
+  child.unref();
+}
+
+async function openControlRoom(args: ParsedArgs): Promise<void> {
+  const paths = runtimePaths(dataDir(args));
+  const config = await loadRuntimeConfig(paths.configPath);
+  const operatorToken = await readOperatorToken(paths.operatorTokenPath);
+
+  let launchAddress = await requestLaunch(config, operatorToken);
+  let logPath: string | undefined;
+  if (!launchAddress) {
+    logPath = await startBackgroundRuntime(paths);
+    for (let attempt = 0; attempt < 100 && !launchAddress; attempt += 1) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+      launchAddress = await requestLaunch(config, operatorToken);
+    }
+  }
+  if (!launchAddress) {
+    throw new Error(`Blogmaatic did not become ready for Control Room launch${logPath ? `; inspect ${logPath}` : ""}`);
+  }
+
+  console.log(`Control Room: ${launchAddress}`);
+  if (!flag(args, "no-browser")) launchDefaultBrowser(launchAddress);
 }
 
 async function token(args: ParsedArgs): Promise<void> {
@@ -234,6 +331,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.command === "help" || args.command === "--help" || args.command === "-h") return usage();
   if (args.command === "init") return init(args);
+  if (args.command === "open") return openControlRoom(args);
   if (args.command === "start") return start(args);
   if (args.command === "token") return token(args);
   if (args.command === "doctor") return doctor(args);
