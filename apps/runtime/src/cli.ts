@@ -4,6 +4,7 @@ import { access, readFile } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createBackup, restoreBackup, verifyBackup } from "./backup.js";
 import { defaultDataDir, loadRuntimeConfig, runtimePaths, writeRuntimeConfig } from "./config.js";
 import { ensureOperatorToken, readOperatorToken } from "./credentials.js";
 import { configForFirstRun } from "./init.js";
@@ -45,6 +46,12 @@ function value(args: ParsedArgs, name: string): string | undefined {
   return typeof result === "string" ? result : undefined;
 }
 
+function requiredValue(args: ParsedArgs, name: string): string {
+  const result = value(args, name);
+  if (!result) throw new Error(`--${name} is required`);
+  return result;
+}
+
 function flag(args: ParsedArgs, name: string): boolean {
   return args.values.get(name) === true;
 }
@@ -54,7 +61,7 @@ function dataDir(args: ParsedArgs): string {
 }
 
 function usage(): void {
-  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
+  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
 }
 
 async function productVersion(): Promise<string> {
@@ -148,6 +155,35 @@ async function token(args: ParsedArgs): Promise<void> {
   process.stdout.write(`${await readOperatorToken(paths.operatorTokenPath)}\n`);
 }
 
+async function backup(args: ParsedArgs): Promise<void> {
+  const source = dataDir(args);
+  const output = requiredValue(args, "output");
+  const manifest = await createBackup(source, output);
+  console.log(`Created Blogmaatic backup: ${resolve(output)}`);
+  console.log(`Verified ${manifest.files.length} durable state file(s).`);
+  console.log("Credentials were not exported. OS-vault secrets remain on this machine and the local operator credential is intentionally excluded.");
+}
+
+async function verifyBackupCommand(args: ParsedArgs): Promise<void> {
+  const input = requiredValue(args, "input");
+  const manifest = await verifyBackup(input);
+  console.log(`Backup is valid: ${resolve(input)}`);
+  console.log(`Created: ${manifest.createdAt}`);
+  console.log(`Durable files: ${manifest.files.length}`);
+  console.log("Secret material included: no");
+}
+
+async function restore(args: ParsedArgs): Promise<void> {
+  const target = dataDir(args);
+  const input = requiredValue(args, "input");
+  const result = await restoreBackup(input, target, { replace: flag(args, "replace") });
+  const credential = await ensureOperatorToken(runtimePaths(target).operatorTokenPath);
+  console.log(`Restored Blogmaatic state to ${result.dataDir}`);
+  if (result.safetyCopy) console.log(`Previous local state preserved at ${result.safetyCopy}`);
+  console.log(`Fresh local operator authority: ${credential.created ? "created" : "present"}`);
+  console.log("Run `blogmaatic doctor` before starting. If this backup moved to another machine, re-enter destination credentials whose OS-vault items are unavailable.");
+}
+
 async function doctor(args: ParsedArgs): Promise<void> {
   const paths = runtimePaths(dataDir(args));
   const checks: DoctorCheck[] = [];
@@ -201,6 +237,9 @@ async function main(): Promise<void> {
   if (args.command === "start") return start(args);
   if (args.command === "token") return token(args);
   if (args.command === "doctor") return doctor(args);
+  if (args.command === "backup") return backup(args);
+  if (args.command === "verify-backup") return verifyBackupCommand(args);
+  if (args.command === "restore") return restore(args);
   if (args.command === "version" || args.command === "--version" || args.command === "-v") {
     console.log(await productVersion());
     return;
