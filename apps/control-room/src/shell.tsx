@@ -9,7 +9,7 @@ const nav = [
   ["/connections", "Connections"],
   ["/publication-groups", "Publication Groups"],
   ["/automations", "Automations"],
-  ["/schedules", "Schedule Monitor"],
+  ["/schedules", "Schedules"],
   ["/operations", "Operations"],
   ["/approvals", "Approvals"],
   ["/runs", "Runs"],
@@ -35,6 +35,7 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <aside className="sidebar">
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">B</span>
@@ -64,10 +65,10 @@ export function AppShell() {
             </button>
           </div>
         </header>
-        <div className="mobile-nav" aria-label="Mobile navigation">
+        <nav className="mobile-nav" aria-label="Mobile navigation">
           {nav.map(([path, label]) => <NavLink key={path} to={path} end={path === "/"}>{label}</NavLink>)}
-        </div>
-        <main className="page"><Outlet /></main>
+        </nav>
+        <main className="page" id="main-content" tabIndex={-1}><Outlet /></main>
       </div>
     </div>
   );
