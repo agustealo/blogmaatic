@@ -174,7 +174,7 @@ function CreateSchedulePanel({
         ) : null}
         <label className="field">
           <span>Schedule name</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} disabled={Boolean(pendingPlan)} required autoComplete="off" />
+          <input autoFocus value={name} onChange={(event) => setName(event.target.value)} disabled={Boolean(pendingPlan)} required autoComplete="off" />
         </label>
         <label className="field">
           <span>Publication Group</span>
@@ -255,6 +255,7 @@ export function SchedulesPage() {
   const [groups, setGroups] = useState<readonly PublicationGroupRegistryEntry[]>([]);
   const [publications, setPublications] = useState<readonly PublicationWorkspaceEntry[]>([]);
   const [busyScheduleId, setBusyScheduleId] = useState<string | null>(null);
+  const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [actionError, setActionError] = useState<Error | null>(null);
   const [createdScheduleId, setCreatedScheduleId] = useState<string | null>(null);
   const loader = useCallback((cursor?: string) => {
@@ -270,6 +271,7 @@ export function SchedulesPage() {
 
   const openCreate = useCallback(async () => {
     if (!session) return;
+    setPendingToggle(null);
     setCreateOpen(true);
     setSupportLoading(true);
     setActionError(null);
@@ -303,7 +305,6 @@ export function SchedulesPage() {
   const toggleSchedule = useCallback(async (schedule: AutomationSchedule) => {
     if (!session) return;
     const nextEnabled = !schedule.enabled;
-    if (!window.confirm(`${nextEnabled ? "Enable" : "Disable"} schedule ${schedule.id}?`)) return;
     setBusyScheduleId(schedule.id);
     setActionError(null);
     try {
@@ -311,6 +312,7 @@ export function SchedulesPage() {
         expectedUpdatedAt: schedule.updatedAt,
         enabled: nextEnabled,
       });
+      setPendingToggle(null);
       await collection.reload();
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error("Schedule state could not be changed");
@@ -363,28 +365,46 @@ export function SchedulesPage() {
         <Panel className="table-panel" title="Durable schedules" meta="Automatic dispatch">
           <div className="data-table data-table--schedules">
             <div className="data-table__head"><span>Schedule</span><span>Automation</span><span>Local time</span><span>Next fire</span><span>State</span></div>
-            {collection.items.map((schedule) => (
-              <div className="data-table__row" key={schedule.id}>
-                <span><strong>{schedule.id}</strong><small>{recurrenceLabel(schedule)}</small></span>
-                <span>
-                  <Link to={`/automations/${encodeURIComponent(schedule.automationId)}`}><strong>{schedule.automationId}</strong></Link>
-                  <small>v{schedule.automationVersion}</small>
-                </span>
-                <span><strong>{schedule.localDate} · {schedule.localTime}</strong><small>{schedule.timezone}</small></span>
-                <span><strong>{formatInstant(schedule.nextFireAt)}</strong>{schedule.lastFireAt ? <small>Last {formatInstant(schedule.lastFireAt)}</small> : null}</span>
-                <span>
-                  <StatusPill value={schedule.enabled ? "enabled" : "disabled"} />
-                  <button
-                    className={schedule.enabled ? "button button--danger" : "button button--quiet"}
-                    type="button"
-                    disabled={busyScheduleId !== null || (!schedule.enabled && schedule.nextFireAt === null)}
-                    onClick={() => void toggleSchedule(schedule)}
-                  >
-                    {busyScheduleId === schedule.id ? "Saving…" : schedule.enabled ? "Disable" : schedule.nextFireAt === null ? "Finished" : "Enable"}
-                  </button>
-                </span>
-              </div>
-            ))}
+            {collection.items.map((schedule) => {
+              const confirming = pendingToggle === schedule.id;
+              return (
+                <div className="data-table__row" key={schedule.id}>
+                  <span><strong>{schedule.id}</strong><small>{recurrenceLabel(schedule)}</small></span>
+                  <span>
+                    <Link to={`/automations/${encodeURIComponent(schedule.automationId)}`}><strong>{schedule.automationId}</strong></Link>
+                    <small>v{schedule.automationVersion}</small>
+                  </span>
+                  <span><strong>{schedule.localDate} · {schedule.localTime}</strong><small>{schedule.timezone}</small></span>
+                  <span><strong>{formatInstant(schedule.nextFireAt)}</strong>{schedule.lastFireAt ? <small>Last {formatInstant(schedule.lastFireAt)}</small> : null}</span>
+                  <span>
+                    <StatusPill value={schedule.enabled ? "enabled" : "disabled"} />
+                    {confirming ? (
+                      <div className="inline-confirm-actions" role="group" aria-label={`${schedule.enabled ? "Disable" : "Enable"} schedule ${schedule.id}`}>
+                        <button className="button button--quiet" type="button" onClick={() => setPendingToggle(null)} disabled={busyScheduleId !== null}>Cancel</button>
+                        <button
+                          className={schedule.enabled ? "button button--danger" : "button button--primary"}
+                          type="button"
+                          autoFocus
+                          disabled={busyScheduleId !== null}
+                          onClick={() => void toggleSchedule(schedule)}
+                        >
+                          {busyScheduleId === schedule.id ? "Saving…" : `Confirm ${schedule.enabled ? "disable" : "enable"}`}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className={schedule.enabled ? "button button--danger" : "button button--quiet"}
+                        type="button"
+                        disabled={busyScheduleId !== null || (!schedule.enabled && schedule.nextFireAt === null)}
+                        onClick={() => setPendingToggle(schedule.id)}
+                      >
+                        {schedule.enabled ? "Disable" : schedule.nextFireAt === null ? "Finished" : "Enable"}
+                      </button>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
           </div>
           {collection.items.length === 0 ? (
             <div className="publication-group-empty">
