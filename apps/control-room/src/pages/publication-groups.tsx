@@ -389,7 +389,7 @@ export function PublicationGroupsPage() {
                             type="checkbox"
                             checked={routeEnabled}
                             onChange={(event) => toggleRoute(connection.id, event.target.checked)}
-                            disabled={connection.status !== "active" && editor.enabled}
+                            disabled={!routeEnabled && connection.status !== "active" && editor.enabled}
                           />
                           <span>Publish through this destination</span>
                         </label>
