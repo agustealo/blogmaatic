@@ -35,6 +35,11 @@ export interface ControlRoomUpdateService {
   install(): Promise<ControlRoomUpdateStatus>;
 }
 
+export interface ControlRoomDiagnostics {
+  readonly productVersion: string;
+  readonly runtimeStatus: "running";
+}
+
 function securityHeaders(response: ServerResponse): void {
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "no-referrer");
@@ -219,6 +224,35 @@ function requestShutdown(
   setImmediate(onShutdown);
 }
 
+function diagnosticsAction(
+  request: IncomingMessage,
+  response: ServerResponse,
+  controlRoomOrigin: string,
+  sessionCookieName: string,
+  sessionToken: string,
+  sessionProof: string,
+  productVersion: string | undefined,
+): void {
+  if (!sessionAuthorized(request, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof)) {
+    forbiddenProxy(response);
+    return;
+  }
+  if (request.method !== "GET") {
+    response.statusCode = 405;
+    response.setHeader("allow", "GET");
+    response.setHeader("cache-control", "no-store");
+    response.end("Method not allowed");
+    return;
+  }
+  const version = productVersion?.trim();
+  if (!version) {
+    json(response, 503, { error: { code: "CONTROL_ROOM_DIAGNOSTICS_UNAVAILABLE", message: "Runtime product metadata is unavailable" } });
+    return;
+  }
+  const diagnostics: ControlRoomDiagnostics = { productVersion: version, runtimeStatus: "running" };
+  json(response, 200, diagnostics);
+}
+
 async function updateAction(
   request: IncomingMessage,
   response: ServerResponse,
@@ -370,6 +404,7 @@ export class ControlRoomServer {
     readonly operatorToken: string;
     readonly onShutdown?: () => void;
     readonly updates?: ControlRoomUpdateService;
+    readonly productVersion?: string;
   }): Promise<ControlRoomServer> {
     const root = resolve(options.root);
     const index = resolve(root, "index.html");
@@ -426,6 +461,17 @@ export class ControlRoomServer {
       } else if (pathname === "/local/shutdown") {
         requestShutdown(request, response, controlRoomOrigin, options.operatorToken, options.onShutdown);
         task = Promise.resolve();
+      } else if (pathname === "/local/diagnostics") {
+        diagnosticsAction(
+          request,
+          response,
+          controlRoomOrigin,
+          sessionCookieName,
+          sessionToken,
+          sessionProof,
+          options.productVersion,
+        );
+        task = Promise.resolve();
       } else if (pathname === "/local/update" || pathname === "/local/update/install") {
         task = updateAction(
           request,
@@ -438,27 +484,10 @@ export class ControlRoomServer {
           updateService,
         );
       } else if (pathname.startsWith("/session/")) {
-        bootstrapSession(
-          request,
-          response,
-          controlRoomOrigin,
-          sessionCookieName,
-          sessionToken,
-          sessionProof,
-          consumeBootstrap,
-        );
+        bootstrapSession(request, response, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof, consumeBootstrap);
         task = Promise.resolve();
       } else if (pathname === "/api" || pathname.startsWith("/api/")) {
-        task = proxy(
-          request,
-          response,
-          options.operatorOrigin,
-          options.operatorToken,
-          controlRoomOrigin,
-          sessionCookieName,
-          sessionToken,
-          sessionProof,
-        );
+        task = proxy(request, response, options.operatorOrigin, options.operatorToken, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof);
       } else {
         task = serveStatic(request, response, root);
       }
@@ -487,11 +516,7 @@ export class ControlRoomServer {
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
       throw new Error("Control Room server did not establish its bound origin");
     }
-    return new ControlRoomServer(
-      server,
-      controlRoomOrigin,
-      mintBootstrap(),
-    );
+    return new ControlRoomServer(server, controlRoomOrigin, mintBootstrap());
   }
 
   async close(): Promise<void> {
