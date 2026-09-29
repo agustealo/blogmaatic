@@ -63,7 +63,7 @@ function dataDir(args: ParsedArgs): string {
 }
 
 function usage(): void {
-  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. It reuses a running local runtime or starts one in the background, then mints a fresh one-use Control Room browser capability.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
+  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. On first launch it initializes an empty secure runtime automatically, then reuses a running local runtime or starts one in the background and mints a fresh one-use Control Room browser capability.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
 }
 
 async function productVersion(): Promise<string> {
@@ -127,6 +127,21 @@ async function init(args: ParsedArgs): Promise<void> {
   if (config.connections.length === 0) console.log("No publisher connection was configured. Add a real extension connection before publishing.");
   else console.log(`Configured ${config.connections.length} real publisher connection(s).`);
   console.log("Run `blogmaatic open` to launch the Control Room; browser authentication is handled by the local runtime.");
+}
+
+async function ensureConsumerRuntime(paths: RuntimePaths): Promise<{ readonly config: RuntimeConfig; readonly operatorToken: string; readonly initialized: boolean }> {
+  let config: RuntimeConfig;
+  let initialized = false;
+  try {
+    config = await loadRuntimeConfig(paths.configPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    config = await configForFirstRun({});
+    await writeRuntimeConfig(paths.configPath, config);
+    initialized = true;
+  }
+  const credential = await ensureOperatorToken(paths.operatorTokenPath);
+  return { config, operatorToken: credential.token, initialized };
 }
 
 async function start(args: ParsedArgs): Promise<void> {
@@ -227,8 +242,9 @@ function launchDefaultBrowser(url: string): void {
 
 async function openControlRoom(args: ParsedArgs): Promise<void> {
   const paths = runtimePaths(dataDir(args));
-  const config = await loadRuntimeConfig(paths.configPath);
-  const operatorToken = await readOperatorToken(paths.operatorTokenPath);
+  const authority = await ensureConsumerRuntime(paths);
+  const { config, operatorToken } = authority;
+  if (authority.initialized) console.log(`Initialized Blogmaatic for first launch at ${paths.dataDir}`);
 
   let launchAddress = await requestLaunch(config, operatorToken);
   let logPath: string | undefined;
