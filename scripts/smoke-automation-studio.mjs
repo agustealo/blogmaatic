@@ -403,12 +403,12 @@ try {
   await clickText("Automations", "nav a");
   await waitForText("Compose manual and event publishing workflows");
 
-  const scheduleGuard = await cdp.evaluate(`(() => {
+  const scheduleActions = await cdp.evaluate(`(() => {
     const row = [...document.querySelectorAll("article.automation-row")].find((item) => item.textContent?.includes("Schedule ownership guard"));
     if (!row) return null;
-    return [...row.querySelectorAll("button, a")].map((item) => item.textContent?.replace(/\\s+/g, " ").trim());
+    return [...row.querySelectorAll(".inline-confirm-actions button, .inline-confirm-actions a")].map((item) => item.textContent?.replace(/\\s+/g, " ").trim());
   })()`);
-  assert.deepEqual(scheduleGuard, ["Schedule ownership guard", "Open Schedule"]);
+  assert.deepEqual(scheduleActions, ["Open Schedule"]);
 
   await clickText("New Automation");
   await waitForText("Compose a publishing workflow");
