@@ -46,13 +46,14 @@ import { SqliteProjectionStateStore } from "@blogmaatic/state-sqlite";
 
 import type { RuntimeConfig, RuntimePaths } from "./config.js";
 import { ConnectionManager } from "./connection-manager.js";
-import { ControlRoomServer } from "./control-room-server.js";
+import { ControlRoomServer, type ControlRoomUpdateStatus } from "./control-room-server.js";
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
 import { PublicationGroupManager } from "./publication-group-manager.js";
 import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 import { ScheduleManager } from "./schedule-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
+import { checkForUpdate, openPreparedInstaller, prepareUpdate, verifyPreparedUpdate, type UpdateCheck } from "./update.js";
 
 export interface RunningRuntime {
   readonly operatorAddress: string;
@@ -72,6 +73,18 @@ function createSecretAuthority(): SecretAuthority {
     providers.push(new OsCredentialSecretProvider());
   }
   return new SecretAuthority(providers);
+}
+
+function browserUpdateStatus(status: UpdateCheck, installerOpened = false): ControlRoomUpdateStatus {
+  return {
+    currentVersion: status.currentVersion,
+    latestVersion: status.latestVersion,
+    tag: status.tag,
+    releaseUrl: status.releaseUrl,
+    updateAvailable: status.updateAvailable,
+    ...(status.packageName ? { packageName: status.packageName } : {}),
+    ...(installerOpened ? { installerOpened: true } : {}),
+  };
 }
 
 export async function inspectConfiguredConnections(
@@ -146,6 +159,7 @@ export async function startRuntime(options: {
   readonly controlRoomRoot?: string;
   readonly logger?: Pick<Console, "info" | "error">;
   readonly onShutdown?: () => void;
+  readonly productVersion?: string;
 }): Promise<RunningRuntime> {
   const { config, paths } = options;
   const logger = options.logger ?? console;
@@ -254,6 +268,17 @@ export async function startRuntime(options: {
       onError: (error) => logger.error(`Scheduler dispatch failed: ${error.message}`),
     });
 
+    const updates = options.productVersion ? {
+      check: async () => browserUpdateStatus(await checkForUpdate(options.productVersion!)),
+      install: async () => {
+        const prepared = await prepareUpdate(options.productVersion!, paths.dataDir);
+        if (!prepared.updateAvailable) return browserUpdateStatus(prepared);
+        await verifyPreparedUpdate(prepared);
+        openPreparedInstaller(prepared);
+        return browserUpdateStatus(prepared, true);
+      },
+    } : undefined;
+
     controlRoom = await ControlRoomServer.start({
       root: options.controlRoomRoot ?? controlRoomDist(),
       host: config.controlRoom.host,
@@ -261,10 +286,9 @@ export async function startRuntime(options: {
       operatorOrigin: operator.address.replace(/\/$/, ""),
       operatorToken: options.operatorToken,
       ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
+      ...(updates ? { updates } : {}),
     });
 
-    // Startup becomes externally active only after every fallible listener is ready.
-    // This prevents due schedules from publishing during a startup that later fails.
     scheduler.start();
 
     const fatal = managedRestate?.fatal ?? new Promise<never>(() => undefined);
