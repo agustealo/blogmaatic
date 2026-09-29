@@ -15,6 +15,7 @@ on:
       - "packages/operator-client/**"
       - "scripts/capture-product-screenshots.mjs"
       - "scripts/smoke-consumer-publishing.mjs"
+      - "docs/screenshots/**"
       - "package.json"
       - "package-lock.json"
   workflow_dispatch:
