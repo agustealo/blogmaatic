@@ -51,6 +51,7 @@ import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
 import { PublicationGroupManager } from "./publication-group-manager.js";
 import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
+import { ScheduleManager } from "./schedule-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
 
 export interface RunningRuntime {
@@ -227,6 +228,7 @@ export async function startRuntime(options: {
       publicationGroups,
       controlPlane,
     });
+    const schedules = new ScheduleManager({ store: controlPlaneStore });
     operator = await startOperatorApi({
       controlPlane,
       store: controlPlaneStore,
@@ -234,6 +236,7 @@ export async function startRuntime(options: {
       connections: connectionManager,
       publicationGroups,
       publications,
+      schedules,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
         token: options.operatorToken,
