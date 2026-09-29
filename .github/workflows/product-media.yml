@@ -68,12 +68,14 @@ jobs:
             06-runs.png
             07-run-detail.png
             08-operations.png
+            09-publication-groups.png
+            10-publications.png
             capture-manifest.json
           )
           for asset in "${expected[@]}"; do
             test -s "docs/screenshots/${asset}"
           done
-          test "$(find docs/screenshots -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 8
+          test "$(find docs/screenshots -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 10
           node -e '
             const fs = require("node:fs");
             const manifest = JSON.parse(fs.readFileSync("docs/screenshots/capture-manifest.json", "utf8"));
@@ -81,6 +83,7 @@ jobs:
               throw new Error(`Screenshot manifest source ${manifest.sourceCommit} does not match exact head ${process.env.GITHUB_SHA}`);
             }
             if (manifest.source !== "real-runtime-capture") throw new Error("Screenshot manifest is not a real-runtime capture");
+            if (manifest.captures.length !== 10) throw new Error(`Expected 10 canonical captures, got ${manifest.captures.length}`);
           '
 
       - name: Report exact-head media evidence
