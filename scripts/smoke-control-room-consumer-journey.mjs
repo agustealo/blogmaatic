@@ -254,8 +254,9 @@ async function initializeJekyllRepository() {
   await execFileAsync("git", ["init", "-b", "main", repositoryPath], { encoding: "utf8" });
   await execFileAsync("git", ["-C", repositoryPath, "config", "user.name", "Blogmaatic Browser Burn"], { encoding: "utf8" });
   await execFileAsync("git", ["-C", repositoryPath, "config", "user.email", "browser-burn@example.invalid"], { encoding: "utf8" });
+  await writeFile(join(repositoryPath, "_config.yml"), "title: Blogmaatic Browser Journey\nurl: https://example.invalid\n", "utf8");
   await writeFile(join(repositoryPath, "index.md"), "---\nlayout: home\n---\n\nBrowser journey fixture.\n", "utf8");
-  await execFileAsync("git", ["-C", repositoryPath, "add", "index.md"], { encoding: "utf8" });
+  await execFileAsync("git", ["-C", repositoryPath, "add", "_config.yml", "index.md"], { encoding: "utf8" });
   await execFileAsync("git", ["-C", repositoryPath, "commit", "-m", "Initialize browser journey fixture"], { encoding: "utf8" });
 }
 
