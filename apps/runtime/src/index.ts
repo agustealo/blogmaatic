@@ -5,6 +5,7 @@ export * from "./control-room-server.js";
 export * from "./credentials.js";
 export * from "./init.js";
 export * from "./processes.js";
+export * from "./product-version.js";
 export * from "./publication-group-manager.js";
 export * from "./publication-workspace-manager.js";
 export * from "./runtime.js";
