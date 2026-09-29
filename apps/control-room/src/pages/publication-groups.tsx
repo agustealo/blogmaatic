@@ -126,6 +126,7 @@ export function PublicationGroupsPage() {
   const [supportLoading, setSupportLoading] = useState(true);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [actionError, setActionError] = useState<Error | null>(null);
   const [changeNonce, setChangeNonce] = useState(0);
 
@@ -178,11 +179,13 @@ export function PublicationGroupsPage() {
       setActionError(new Error("No publication policy set is configured"));
       return;
     }
+    setPendingToggle(null);
     setActionError(null);
     setEditor(createEditor(policySetIds[0] ?? ""));
   }, [policySetIds]);
 
   const startEdit = useCallback((entry: PublicationGroupRegistryEntry) => {
+    setPendingToggle(null);
     setActionError(null);
     setEditor(editEditor(entry));
     navigate(`/publication-groups/${encodeURIComponent(entry.group.id)}`);
@@ -275,7 +278,6 @@ export function PublicationGroupsPage() {
 
   const toggleEnabled = useCallback(async (entry: PublicationGroupRegistryEntry) => {
     const nextEnabled = !entry.enabled;
-    if (!window.confirm(`${nextEnabled ? "Enable" : "Disable"} ${entry.group.name}?`)) return;
     setBusy(`toggle:${entry.group.id}`);
     setActionError(null);
     try {
@@ -283,6 +285,7 @@ export function PublicationGroupsPage() {
         expectedVersion: entry.version,
         enabled: nextEnabled,
       });
+      setPendingToggle(null);
       if (editor?.groupId === updated.group.id) setEditor(editEditor(updated));
       setChangeNonce((value) => value + 1);
     } catch (cause) {
@@ -320,24 +323,36 @@ export function PublicationGroupsPage() {
         <Panel className="publication-group-list-panel">
           {collection.loading ? <LoadingBlock /> : (
             <div className="publication-group-list">
-              {collection.items.map((entry) => (
-                <article className="publication-group-row" key={entry.group.id}>
-                  <button className="publication-group-row__identity" type="button" onClick={() => startEdit(entry)}>
-                    <strong>{entry.group.name}</strong>
-                    <small>{entry.group.id}</small>
-                  </button>
-                  <div><small>Destinations</small><span>{entry.group.routes.length}</span></div>
-                  <div><small>Policy</small><span>{entry.group.policySetId}</span></div>
-                  <div><small>Version</small><span>v{entry.version}</span></div>
-                  <StatusPill value={entry.enabled ? "enabled" : "disabled"} />
-                  <div className="publication-group-row__actions">
-                    <button className="button button--quiet" type="button" onClick={() => startEdit(entry)} disabled={busy !== null}>Manage</button>
-                    <button className={entry.enabled ? "button button--danger" : "button button--primary"} type="button" onClick={() => void toggleEnabled(entry)} disabled={busy !== null}>
-                      {busy === `toggle:${entry.group.id}` ? "Saving…" : entry.enabled ? "Disable" : "Enable"}
+              {collection.items.map((entry) => {
+                const confirming = pendingToggle === entry.group.id;
+                return (
+                  <article className="publication-group-row" key={entry.group.id}>
+                    <button className="publication-group-row__identity" type="button" onClick={() => startEdit(entry)}>
+                      <strong>{entry.group.name}</strong>
+                      <small>{entry.group.id}</small>
                     </button>
-                  </div>
-                </article>
-              ))}
+                    <div><small>Destinations</small><span>{entry.group.routes.length}</span></div>
+                    <div><small>Policy</small><span>{entry.group.policySetId}</span></div>
+                    <div><small>Version</small><span>v{entry.version}</span></div>
+                    <StatusPill value={entry.enabled ? "enabled" : "disabled"} />
+                    <div className="publication-group-row__actions">
+                      <button className="button button--quiet" type="button" onClick={() => startEdit(entry)} disabled={busy !== null}>Manage</button>
+                      {confirming ? (
+                        <div className="inline-confirm-actions" role="group" aria-label={`${entry.enabled ? "Disable" : "Enable"} ${entry.group.name}`}>
+                          <button className="button button--quiet" type="button" onClick={() => setPendingToggle(null)} disabled={busy !== null}>Cancel</button>
+                          <button className={entry.enabled ? "button button--danger" : "button button--primary"} type="button" autoFocus onClick={() => void toggleEnabled(entry)} disabled={busy !== null}>
+                            {busy === `toggle:${entry.group.id}` ? "Saving…" : `Confirm ${entry.enabled ? "disable" : "enable"}`}
+                          </button>
+                        </div>
+                      ) : (
+                        <button className={entry.enabled ? "button button--danger" : "button button--primary"} type="button" onClick={() => setPendingToggle(entry.group.id)} disabled={busy !== null}>
+                          {entry.enabled ? "Disable" : "Enable"}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
               {collection.items.length === 0 ? (
                 <div className="publication-group-empty">
                   <EmptyState title="No Publication Groups yet">Create one here instead of reaching for the Operator API. A group is the reusable routing unit Automations publish through.</EmptyState>
@@ -354,7 +369,7 @@ export function PublicationGroupsPage() {
             <form className="publication-group-editor__form" onSubmit={save}>
               <label className="field">
                 <span>Group name</span>
-                <input value={editor.name} onChange={(event) => setEditor((current) => current ? { ...current, name: event.target.value } : current)} required autoComplete="off" />
+                <input autoFocus value={editor.name} onChange={(event) => setEditor((current) => current ? { ...current, name: event.target.value } : current)} required autoComplete="off" />
               </label>
               <label className="field">
                 <span>Policy set</span>
