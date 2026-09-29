@@ -58,7 +58,7 @@ test("local launcher authority mints fresh one-use Control Room launch capabilit
       },
     });
     assert.equal(browserOnly.status, 403);
-    assert.equal((await browserOnly.json()).error.code, "CONTROL_ROOM_LAUNCH_FORBIDDEN");
+    assert.equal((await browserOnly.json()).error.code, "CONTROL_ROOM_LOCAL_AUTHORITY_REQUIRED");
 
     const wrongToken = await fetch(`${host.address}/local/launch`, {
       method: "POST",
@@ -103,6 +103,65 @@ test("local launcher authority mints fresh one-use Control Room launch capabilit
     assert.notEqual(secondLaunch, firstLaunch);
     const secondBootstrap = await fetch(secondLaunch, { redirect: "manual", headers: { "sec-fetch-site": "none" } });
     assert.equal(secondBootstrap.status, 303);
+  } finally {
+    await host.close();
+    await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("only local operator authority may request runtime shutdown", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blogmaatic-control-room-shutdown-"));
+  await writeFile(join(root, "index.html"), "<main>control room</main>");
+  const upstream = createServer((_request, response) => response.end("{}"));
+  const operatorOrigin = await listen(upstream);
+  let shutdowns = 0;
+  const host = await ControlRoomServer.start({
+    root,
+    host: "127.0.0.1",
+    port: 0,
+    operatorOrigin,
+    operatorToken: OPERATOR_TOKEN,
+    onShutdown: () => { shutdowns += 1; },
+  });
+  try {
+    const bootstrap = await fetch(host.launchAddress, { redirect: "manual", headers: { "sec-fetch-site": "none" } });
+    assert.equal(bootstrap.status, 303);
+    const session = sessionFrom(bootstrap, host.address);
+
+    const browserOnly = await fetch(`${host.address}/local/shutdown`, {
+      method: "POST",
+      headers: {
+        cookie: session.cookie,
+        "x-blogmaatic-session-proof": session.proof,
+        origin: host.address,
+        "sec-fetch-site": "same-origin",
+      },
+    });
+    assert.equal(browserOnly.status, 403);
+    assert.equal(shutdowns, 0);
+
+    const crossOrigin = await fetch(`${host.address}/local/shutdown`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${OPERATOR_TOKEN}`,
+        origin: "https://attacker.example",
+        "sec-fetch-site": "cross-site",
+      },
+    });
+    assert.equal(crossOrigin.status, 403);
+    assert.equal(shutdowns, 0);
+
+    const accepted = await fetch(`${host.address}/local/shutdown`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${OPERATOR_TOKEN}`, "sec-fetch-site": "none" },
+    });
+    assert.equal(accepted.status, 202);
+    assert.deepEqual(await accepted.json(), { accepted: true });
+    for (let attempt = 0; attempt < 20 && shutdowns === 0; attempt += 1) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+    assert.equal(shutdowns, 1);
   } finally {
     await host.close();
     await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
