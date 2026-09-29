@@ -63,7 +63,7 @@ function dataDir(args: ParsedArgs): string {
 }
 
 function usage(): void {
-  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. On first launch it initializes an empty secure runtime automatically, then reuses a running local runtime or starts one in the background and mints a fresh one-use Control Room browser capability.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
+  console.log(`Blogmaatic runtime\n\nCommands:\n  init [--data-dir PATH] [--jekyll-repo PATH] [--author-name NAME] [--author-email EMAIL] [--push] [--build-verification none|bundle] [--site-base-url URL]\n  open [--data-dir PATH] [--no-browser]\n  stop [--data-dir PATH]\n  start [--data-dir PATH]\n  doctor [--data-dir PATH] [--json]\n  backup [--data-dir PATH] --output PATH\n  verify-backup --input PATH\n  restore [--data-dir PATH] --input PATH [--replace]\n  version\n\nAdvanced:\n  token [--data-dir PATH]    Print the local operator credential for an external API client. The bundled Control Room does not require this.\n\nUse \`blogmaatic open\` for normal consumer launch. On first launch it initializes an empty secure runtime automatically, then reuses a running local runtime or starts one in the background and mints a fresh one-use Control Room browser capability. Use \`blogmaatic stop\` before offline backup or restore.\n\nBackup/restore is offline-only. Backups contain durable Blogmaatic state but never the local operator credential or OS-vault secret material. Restoring on another machine may require re-entering destination credentials.\n\nThe managed local runtime binds only to loopback and owns Restate ports 8080/9070, workflow port 9080, Operator API port 4317, and Control Room port 4320.`);
 }
 
 async function productVersion(): Promise<string> {
@@ -148,15 +148,15 @@ async function start(args: ParsedArgs): Promise<void> {
   const paths = runtimePaths(dataDir(args));
   const config = await loadRuntimeConfig(paths.configPath);
   const token = await readOperatorToken(paths.operatorTokenPath);
-  const runtime = await startRuntime({ config, paths, operatorToken: token });
+  let resolveSignal!: () => void;
+  const signal = new Promise<void>((resolveStop) => { resolveSignal = resolveStop; });
+  const runtime = await startRuntime({ config, paths, operatorToken: token, onShutdown: resolveSignal });
   if (!flag(args, "background")) {
     console.log(`Operator API: ${runtime.operatorAddress}`);
     console.log(`Control Room: ${runtime.controlRoomLaunchAddress}`);
     console.log("Control Room authentication: one-time launch capability → HttpOnly runtime session");
   }
 
-  let resolveSignal!: () => void;
-  const signal = new Promise<void>((resolveStop) => { resolveSignal = resolveStop; });
   const onSignal = () => resolveSignal();
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
@@ -198,6 +198,25 @@ async function requestLaunch(config: RuntimeConfig, operatorToken: string): Prom
     throw new Error("Control Room returned an invalid launch address");
   }
   return launch.toString();
+}
+
+async function requestStop(config: RuntimeConfig, operatorToken: string): Promise<boolean> {
+  const origin = httpOrigin(config.controlRoom.host, config.controlRoom.port);
+  let response: Response;
+  try {
+    response = await fetch(`${origin}/local/shutdown`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${operatorToken}`, accept: "application/json" },
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+    });
+  } catch {
+    return false;
+  }
+  if (response.status === 403) throw new Error("The running Control Room rejected this data directory's local operator credential");
+  if (response.status === 404) throw new Error("The running Control Room does not support clean shutdown. Restart it using the current installation.");
+  if (response.status !== 202) throw new Error(`Control Room shutdown failed with HTTP ${response.status}`);
+  return true;
 }
 
 async function startBackgroundRuntime(paths: RuntimePaths): Promise<string> {
@@ -261,6 +280,28 @@ async function openControlRoom(args: ParsedArgs): Promise<void> {
 
   console.log(`Control Room: ${launchAddress}`);
   if (!flag(args, "no-browser")) launchDefaultBrowser(launchAddress);
+}
+
+async function stopControlRoom(args: ParsedArgs): Promise<void> {
+  const paths = runtimePaths(dataDir(args));
+  const config = await loadRuntimeConfig(paths.configPath);
+  const operatorToken = await readOperatorToken(paths.operatorTokenPath);
+  const accepted = await requestStop(config, operatorToken);
+  if (!accepted) {
+    console.log("Blogmaatic is not running.");
+    return;
+  }
+  const origin = httpOrigin(config.controlRoom.host, config.controlRoom.port);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    try {
+      await fetch(origin, { signal: AbortSignal.timeout(250) });
+    } catch {
+      console.log("Blogmaatic stopped cleanly.");
+      return;
+    }
+  }
+  throw new Error("Blogmaatic accepted shutdown but the Control Room did not stop");
 }
 
 async function token(args: ParsedArgs): Promise<void> {
@@ -348,6 +389,7 @@ async function main(): Promise<void> {
   if (args.command === "help" || args.command === "--help" || args.command === "-h") return usage();
   if (args.command === "init") return init(args);
   if (args.command === "open") return openControlRoom(args);
+  if (args.command === "stop") return stopControlRoom(args);
   if (args.command === "start") return start(args);
   if (args.command === "token") return token(args);
   if (args.command === "doctor") return doctor(args);
