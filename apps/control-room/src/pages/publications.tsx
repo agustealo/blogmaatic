@@ -142,6 +142,7 @@ export function PublicationsPage() {
   const [statusFilter, setStatusFilter] = useState<"" | WorkspacePublicationStatus>("");
   const [editor, setEditor] = useState<PublicationEditor | null>(null);
   const [busy, setBusy] = useState<"save" | "publish" | null>(null);
+  const [pendingPublish, setPendingPublish] = useState(false);
   const [actionError, setActionError] = useState<Error | null>(null);
   const [dispatchResult, setDispatchResult] = useState<PublicationWorkspaceDispatchResult | null>(null);
   const [changeNonce, setChangeNonce] = useState(0);
@@ -163,6 +164,7 @@ export function PublicationsPage() {
     void client.getPublication(publicationId)
       .then((entry) => {
         setEditor(editorForEntry(entry));
+        setPendingPublish(false);
         setDispatchResult(null);
       })
       .catch((cause: unknown) => {
@@ -173,12 +175,14 @@ export function PublicationsPage() {
   useEffect(() => {
     if (selectedEntry && (!editor || editor.publicationId !== selectedEntry.publication.id)) {
       setEditor(editorForEntry(selectedEntry));
+      setPendingPublish(false);
     }
   }, [editor, selectedEntry]);
 
   const startCreate = useCallback(() => {
     setActionError(null);
     setDispatchResult(null);
+    setPendingPublish(false);
     setEditor(editorForCreate());
     navigate("/publications");
   }, [navigate]);
@@ -186,6 +190,7 @@ export function PublicationsPage() {
   const startEdit = useCallback((entry: PublicationWorkspaceEntry) => {
     setActionError(null);
     setDispatchResult(null);
+    setPendingPublish(false);
     setEditor(editorForEntry(entry));
     navigate(`/publications/${encodeURIComponent(entry.publication.id)}`);
   }, [navigate]);
@@ -196,6 +201,7 @@ export function PublicationsPage() {
     setBusy("save");
     setActionError(null);
     setDispatchResult(null);
+    setPendingPublish(false);
     try {
       if (!editor.title.trim()) throw new Error("Title is required");
       if (editor.hasUnsupportedBlocks && editor.mode === "edit") {
@@ -236,7 +242,7 @@ export function PublicationsPage() {
       setActionError(new Error("This publication contains unsupported block types. Review it with a block-aware editor before publishing."));
       return;
     }
-    if (!window.confirm(`Approve and publish “${editor.title}”? Blogmaatic will dispatch every enabled publication.approved Automation that matches this event.`)) return;
+    setPendingPublish(false);
     setBusy("publish");
     setActionError(null);
     setDispatchResult(null);
@@ -316,21 +322,31 @@ export function PublicationsPage() {
                   <span>The simple editor is read-only for body content so Blogmaatic does not destroy unsupported structure.</span>
                 </div>
               ) : null}
-              <label className="field"><span>Title *</span><input value={editor.title} onChange={(event) => setEditor((current) => current ? { ...current, title: event.target.value } : current)} required autoComplete="off" /></label>
-              <label className="field"><span>Summary</span><textarea rows={3} value={editor.summary} onChange={(event) => setEditor((current) => current ? { ...current, summary: event.target.value } : current)} /></label>
-              <label className="field publication-body-field"><span>Body</span><textarea rows={16} value={editor.body} readOnly={editor.hasUnsupportedBlocks} onChange={(event) => setEditor((current) => current ? { ...current, body: event.target.value } : current)} placeholder="Write the publication body. Blank lines create paragraph blocks." /></label>
+              <label className="field"><span>Title *</span><input value={editor.title} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, title: event.target.value } : current); }} required autoComplete="off" /></label>
+              <label className="field"><span>Summary</span><textarea rows={3} value={editor.summary} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, summary: event.target.value } : current); }} /></label>
+              <label className="field publication-body-field"><span>Body</span><textarea rows={16} value={editor.body} readOnly={editor.hasUnsupportedBlocks} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, body: event.target.value } : current); }} placeholder="Write the publication body. Blank lines create paragraph blocks." /></label>
               <div className="publication-editor__grid">
-                <label className="field"><span>Tags</span><input value={editor.tags} onChange={(event) => setEditor((current) => current ? { ...current, tags: event.target.value } : current)} placeholder="news, launch, product" /></label>
-                <label className="field"><span>Language</span><input value={editor.language} onChange={(event) => setEditor((current) => current ? { ...current, language: event.target.value } : current)} required /></label>
-                <label className="field"><span>Slug</span><input value={editor.slug} onChange={(event) => setEditor((current) => current ? { ...current, slug: event.target.value } : current)} /></label>
-                <label className="field"><span>Canonical URL</span><input type="url" value={editor.canonicalUrl} onChange={(event) => setEditor((current) => current ? { ...current, canonicalUrl: event.target.value } : current)} /></label>
-                <label className="field"><span>Status</span><select value={editor.status} onChange={(event) => setEditor((current) => current ? { ...current, status: event.target.value as WorkspacePublicationStatus } : current)}>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label className="field"><span>Tags</span><input value={editor.tags} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, tags: event.target.value } : current); }} placeholder="news, launch, product" /></label>
+                <label className="field"><span>Language</span><input value={editor.language} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, language: event.target.value } : current); }} required /></label>
+                <label className="field"><span>Slug</span><input value={editor.slug} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, slug: event.target.value } : current); }} /></label>
+                <label className="field"><span>Canonical URL</span><input type="url" value={editor.canonicalUrl} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, canonicalUrl: event.target.value } : current); }} /></label>
+                <label className="field"><span>Status</span><select value={editor.status} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, status: event.target.value as WorkspacePublicationStatus } : current); }}>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               </div>
               <div className="publication-editor__actions">
-                <button className="button button--quiet" type="button" onClick={() => { setEditor(null); setDispatchResult(null); navigate("/publications"); }} disabled={busy !== null}>Close</button>
+                <button className="button button--quiet" type="button" onClick={() => { setEditor(null); setPendingPublish(false); setDispatchResult(null); navigate("/publications"); }} disabled={busy !== null}>Close</button>
                 <button className="button button--primary" type="submit" disabled={busy !== null || !editor.title.trim() || editor.hasUnsupportedBlocks}>{busy === "save" ? "Saving…" : editor.mode === "create" ? "Create Draft" : "Save New Version"}</button>
-                {canPublish ? <button className="button publication-publish-button" type="button" onClick={() => void publish()} disabled={busy !== null}>{busy === "publish" ? "Publishing…" : "Approve & Publish"}</button> : null}
+                {canPublish && !pendingPublish ? <button className="button publication-publish-button" type="button" onClick={() => setPendingPublish(true)} disabled={busy !== null}>{busy === "publish" ? "Publishing…" : "Approve & Publish"}</button> : null}
               </div>
+              {canPublish && pendingPublish ? (
+                <div className="confirmation-strip confirmation-strip--primary" role="group" aria-label="Confirm publication approval and dispatch">
+                  <strong>Approve and publish “{editor.title}”?</strong>
+                  <span>This dispatches every enabled <code>publication.approved</code> Automation that matches the canonical event. The saved workspace snapshot is used for the dispatch.</span>
+                  <div>
+                    <button className="button button--quiet" type="button" onClick={() => setPendingPublish(false)} disabled={busy !== null}>Cancel</button>
+                    <button className="button button--primary" type="button" onClick={() => void publish()} disabled={busy !== null} autoFocus>{busy === "publish" ? "Publishing…" : "Confirm publish"}</button>
+                  </div>
+                </div>
+              ) : null}
               <p className="security-note">Saving creates an immutable workspace version. Content edits also create a new canonical Publication revision. Existing runs keep their original snapshots.</p>
             </form>
           </Panel>
