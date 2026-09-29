@@ -204,7 +204,7 @@ try {
   await cdp.send("Runtime.enable");
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await waitForExpression(`document.readyState === "complete" && document.body?.innerText.includes("Set up your publishing engine")`);
-  await waitForExpression(`document.querySelector(".skip-link") && document.querySelector("#main-content")`);
+  await waitForExpression(`Boolean(document.querySelector(".skip-link") && document.querySelector("#main-content"))`);
 
   await cdp.evaluate("document.activeElement instanceof HTMLElement && document.activeElement.blur(); true");
   await pressKey("Tab", "Tab", 9);
