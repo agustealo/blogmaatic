@@ -416,14 +416,63 @@ async function seedProductState(token) {
     if (resultResponse.status === 200) {
       const result = await resultResponse.json();
       assert.equal(result.outcome, "completed");
-      return { connection, group, automation, workspace: dispatch.publication, run };
+      break;
     }
     if (resultResponse.status !== 409) {
       throw new Error(`Unexpected run result status ${resultResponse.status}: ${await resultResponse.text()}`);
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
-  throw new Error(`Timed out waiting for product-media run ${run.runId}`);
+
+  const resultResponse = await api(token, `/v1/runs/${encodeURIComponent(run.runId)}/result`);
+  await expectStatus(resultResponse, 200);
+  assert.equal((await resultResponse.json()).outcome, "completed");
+
+  const scheduleId = "schedule-editorial-future";
+  const scheduleAutomation = {
+    id: "automation-editorial-schedule",
+    version: 1,
+    name: "Publish the durable editorial on schedule",
+    enabled: true,
+    trigger: { kind: "schedule", scheduleId },
+    steps: [{ id: "publish", kind: "publish_group", groupId: group.group.id }],
+  };
+  const scheduleAutomationResponse = await api(token, "/v1/automations", {
+    method: "POST",
+    body: JSON.stringify(scheduleAutomation),
+  });
+  await expectStatus(scheduleAutomationResponse, 201);
+
+  const scheduleResponse = await api(token, "/v1/schedules", {
+    method: "POST",
+    body: JSON.stringify({
+      id: scheduleId,
+      automationId: scheduleAutomation.id,
+      automationVersion: scheduleAutomation.version,
+      publication: dispatch.publication.publication,
+      groups: [group.group],
+      timezone: "America/Detroit",
+      localDate: "2030-01-15",
+      localTime: "09:00",
+      recurrence: { kind: "weekly", weekdays: [1, 3, 5] },
+      missedRunPolicy: "skip",
+      enabled: true,
+    }),
+  });
+  await expectStatus(scheduleResponse, 201);
+  const schedule = await scheduleResponse.json();
+  assert.equal(schedule.id, scheduleId);
+  assert.equal(schedule.enabled, true);
+
+  return {
+    connection,
+    group,
+    automation,
+    scheduleAutomation,
+    schedule,
+    workspace: dispatch.publication,
+    run,
+  };
 }
 
 try {
@@ -489,14 +538,23 @@ try {
   await navigate(origin, "/publications", "Publications");
   await capture("10-publications");
 
+  await navigate(origin, "/schedules", "Schedules");
+  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await capture("11-schedules");
+
   await setViewport(mobileViewport);
   await navigate(origin, "/publications", "Publications");
   await assertMobileLayout();
-  await capture("11-mobile-publications");
+  await capture("12-mobile-publications");
 
   await navigate(origin, "/publication-groups", "Publication Groups");
   await assertMobileLayout();
-  await capture("12-mobile-publication-groups");
+  await capture("13-mobile-publication-groups");
+
+  await navigate(origin, "/schedules", "Schedules");
+  await assertMobileLayout();
+  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await capture("14-mobile-schedules");
 
   const manifest = {
     schemaVersion: 1,
@@ -513,6 +571,7 @@ try {
       publicationGroup: "created through canonical Publication Group authority",
       publication: "created and approved through canonical Publication Workspace authority",
       automation: "publication.approved automation registered through canonical automation registry",
+      schedule: "future weekly schedule created through canonical schedule authority against an approved publication snapshot",
       run: "real completed durable publication run dispatched by Publication Workspace",
     },
     captures: [
@@ -526,8 +585,10 @@ try {
       { file: "08-operations.png", route: "/operations", feature: "operator attention surface", viewport: "desktop" },
       { file: "09-publication-groups.png", route: "/publication-groups", feature: "durable publication topology management", viewport: "desktop" },
       { file: "10-publications.png", route: "/publications", feature: "canonical Publication Workspace", viewport: "desktop" },
-      { file: "11-mobile-publications.png", route: "/publications", feature: "mobile Publication Workspace with no document overflow", viewport: "mobile" },
-      { file: "12-mobile-publication-groups.png", route: "/publication-groups", feature: "mobile publication topology with visible mobile navigation", viewport: "mobile" },
+      { file: "11-schedules.png", route: "/schedules", feature: "durable schedule management with a real frozen publication snapshot", viewport: "desktop" },
+      { file: "12-mobile-publications.png", route: "/publications", feature: "mobile Publication Workspace with no document overflow", viewport: "mobile" },
+      { file: "13-mobile-publication-groups.png", route: "/publication-groups", feature: "mobile publication topology with visible mobile navigation", viewport: "mobile" },
+      { file: "14-mobile-schedules.png", route: "/schedules", feature: "mobile schedule management with no document overflow", viewport: "mobile" },
     ],
   };
   await writeFile(join(outputDir, "capture-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
