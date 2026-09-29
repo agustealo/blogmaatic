@@ -92,6 +92,47 @@ test("mutation bodies are JSON and credentials never enter the URL", async () =>
   assert.equal(calls[0].init.body, JSON.stringify({ enabled: false }));
 });
 
+test("manual runs carry an explicit idempotency key without leaking it into the URL", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ runId: "run-1", dispatchState: "started" }), {
+      status: 202,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const client = new OperatorClient({ baseUrl: "/api", token, fetchImpl });
+  const input = {
+    automationId: "manual-release",
+    automationVersion: 3,
+    publication: {
+      id: "pub-1",
+      createdAt: "2026-09-29T00:00:00.000Z",
+      status: "approved",
+      current: {
+        id: "rev-1",
+        ordinal: 1,
+        createdAt: "2026-09-29T00:00:00.000Z",
+        content: { schemaVersion: 1, title: "Release", language: "en", blocks: [], assets: [], tags: [], attributes: {} },
+      },
+      provenance: {},
+    },
+    groups: [],
+  };
+
+  await client.startManualRun(input, "consumer-run-123");
+
+  assert.equal(calls[0].input, "/api/v1/runs/manual");
+  assert.equal(calls[0].input.includes("consumer-run-123"), false);
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(calls[0].init.body, JSON.stringify(input));
+  const headers = new Headers(calls[0].init.headers);
+  assert.equal(headers.get("idempotency-key"), "consumer-run-123");
+  assert.equal(headers.get("authorization"), `Bearer ${token}`);
+
+  await assert.rejects(() => client.startManualRun(input, "   "), /Idempotency key must be non-empty/);
+});
+
 test("structured API failures become bounded client errors", async () => {
   const fetchImpl = async () => new Response(JSON.stringify({
     error: { code: "FORBIDDEN", message: "Missing permission", requestId: "req-7" },
