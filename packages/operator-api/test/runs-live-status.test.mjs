@@ -52,6 +52,30 @@ test("default run listing reconciles live runtime phase before returning visible
   assert.equal(page.nextCursor, "opaque-next");
 });
 
+test("default run listing preserves durable rows when live runtime status fails", async () => {
+  const phaseUpdates = [];
+  const store = {
+    async listRuns() {
+      return { items: [storedRun], nextCursor: "opaque-next" };
+    },
+    async updateRunPhase(runId, phase, updatedAt) {
+      phaseUpdates.push({ runId, phase, updatedAt });
+    },
+  };
+  const runtime = {
+    async status() {
+      throw new Error("Restate unavailable");
+    },
+  };
+
+  const page = await listOperatorRuns(store, runtime, { limit: 30 });
+
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0], storedRun);
+  assert.equal(page.nextCursor, "opaque-next");
+  assert.deepEqual(phaseUpdates, []);
+});
+
 test("non-started rows remain store truth and do not probe runtime status", async () => {
   let statusCalls = 0;
   const prepared = { ...storedRun, runId: "run-prepared", dispatchState: "prepared" };
