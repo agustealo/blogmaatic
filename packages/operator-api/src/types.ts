@@ -7,6 +7,7 @@ import type {
 } from "@blogmaatic/automation";
 import type {
   AutomationControlPlane,
+  AutomationSchedule,
   AutomationScheduleInput,
   ControlPlaneRunRecord,
   ControlPlaneStore,
@@ -232,6 +233,19 @@ export interface OperatorPublicationWorkspaceManager {
   approveAndDispatch(publicationId: string, expectedVersion: number): Promise<PublicationWorkspaceDispatchResult>;
 }
 
+export interface ScheduleActivationBody {
+  readonly expectedUpdatedAt: string;
+  readonly enabled: boolean;
+}
+
+export interface OperatorScheduleManager {
+  setEnabled(
+    scheduleId: string,
+    expectedUpdatedAt: string,
+    enabled: boolean,
+  ): Promise<AutomationSchedule>;
+}
+
 export interface OperatorApiOptions {
   readonly controlPlane: AutomationControlPlane;
   readonly store: ControlPlaneStore;
@@ -239,6 +253,7 @@ export interface OperatorApiOptions {
   readonly connections?: OperatorConnectionManager;
   readonly publicationGroups?: OperatorPublicationGroupManager;
   readonly publications?: OperatorPublicationWorkspaceManager;
+  readonly schedules?: OperatorScheduleManager;
   readonly authorizer: OperatorAuthorizer;
   readonly clock?: OperatorClock;
   readonly logger?: boolean;
