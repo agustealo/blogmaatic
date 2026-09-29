@@ -2,8 +2,9 @@ import { useCallback, useState } from "react";
 
 import type { OperatorOperationKind } from "@blogmaatic/operator-client";
 
-import { useConnection } from "../connection";
 import { CollectionFooter, EmptyState, ErrorBanner, LoadingBlock, OperationCard, PageHeader, Panel, StatusPill } from "../components";
+import { useConnection } from "../connection";
+import { DiagnosticsPanel } from "../diagnostics-panel";
 import { usePagedCollection } from "../hooks";
 
 const kinds: readonly [OperatorOperationKind, string][] = [
@@ -85,7 +86,7 @@ function ProductUpdatePanel() {
       <ErrorBanner error={error} />
       {!status ? (
         <div className="setup-step">
-          <p>Check Blogmaatic's trusted release channel when you choose. The local runtime validates release metadata and the exact native installer. Opening this page never checks the network automatically.</p>
+          <p>Check Blogmaatic&apos;s trusted release channel when you choose. The local runtime validates release metadata and the exact native installer. Opening this page never checks the network automatically.</p>
           <div className="setup-actions">
             <button className="button button--quiet" type="button" onClick={() => void check()} disabled={busy !== null}>
               {busy === "check" ? "Checking…" : "Check for updates"}
@@ -140,7 +141,8 @@ export function OperationsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Live attention" title="Operations" description="Approval, delivery, runtime, and product-lifecycle conditions that currently require your attention." />
+      <PageHeader eyebrow="Live attention" title="Operations" description="Local system diagnostics, product lifecycle, approvals, delivery conditions, and runtime events that need attention." />
+      <DiagnosticsPanel />
       <ProductUpdatePanel />
       <div className="toolbar">
         <label className="field field--inline"><span>Kind</span><select value={kind} onChange={(event) => setKind(event.target.value as OperatorOperationKind | "")}><option value="">All attention</option>{kinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

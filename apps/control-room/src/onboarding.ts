@@ -48,7 +48,7 @@ function isUsableProbe(probe: ConnectionProbe): boolean {
     probe.result.health.state !== "unhealthy";
 }
 
-function groupUsesOnlyActiveConnections(
+export function groupUsesOnlyActiveConnections(
   entry: PublicationGroupRegistryEntry,
   activeConnectionIds: ReadonlySet<string>,
 ): boolean {
@@ -58,7 +58,7 @@ function groupUsesOnlyActiveConnections(
     enabledRoutes.every((route) => activeConnectionIds.has(route.destination.connectionId));
 }
 
-function automationPublishesRunnableGroup(
+export function automationPublishesRunnableGroup(
   entry: AutomationRegistryEntry,
   runnableGroupIds: ReadonlySet<string>,
 ): boolean {
@@ -83,9 +83,7 @@ export async function loadOnboardingReadiness(
   const activeConnectionIds = new Set(activeConnections.map((connection) => connection.id));
   const runnableGroups = groups.items.filter((entry) => groupUsesOnlyActiveConnections(entry, activeConnectionIds));
   const runnableGroupIds = new Set(runnableGroups.map((entry) => entry.group.id));
-  const runnableAutomations = automations.items.filter(
-    (entry) => automationPublishesRunnableGroup(entry, runnableGroupIds),
-  );
+  const runnableAutomations = automations.items.filter((entry) => automationPublishesRunnableGroup(entry, runnableGroupIds));
 
   const shouldProbe = options.probeConnections !== false;
   const connectionProbes = shouldProbe
@@ -93,16 +91,11 @@ export async function loadOnboardingReadiness(
       try {
         return { connection, result: await client.testConnection(connection.id) };
       } catch (error) {
-        return {
-          connection,
-          error: error instanceof Error ? error.message : "Connection health check failed",
-        };
+        return { connection, error: error instanceof Error ? error.message : "Connection health check failed" };
       }
     }))
     : [];
-  const usableConnectionIds = new Set(
-    connectionProbes.filter(isUsableProbe).map((probe) => probe.connection.id),
-  );
+  const usableConnectionIds = new Set(connectionProbes.filter(isUsableProbe).map((probe) => probe.connection.id));
 
   const stage: OnboardingStage = runnableAutomations.length > 0
     ? "ready"

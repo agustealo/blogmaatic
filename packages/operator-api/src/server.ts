@@ -404,9 +404,7 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
   app.get("/v1/runs", async (request) => {
     await authorize(request, "runs:read");
     const parsed = parseRunListQuery(query(request));
-    return parsed.runtimePhase === undefined
-      ? domainCall(() => options.store.listRuns(parsed))
-      : runtimeCall(() => listOperatorRuns(options.store, options.runtime, parsed));
+    return runtimeCall(() => listOperatorRuns(options.store, options.runtime, parsed));
   });
 
   app.post("/v1/runs/manual", async (request, reply) => {

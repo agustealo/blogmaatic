@@ -192,18 +192,9 @@ export async function startRuntime(options: {
     const secrets = createSecretAuthority();
     const extensions = new ExtensionRuntime(connections);
     extensions.registerPublisher(new JekyllGitPublisher(connections), JEKYLL_CONNECTION_CONTRACT);
-    extensions.registerPublisher(
-      new WordPressRestPublisher(connections, secrets),
-      WORDPRESS_CONNECTION_CONTRACT,
-    );
-    extensions.registerPublisher(
-      new LinkedInRestPublisher(connections, secrets),
-      LINKEDIN_CONNECTION_CONTRACT,
-    );
-    extensions.registerPublisher(
-      new FacebookPagesPublisher(connections, secrets),
-      FACEBOOK_CONNECTION_CONTRACT,
-    );
+    extensions.registerPublisher(new WordPressRestPublisher(connections, secrets), WORDPRESS_CONNECTION_CONTRACT);
+    extensions.registerPublisher(new LinkedInRestPublisher(connections, secrets), LINKEDIN_CONNECTION_CONTRACT);
+    extensions.registerPublisher(new FacebookPagesPublisher(connections, secrets), FACEBOOK_CONNECTION_CONTRACT);
     await inspectConfiguredConnections(extensions, connections, logger);
 
     controlPlaneStore = new SqliteControlPlaneStore(paths.controlPlanePath);
@@ -226,25 +217,14 @@ export async function startRuntime(options: {
     });
 
     projectionState = new SqliteProjectionStateStore(paths.projectionStatePath);
-    const kernel = new PublicationKernel(
-      extensions.publishers,
-      new PolicyEngine(config.policies),
-      undefined,
-      projectionState,
-    );
-    const workflow = createPublicationAutomationWorkflow({
-      publisher: createKernelAutomationPublisher(kernel),
-    });
+    const kernel = new PublicationKernel(extensions.publishers, new PolicyEngine(config.policies), undefined, projectionState);
+    const workflow = createPublicationAutomationWorkflow({ publisher: createKernelAutomationPublisher(kernel) });
     workflowServer = await startWorkflowEndpoint(workflow, config.restate.workflowHost, config.restate.workflowPort);
     if (config.restate.mode === "managed-local") await registerManagedDeployment(config);
 
     const runtime = new RestateAutomationLauncher({ url: config.restate.ingressUrl });
     const controlPlane = new AutomationControlPlane({ store: controlPlaneStore, launcher: runtime });
-    const publications = new PublicationWorkspaceManager({
-      store: publicationWorkspaceStore,
-      publicationGroups,
-      controlPlane,
-    });
+    const publications = new PublicationWorkspaceManager({ store: publicationWorkspaceStore, publicationGroups, controlPlane });
     const schedules = new ScheduleManager({ store: controlPlaneStore });
     operator = await startOperatorApi({
       controlPlane,
@@ -287,6 +267,7 @@ export async function startRuntime(options: {
       port: config.controlRoom.port,
       operatorOrigin: operator.address.replace(/\/$/, ""),
       operatorToken: options.operatorToken,
+      productVersion: currentProductVersion,
       ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
       updates,
     });

@@ -16,6 +16,8 @@ on:
       - "scripts/capture-product-screenshots.mjs"
       - "scripts/smoke-consumer-publishing.mjs"
       - "scripts/smoke-control-room-keyboard.mjs"
+      - "scripts/smoke-control-room-consumer-journey.mjs"
+      - "scripts/smoke-automation-studio.mjs"
       - "docs/screenshots/**"
       - "package.json"
       - "package-lock.json"
@@ -56,6 +58,12 @@ jobs:
 
       - name: Burn canonical consumer publishing journey
         run: node scripts/smoke-consumer-publishing.mjs
+
+      - name: Burn true browser-created consumer journey
+        run: node scripts/smoke-control-room-consumer-journey.mjs
+
+      - name: Burn Automation Studio consumer contract
+        run: node scripts/smoke-automation-studio.mjs
 
       - name: Capture real Control Room product media
         run: npm run product:screenshots

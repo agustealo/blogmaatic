@@ -19,6 +19,20 @@ function appendOutput(state, chunk) {
   state.output = `${state.output}${chunk.toString("utf8")}`.slice(-80_000);
 }
 
+async function rmEventually(path, attempts = 20) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      const transient = code === "ENOTEMPTY" || code === "EBUSY" || code === "EPERM";
+      if (!transient || attempt === attempts) throw error;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    }
+  }
+}
+
 async function browserBinary() {
   const candidates = [
     process.env.BLOGMAATIC_SCREENSHOT_BROWSER,
@@ -274,5 +288,5 @@ try {
   if (runtimeStarted) {
     await execFileAsync(process.execPath, [cli, "stop", "--data-dir", dataDir], { cwd: root, encoding: "utf8", timeout: 20_000 }).catch(() => undefined);
   }
-  await Promise.all([dataDir, chromeProfile].map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all([dataDir, chromeProfile].map((path) => rmEventually(path)));
 }
