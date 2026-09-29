@@ -14,6 +14,7 @@ import {
   AutomationControlPlane,
   SqliteControlPlaneStore,
   SqlitePublicationGroupStore,
+  SqlitePublicationWorkspaceStore,
 } from "@blogmaatic/control-plane";
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
 import {
@@ -45,11 +46,15 @@ import { SqliteProjectionStateStore } from "@blogmaatic/state-sqlite";
 
 import type { RuntimeConfig, RuntimePaths } from "./config.js";
 import { ConnectionManager } from "./connection-manager.js";
-import { ControlRoomServer } from "./control-room-server.js";
+import { ControlRoomServer, type ControlRoomUpdateStatus } from "./control-room-server.js";
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
+import { productVersion as installedProductVersion } from "./product-version.js";
 import { PublicationGroupManager } from "./publication-group-manager.js";
+import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
+import { ScheduleManager } from "./schedule-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
+import { checkForUpdate, openPreparedInstaller, prepareUpdate, verifyPreparedUpdate, type UpdateCheck } from "./update.js";
 
 export interface RunningRuntime {
   readonly operatorAddress: string;
@@ -69,6 +74,18 @@ function createSecretAuthority(): SecretAuthority {
     providers.push(new OsCredentialSecretProvider());
   }
   return new SecretAuthority(providers);
+}
+
+function browserUpdateStatus(status: UpdateCheck, installerOpened = false): ControlRoomUpdateStatus {
+  return {
+    currentVersion: status.currentVersion,
+    latestVersion: status.latestVersion,
+    tag: status.tag,
+    releaseUrl: status.releaseUrl,
+    updateAvailable: status.updateAvailable,
+    ...(status.packageName ? { packageName: status.packageName } : {}),
+    ...(installerOpened ? { installerOpened: true } : {}),
+  };
 }
 
 export async function inspectConfiguredConnections(
@@ -142,9 +159,12 @@ export async function startRuntime(options: {
   readonly operatorToken: string;
   readonly controlRoomRoot?: string;
   readonly logger?: Pick<Console, "info" | "error">;
+  readonly onShutdown?: () => void;
+  readonly productVersion?: string;
 }): Promise<RunningRuntime> {
   const { config, paths } = options;
   const logger = options.logger ?? console;
+  const currentProductVersion = options.productVersion ?? await installedProductVersion();
   await mkdir(paths.dataDir, { recursive: true, mode: 0o700 });
   await mkdir(paths.restateDataDir, { recursive: true, mode: 0o700 });
 
@@ -155,6 +175,7 @@ export async function startRuntime(options: {
   let scheduler: SchedulerLoop | undefined;
   let controlPlaneStore: SqliteControlPlaneStore | undefined;
   let publicationGroupStore: SqlitePublicationGroupStore | undefined;
+  let publicationWorkspaceStore: SqlitePublicationWorkspaceStore | undefined;
   let projectionState: SqliteProjectionStateStore | undefined;
 
   try {
@@ -187,6 +208,7 @@ export async function startRuntime(options: {
 
     controlPlaneStore = new SqliteControlPlaneStore(paths.controlPlanePath);
     publicationGroupStore = new SqlitePublicationGroupStore(paths.controlPlanePath);
+    publicationWorkspaceStore = new SqlitePublicationWorkspaceStore(paths.controlPlanePath);
     const publicationGroups = new PublicationGroupManager({
       store: publicationGroupStore,
       connections,
@@ -218,12 +240,20 @@ export async function startRuntime(options: {
 
     const runtime = new RestateAutomationLauncher({ url: config.restate.ingressUrl });
     const controlPlane = new AutomationControlPlane({ store: controlPlaneStore, launcher: runtime });
+    const publications = new PublicationWorkspaceManager({
+      store: publicationWorkspaceStore,
+      publicationGroups,
+      controlPlane,
+    });
+    const schedules = new ScheduleManager({ store: controlPlaneStore });
     operator = await startOperatorApi({
       controlPlane,
       store: controlPlaneStore,
       runtime,
       connections: connectionManager,
       publicationGroups,
+      publications,
+      schedules,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
         token: options.operatorToken,
@@ -240,16 +270,27 @@ export async function startRuntime(options: {
       onError: (error) => logger.error(`Scheduler dispatch failed: ${error.message}`),
     });
 
+    const updates = {
+      check: async () => browserUpdateStatus(await checkForUpdate(currentProductVersion)),
+      install: async () => {
+        const prepared = await prepareUpdate(currentProductVersion, paths.dataDir);
+        if (!prepared.updateAvailable) return browserUpdateStatus(prepared);
+        await verifyPreparedUpdate(prepared);
+        openPreparedInstaller(prepared);
+        return browserUpdateStatus(prepared, true);
+      },
+    };
+
     controlRoom = await ControlRoomServer.start({
       root: options.controlRoomRoot ?? controlRoomDist(),
       host: config.controlRoom.host,
       port: config.controlRoom.port,
       operatorOrigin: operator.address.replace(/\/$/, ""),
       operatorToken: options.operatorToken,
+      ...(options.onShutdown ? { onShutdown: options.onShutdown } : {}),
+      updates,
     });
 
-    // Startup becomes externally active only after every fallible listener is ready.
-    // This prevents due schedules from publishing during a startup that later fails.
     scheduler.start();
 
     const fatal = managedRestate?.fatal ?? new Promise<never>(() => undefined);
@@ -268,6 +309,7 @@ export async function startRuntime(options: {
         if (workflowServer) await closeHttp2(workflowServer);
         if (managedRestate) await managedRestate.close();
         projectionState?.close();
+        publicationWorkspaceStore?.close();
         publicationGroupStore?.close();
         controlPlaneStore?.close();
       },
@@ -279,6 +321,7 @@ export async function startRuntime(options: {
     if (workflowServer) await closeHttp2(workflowServer).catch(() => undefined);
     if (managedRestate) await managedRestate.close().catch(() => undefined);
     projectionState?.close();
+    publicationWorkspaceStore?.close();
     publicationGroupStore?.close();
     controlPlaneStore?.close();
     throw error;

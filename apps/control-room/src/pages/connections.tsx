@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import type {
   ConnectionCreateBody,
@@ -8,6 +8,7 @@ import type {
   OperatorConnectionTestResult,
   OperatorConnectionType,
   OperatorConnectionView,
+  PublicationGroupRegistryEntry,
 } from "@blogmaatic/operator-client";
 
 import { EmptyState, ErrorBanner, LoadingBlock, PageHeader, Panel, StatusPill } from "../components";
@@ -24,6 +25,7 @@ interface EditorState {
 }
 
 type FieldValue = string | number | boolean | string[];
+type GroupReferences = Readonly<Record<string, readonly PublicationGroupRegistryEntry[]>>;
 
 function stringifySetting(field: OperatorConnectionSettingField, value: unknown): string | boolean {
   if (field.kind === "boolean") return value === true;
@@ -140,6 +142,20 @@ function healthLabel(result: OperatorConnectionTestResult | undefined): string {
   return result.health?.state ?? "Valid";
 }
 
+function indexGroupReferences(groups: readonly PublicationGroupRegistryEntry[]): GroupReferences {
+  const references: Record<string, PublicationGroupRegistryEntry[]> = {};
+  for (const group of groups) {
+    const seen = new Set<string>();
+    for (const route of group.group.routes) {
+      const connectionId = route.destination.connectionId;
+      if (seen.has(connectionId)) continue;
+      seen.add(connectionId);
+      (references[connectionId] ??= []).push(group);
+    }
+  }
+  return references;
+}
+
 function SettingField({
   field,
   value,
@@ -205,22 +221,36 @@ export function ConnectionsPage() {
   const setupMode = searchParams.get("setup") === "1";
   const [types, setTypes] = useState<readonly OperatorConnectionType[]>([]);
   const [connections, setConnections] = useState<readonly OperatorConnectionView[]>([]);
+  const [groupReferences, setGroupReferences] = useState<GroupReferences>({});
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [health, setHealth] = useState<Readonly<Record<string, OperatorConnectionTestResult>>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [typeResponse, connectionResponse] = await Promise.all([
+      const groupsPromise = (async () => {
+        const groups: PublicationGroupRegistryEntry[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await client.listPublicationGroups({ enabled: true, limit: 100, ...(cursor ? { cursor } : {}) });
+          groups.push(...page.items);
+          cursor = page.nextCursor;
+        } while (cursor);
+        return groups;
+      })();
+      const [typeResponse, connectionResponse, enabledGroups] = await Promise.all([
         client.listConnectionTypes(),
         client.listConnections(),
+        groupsPromise,
       ]);
       setTypes(typeResponse.items);
       setConnections(connectionResponse.items);
+      setGroupReferences(indexGroupReferences(enabledGroups));
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error("Could not load publisher connections"));
     } finally {
@@ -235,10 +265,12 @@ export function ConnectionsPage() {
   const selectedConnection = editor?.connectionId
     ? connections.find((connection) => connection.id === editor.connectionId)
     : undefined;
+  const selectedReferences = editor?.connectionId ? groupReferences[editor.connectionId] ?? [] : [];
 
   const startCreate = useCallback((type?: OperatorConnectionType) => {
     const selected = type ?? types[0];
     if (!selected) return;
+    setPendingRemove(null);
     setError(null);
     setEditor(editorForCreate(selected));
   }, [types]);
@@ -249,6 +281,7 @@ export function ConnectionsPage() {
       setError(new Error(`Publisher contract is unavailable for ${connection.extensionId}`));
       return;
     }
+    setPendingRemove(null);
     setError(null);
     setEditor(editorForConnection(type, connection));
   }, [typeById]);
@@ -291,6 +324,10 @@ export function ConnectionsPage() {
         setHealth((current) => ({ ...current, [created.id]: result }));
         if (setupMode && isUsable(result)) navigate("/setup", { replace: true });
       } else if (editor.connectionId) {
+        const references = groupReferences[editor.connectionId] ?? [];
+        if (editor.status === "disabled" && selectedConnection?.status === "active" && references.length > 0) {
+          throw new Error(`This connection is still used by ${references.length} enabled Publication Group${references.length === 1 ? "" : "s"}. Disable or edit those groups first.`);
+        }
         const input: ConnectionUpdateBody = {
           displayName: editor.displayName.trim(),
           status: editor.status,
@@ -311,14 +348,20 @@ export function ConnectionsPage() {
     } finally {
       setBusy(null);
     }
-  }, [client, editor, navigate, selectedConnection, selectedType, setupMode]);
+  }, [client, editor, groupReferences, navigate, selectedConnection, selectedType, setupMode]);
 
   const remove = useCallback(async (connection: OperatorConnectionView) => {
-    if (!window.confirm(`Remove ${connection.displayName}? Enabled Publication Groups must be updated first.`)) return;
+    const references = groupReferences[connection.id] ?? [];
+    if (references.length > 0) {
+      setPendingRemove(null);
+      setError(new Error(`Remove is blocked because ${connection.displayName} is used by ${references.length} enabled Publication Group${references.length === 1 ? "" : "s"}. Open the referenced groups and remove or disable that route first.`));
+      return;
+    }
     setBusy(`remove:${connection.id}`);
     setError(null);
     try {
       await client.removeConnection(connection.id);
+      setPendingRemove(null);
       setConnections((current) => current.filter((item) => item.id !== connection.id));
       setHealth((current) => {
         const next = { ...current };
@@ -331,7 +374,7 @@ export function ConnectionsPage() {
     } finally {
       setBusy(null);
     }
-  }, [client, editor?.connectionId]);
+  }, [client, editor?.connectionId, groupReferences]);
 
   if (loading) return <LoadingBlock />;
 
@@ -340,7 +383,7 @@ export function ConnectionsPage() {
       <PageHeader
         eyebrow={setupMode ? "First run · Destination" : "Destinations"}
         title="Connections"
-        description="Connect real publishing destinations. Credentials are written directly into the operating system vault and are never returned to this browser."
+        description="Connect real publishing destinations. Blogmaatic shows which enabled Publication Groups depend on each connection before you change or remove it. Credentials remain write-only and are stored in the operating system vault."
         actions={(
           <div className="topbar__actions">
             {setupMode ? <button className="button button--quiet" type="button" onClick={() => navigate("/setup")}>Back to setup</button> : null}
@@ -362,6 +405,8 @@ export function ConnectionsPage() {
                 {connections.map((connection) => {
                   const type = typeById.get(connection.extensionId);
                   const result = health[connection.id];
+                  const references = groupReferences[connection.id] ?? [];
+                  const confirmingRemove = pendingRemove === connection.id;
                   return (
                     <article className="connection-row" key={connection.id}>
                       <div className="connection-row__identity">
@@ -377,12 +422,38 @@ export function ConnectionsPage() {
                           {busy === `test:${connection.id}` ? "Testing…" : "Test"}
                         </button>
                         <button className="button button--quiet" type="button" onClick={() => startEdit(connection)} disabled={busy !== null}>Edit</button>
-                        <button className="button button--danger" type="button" onClick={() => void remove(connection)} disabled={busy !== null}>Remove</button>
+                        {references.length > 0 ? (
+                          <Link className="button button--quiet" to={`/publication-groups/${encodeURIComponent(references[0]!.group.id)}`}>Used by {references.length} group{references.length === 1 ? "" : "s"}</Link>
+                        ) : confirmingRemove ? (
+                          <div className="inline-confirm-actions" role="group" aria-label={`Remove ${connection.displayName}`}>
+                            <button className="button button--quiet" type="button" onClick={() => setPendingRemove(null)} disabled={busy !== null}>Cancel</button>
+                            <button className="button button--danger" type="button" autoFocus onClick={() => void remove(connection)} disabled={busy !== null}>
+                              {busy === `remove:${connection.id}` ? "Removing…" : "Confirm remove"}
+                            </button>
+                          </div>
+                        ) : (
+                          <button className="button button--danger" type="button" onClick={() => setPendingRemove(connection.id)} disabled={busy !== null}>Remove</button>
+                        )}
                       </div>
-                      {result ? (
+                      {confirmingRemove ? (
+                        <div className="connection-row__detail" role="status">
+                          <span>Removing this connection also removes its managed stored credentials. This cannot be undone from the Control Room.</span>
+                        </div>
+                      ) : result || references.length > 0 ? (
                         <div className="connection-row__detail">
-                          {result.validation.valid ? "Configuration valid" : result.validation.errors.join(" · ")}
-                          {result.health?.detail ? ` · ${result.health.detail}` : ""}
+                          {result ? (
+                            <span>
+                              {result.validation.valid ? "Configuration valid" : result.validation.errors.join(" · ")}
+                              {result.health?.detail ? ` · ${result.health.detail}` : ""}
+                            </span>
+                          ) : null}
+                          {references.length > 0 ? (
+                            <span className="connection-row__references">
+                              Used by {references.map((entry, index) => (
+                                <span key={entry.group.id}>{index > 0 ? ", " : ""}<Link to={`/publication-groups/${encodeURIComponent(entry.group.id)}`}>{entry.group.name}</Link></span>
+                              ))}. Disable or edit those groups before disabling/removing this connection.
+                            </span>
+                          ) : null}
                         </div>
                       ) : null}
                     </article>
@@ -399,6 +470,16 @@ export function ConnectionsPage() {
               className="connection-editor"
             >
               <form className="connection-editor__form" onSubmit={save}>
+                {editor.mode === "edit" && selectedReferences.length > 0 ? (
+                  <div className="connection-reference-warning" role="status">
+                    <strong>Used by {selectedReferences.length} enabled Publication Group{selectedReferences.length === 1 ? "" : "s"}</strong>
+                    <p>You can rotate credentials or edit settings safely, but disabling this connection is blocked until the referencing groups are updated.</p>
+                    <div className="connection-reference-links">
+                      {selectedReferences.map((entry) => <Link key={entry.group.id} to={`/publication-groups/${encodeURIComponent(entry.group.id)}`}>{entry.group.name}</Link>)}
+                    </div>
+                  </div>
+                ) : null}
+
                 {editor.mode === "create" ? (
                   <label className="field">
                     <span>Publisher</span>
@@ -417,6 +498,7 @@ export function ConnectionsPage() {
                 <label className="field">
                   <span>Connection name *</span>
                   <input
+                    autoFocus
                     value={editor.displayName}
                     onChange={(event) => setEditor((current) => current ? { ...current, displayName: event.target.value } : current)}
                     required
@@ -431,7 +513,7 @@ export function ConnectionsPage() {
                     onChange={(event) => setEditor((current) => current ? { ...current, status: event.target.value as "active" | "disabled" } : current)}
                   >
                     <option value="active">Active</option>
-                    <option value="disabled">Disabled</option>
+                    <option value="disabled" disabled={editor.mode === "edit" && selectedReferences.length > 0}>Disabled{editor.mode === "edit" && selectedReferences.length > 0 ? " · update Publication Groups first" : ""}</option>
                   </select>
                 </label>
 

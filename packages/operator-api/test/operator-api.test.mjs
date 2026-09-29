@@ -474,7 +474,7 @@ test("run inspection maps durable runtime transport failures to opaque 503", asy
   });
 });
 
-test("schedule replacement is rejected while the current fire is actively leased", async () => {
+test("schedule ids are immutable even while the current fire is actively leased", async () => {
   await withApi(async ({ app, store }) => {
     const definition = {
       id: "scheduled-release",
@@ -519,8 +519,8 @@ test("schedule replacement is rejected while the current fire is actively leased
       headers: bearer(TOKENS.operator),
       payload: { ...schedulePayload, localTime: "22:00" },
     });
-    assert.equal(replacement.statusCode, 422);
-    assert.equal(replacement.json().error.code, "DOMAIN_REJECTED");
+    assert.equal(replacement.statusCode, 409);
+    assert.equal(replacement.json().error.code, "SCHEDULE_EXISTS");
 
     const unchanged = await store.getSchedule(schedulePayload.id);
     assert.equal(unchanged.localTime, "21:00");

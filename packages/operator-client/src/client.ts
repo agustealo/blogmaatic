@@ -9,6 +9,7 @@ import type {
   AutomationPage,
   AutomationRegistryEntry,
   AutomationRunResult,
+  AutomationSchedule,
   AutomationVersionListQuery,
   AutomationVersionPage,
   ConnectionCreateBody,
@@ -16,12 +17,14 @@ import type {
   ConnectionsResponse,
   ConnectionUpdateBody,
   ControlPlaneRunRecord,
+  ManualRunBody,
   OperatorConnectionTestResult,
   OperatorConnectionView,
   OperatorErrorBody,
   OperatorHealth,
   OperatorOperationsPage,
   OperatorOperationsQuery,
+  PageRequest,
   PublicationGroupActivationBody,
   PublicationGroupCreateBody,
   PublicationGroupListQuery,
@@ -31,10 +34,20 @@ import type {
   PublicationGroupUpdateBody,
   PublicationGroupVersionListQuery,
   PublicationGroupVersionPage,
+  PublicationWorkspaceCreateBody,
+  PublicationWorkspaceDispatchBody,
+  PublicationWorkspaceDispatchResult,
+  PublicationWorkspaceEntry,
+  PublicationWorkspaceListQuery,
+  PublicationWorkspacePage,
+  PublicationWorkspaceUpdateBody,
+  PublicationWorkspaceVersionPage,
   RunListQuery,
   RunPage,
+  ScheduleActivationBody,
   ScheduleListQuery,
   SchedulePage,
+  ScheduleRegistrationBody,
   SchedulerDispatchInput,
   SchedulerDispatchResponse,
 } from "./types.js";
@@ -128,6 +141,7 @@ export class OperatorClient {
       readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
       readonly body?: unknown;
       readonly authenticated?: boolean;
+      readonly idempotencyKey?: string;
     } = {},
   ): Promise<T> {
     const headers = new Headers({ accept: "application/json" });
@@ -136,6 +150,11 @@ export class OperatorClient {
       headers.set("x-blogmaatic-session-proof", this.#sessionProof);
     }
     if (options.body !== undefined) headers.set("content-type", "application/json");
+    if (options.idempotencyKey !== undefined) {
+      const idempotencyKey = options.idempotencyKey.trim();
+      if (!idempotencyKey) throw new Error("Idempotency key must be non-empty");
+      headers.set("idempotency-key", idempotencyKey);
+    }
     const response = await this.#fetch(joinBase(this.#baseUrl, path), {
       method: options.method ?? "GET",
       headers,
@@ -179,10 +198,7 @@ export class OperatorClient {
   }
 
   createConnection(input: ConnectionCreateBody): Promise<OperatorConnectionView> {
-    return this.#request<OperatorConnectionView>("/v1/connections", {
-      method: "POST",
-      body: input,
-    });
+    return this.#request<OperatorConnectionView>("/v1/connections", { method: "POST", body: input });
   }
 
   updateConnection(connectionId: string, input: ConnectionUpdateBody): Promise<OperatorConnectionView> {
@@ -193,15 +209,11 @@ export class OperatorClient {
   }
 
   removeConnection(connectionId: string): Promise<OperatorConnectionView> {
-    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`, {
-      method: "DELETE",
-    });
+    return this.#request<OperatorConnectionView>(`/v1/connections/${encodeURIComponent(connectionId)}`, { method: "DELETE" });
   }
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
-    return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, {
-      method: "POST",
-    });
+    return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
   }
 
   getPublicationGroupOptions(): Promise<PublicationGroupOptionsResponse> {
@@ -216,27 +228,16 @@ export class OperatorClient {
     return this.#request<PublicationGroupRegistryEntry>(`/v1/publication-groups/${encodeURIComponent(groupId)}`);
   }
 
-  listPublicationGroupVersions(
-    groupId: string,
-    query: PublicationGroupVersionListQuery = {},
-  ): Promise<PublicationGroupVersionPage> {
-    return this.#request<PublicationGroupVersionPage>(pathWithQuery(
-      `/v1/publication-groups/${encodeURIComponent(groupId)}/versions`,
-      query,
-    ));
+  listPublicationGroupVersions(groupId: string, query: PublicationGroupVersionListQuery = {}): Promise<PublicationGroupVersionPage> {
+    return this.#request<PublicationGroupVersionPage>(pathWithQuery(`/v1/publication-groups/${encodeURIComponent(groupId)}/versions`, query));
   }
 
   getPublicationGroupVersion(groupId: string, version: number): Promise<PublicationGroupRegistryEntry> {
-    return this.#request<PublicationGroupRegistryEntry>(
-      `/v1/publication-groups/${encodeURIComponent(groupId)}/versions/${version}`,
-    );
+    return this.#request<PublicationGroupRegistryEntry>(`/v1/publication-groups/${encodeURIComponent(groupId)}/versions/${version}`);
   }
 
   createPublicationGroup(input: PublicationGroupCreateBody): Promise<PublicationGroupRegistryEntry> {
-    return this.#request<PublicationGroupRegistryEntry>("/v1/publication-groups", {
-      method: "POST",
-      body: input,
-    });
+    return this.#request<PublicationGroupRegistryEntry>("/v1/publication-groups", { method: "POST", body: input });
   }
 
   updatePublicationGroup(groupId: string, input: PublicationGroupUpdateBody): Promise<PublicationGroupRegistryEntry> {
@@ -246,14 +247,48 @@ export class OperatorClient {
     });
   }
 
-  setPublicationGroupEnabled(
-    groupId: string,
-    input: PublicationGroupActivationBody,
-  ): Promise<PublicationGroupRegistryEntry> {
-    return this.#request<PublicationGroupRegistryEntry>(
-      `/v1/publication-groups/${encodeURIComponent(groupId)}/activation`,
-      { method: "POST", body: input },
-    );
+  setPublicationGroupEnabled(groupId: string, input: PublicationGroupActivationBody): Promise<PublicationGroupRegistryEntry> {
+    return this.#request<PublicationGroupRegistryEntry>(`/v1/publication-groups/${encodeURIComponent(groupId)}/activation`, {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  listPublications(query: PublicationWorkspaceListQuery = {}): Promise<PublicationWorkspacePage> {
+    return this.#request<PublicationWorkspacePage>(pathWithQuery("/v1/publications", query));
+  }
+
+  createPublication(input: PublicationWorkspaceCreateBody): Promise<PublicationWorkspaceEntry> {
+    return this.#request<PublicationWorkspaceEntry>("/v1/publications", { method: "POST", body: input });
+  }
+
+  getPublication(publicationId: string): Promise<PublicationWorkspaceEntry> {
+    return this.#request<PublicationWorkspaceEntry>(`/v1/publications/${encodeURIComponent(publicationId)}`);
+  }
+
+  listPublicationVersions(publicationId: string, query: PageRequest = {}): Promise<PublicationWorkspaceVersionPage> {
+    return this.#request<PublicationWorkspaceVersionPage>(pathWithQuery(
+      `/v1/publications/${encodeURIComponent(publicationId)}/versions`,
+      query,
+    ));
+  }
+
+  getPublicationVersion(publicationId: string, version: number): Promise<PublicationWorkspaceEntry> {
+    return this.#request<PublicationWorkspaceEntry>(`/v1/publications/${encodeURIComponent(publicationId)}/versions/${version}`);
+  }
+
+  updatePublication(publicationId: string, input: PublicationWorkspaceUpdateBody): Promise<PublicationWorkspaceEntry> {
+    return this.#request<PublicationWorkspaceEntry>(`/v1/publications/${encodeURIComponent(publicationId)}`, {
+      method: "PATCH",
+      body: input,
+    });
+  }
+
+  publishPublication(publicationId: string, input: PublicationWorkspaceDispatchBody): Promise<PublicationWorkspaceDispatchResult> {
+    return this.#request<PublicationWorkspaceDispatchResult>(`/v1/publications/${encodeURIComponent(publicationId)}/publish`, {
+      method: "POST",
+      body: input,
+    });
   }
 
   listAutomations(query: AutomationListQuery = {}): Promise<AutomationPage> {
@@ -261,20 +296,11 @@ export class OperatorClient {
   }
 
   registerAutomation(input: AutomationDefinition): Promise<AutomationRegistryEntry> {
-    return this.#request<AutomationRegistryEntry>("/v1/automations", {
-      method: "POST",
-      body: input,
-    });
+    return this.#request<AutomationRegistryEntry>("/v1/automations", { method: "POST", body: input });
   }
 
-  listAutomationVersions(
-    automationId: string,
-    query: AutomationVersionListQuery = {},
-  ): Promise<AutomationVersionPage> {
-    return this.#request<AutomationVersionPage>(pathWithQuery(
-      `/v1/automations/${encodeURIComponent(automationId)}/versions`,
-      query,
-    ));
+  listAutomationVersions(automationId: string, query: AutomationVersionListQuery = {}): Promise<AutomationVersionPage> {
+    return this.#request<AutomationVersionPage>(pathWithQuery(`/v1/automations/${encodeURIComponent(automationId)}/versions`, query));
   }
 
   activateAutomation(automationId: string, version: number, input: ActivationInput): Promise<AutomationRegistryEntry> {
@@ -288,6 +314,14 @@ export class OperatorClient {
     return this.#request<RunPage>(pathWithQuery("/v1/runs", query));
   }
 
+  startManualRun(input: ManualRunBody, idempotencyKey: string): Promise<ControlPlaneRunRecord> {
+    return this.#request<ControlPlaneRunRecord>("/v1/runs/manual", {
+      method: "POST",
+      body: input,
+      idempotencyKey,
+    });
+  }
+
   getRun(runId: string): Promise<ControlPlaneRunRecord> {
     return this.#request<ControlPlaneRunRecord>(`/v1/runs/${encodeURIComponent(runId)}`);
   }
@@ -297,21 +331,30 @@ export class OperatorClient {
   }
 
   decideApproval(runId: string, input: ApprovalDecisionInput): Promise<ApprovalDecisionResponse> {
-    return this.#request<ApprovalDecisionResponse>(`/v1/runs/${encodeURIComponent(runId)}/approvals`, {
-      method: "POST",
-      body: input,
-    });
+    return this.#request<ApprovalDecisionResponse>(`/v1/runs/${encodeURIComponent(runId)}/approvals`, { method: "POST", body: input });
   }
 
   listSchedules(query: ScheduleListQuery = {}): Promise<SchedulePage> {
     return this.#request<SchedulePage>(pathWithQuery("/v1/schedules", query));
   }
 
-  dispatchSchedules(input: SchedulerDispatchInput = {}): Promise<SchedulerDispatchResponse> {
-    return this.#request<SchedulerDispatchResponse>("/v1/scheduler/dispatch", {
+  createSchedule(input: ScheduleRegistrationBody): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>("/v1/schedules", { method: "POST", body: input });
+  }
+
+  getSchedule(scheduleId: string): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>(`/v1/schedules/${encodeURIComponent(scheduleId)}`);
+  }
+
+  setScheduleEnabled(scheduleId: string, input: ScheduleActivationBody): Promise<AutomationSchedule> {
+    return this.#request<AutomationSchedule>(`/v1/schedules/${encodeURIComponent(scheduleId)}/activation`, {
       method: "POST",
       body: input,
     });
+  }
+
+  dispatchSchedules(input: SchedulerDispatchInput = {}): Promise<SchedulerDispatchResponse> {
+    return this.#request<SchedulerDispatchResponse>("/v1/scheduler/dispatch", { method: "POST", body: input });
   }
 
   listOperations(query: OperatorOperationsQuery = {}): Promise<OperatorOperationsPage> {

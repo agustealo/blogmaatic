@@ -20,12 +20,34 @@ const MIME: Readonly<Record<string, string>> = {
   ".ico": "image/x-icon",
 };
 
+export interface ControlRoomUpdateStatus {
+  readonly currentVersion: string;
+  readonly latestVersion: string;
+  readonly tag: string;
+  readonly releaseUrl: string;
+  readonly updateAvailable: boolean;
+  readonly packageName?: string;
+  readonly installerOpened?: boolean;
+}
+
+export interface ControlRoomUpdateService {
+  check(): Promise<ControlRoomUpdateStatus>;
+  install(): Promise<ControlRoomUpdateStatus>;
+}
+
 function securityHeaders(response: ServerResponse): void {
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "no-referrer");
   response.setHeader("x-frame-options", "DENY");
   response.setHeader("cross-origin-resource-policy", "same-origin");
   response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+}
+
+function json(response: ServerResponse, statusCode: number, body: unknown): void {
+  response.statusCode = statusCode;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.end(JSON.stringify(body));
 }
 
 async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): Promise<Uint8Array<ArrayBuffer> | undefined> {
@@ -75,11 +97,24 @@ function cookieValue(request: IncomingMessage, name: string): string | undefined
   return undefined;
 }
 
+function bearerValue(request: IncomingMessage): string | undefined {
+  const raw = request.headers.authorization;
+  if (typeof raw !== "string") return undefined;
+  const match = /^Bearer\s+(.+)$/.exec(raw);
+  return match?.[1];
+}
+
 function secretMatches(received: string | undefined, expected: string): boolean {
   if (!received) return false;
   const left = Buffer.from(received, "utf8");
   const right = Buffer.from(expected, "utf8");
   return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function localAuthorityAuthorized(request: IncomingMessage, controlRoomOrigin: string, operatorToken: string): boolean {
+  return request.method === "POST"
+    && requestMatchesBoundOrigin(request, controlRoomOrigin)
+    && secretMatches(bearerValue(request), operatorToken);
 }
 
 function sessionAuthorized(
@@ -97,37 +132,46 @@ function sessionAuthorized(
 }
 
 function forbiddenProxy(response: ServerResponse): void {
-  response.statusCode = 403;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("cache-control", "no-store");
-  response.end(JSON.stringify({
+  json(response, 403, {
     error: {
       code: "CONTROL_ROOM_SESSION_REQUIRED",
-      message: "Open the Control Room using the one-time launch URL printed by the Blogmaatic runtime",
+      message: "Open the Control Room using a one-time launch URL minted by the Blogmaatic runtime",
     },
-  }));
+  });
 }
+
+function forbiddenLauncher(response: ServerResponse): void {
+  json(response, 403, {
+    error: {
+      code: "CONTROL_ROOM_LOCAL_AUTHORITY_REQUIRED",
+      message: "A local Blogmaatic operator credential is required",
+    },
+  });
+}
+
+type BootstrapConsumeResult = "accepted" | "used" | "invalid";
 
 function bootstrapSession(
   request: IncomingMessage,
   response: ServerResponse,
   controlRoomOrigin: string,
   sessionCookieName: string,
-  bootstrapToken: string,
   sessionToken: string,
   sessionProof: string,
-  consume: () => boolean,
+  consume: (token: string) => BootstrapConsumeResult,
 ): void {
   if (request.method !== "GET" || !requestMatchesBoundOrigin(request, controlRoomOrigin)) {
     forbiddenProxy(response);
     return;
   }
   const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-  if (!secretMatches(pathname.slice("/session/".length), bootstrapToken)) {
+  const token = pathname.slice("/session/".length);
+  const result = consume(token);
+  if (result === "invalid") {
     forbiddenProxy(response);
     return;
   }
-  if (!consume()) {
+  if (result === "used") {
     response.statusCode = 410;
     response.setHeader("cache-control", "no-store");
     response.end("Control Room launch capability has already been consumed");
@@ -139,6 +183,81 @@ function bootstrapSession(
   response.setHeader("cache-control", "no-store");
   response.setHeader("set-cookie", `${sessionCookieName}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict`);
   response.end();
+}
+
+function mintLaunch(
+  request: IncomingMessage,
+  response: ServerResponse,
+  controlRoomOrigin: string,
+  operatorToken: string,
+  mint: () => string,
+): void {
+  if (!localAuthorityAuthorized(request, controlRoomOrigin, operatorToken)) {
+    forbiddenLauncher(response);
+    return;
+  }
+  const launchAddress = mint();
+  json(response, 201, { launchAddress });
+}
+
+function requestShutdown(
+  request: IncomingMessage,
+  response: ServerResponse,
+  controlRoomOrigin: string,
+  operatorToken: string,
+  onShutdown: (() => void) | undefined,
+): void {
+  if (!localAuthorityAuthorized(request, controlRoomOrigin, operatorToken)) {
+    forbiddenLauncher(response);
+    return;
+  }
+  if (!onShutdown) {
+    json(response, 409, { error: { code: "CONTROL_ROOM_SHUTDOWN_UNAVAILABLE", message: "This runtime was not started with local shutdown ownership" } });
+    return;
+  }
+  json(response, 202, { accepted: true });
+  setImmediate(onShutdown);
+}
+
+async function updateAction(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  controlRoomOrigin: string,
+  sessionCookieName: string,
+  sessionToken: string,
+  sessionProof: string,
+  updates: ControlRoomUpdateService | undefined,
+): Promise<void> {
+  if (!sessionAuthorized(request, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof)) {
+    forbiddenProxy(response);
+    return;
+  }
+  if (!updates) {
+    json(response, 503, { error: { code: "CONTROL_ROOM_UPDATE_UNAVAILABLE", message: "This runtime does not own the trusted native update channel" } });
+    return;
+  }
+  try {
+    if (pathname === "/local/update" && request.method === "GET") {
+      json(response, 200, await updates.check());
+      return;
+    }
+    if (pathname === "/local/update/install" && request.method === "POST") {
+      json(response, 202, await updates.install());
+      return;
+    }
+    response.statusCode = 405;
+    response.setHeader("allow", pathname.endsWith("/install") ? "POST" : "GET");
+    response.setHeader("cache-control", "no-store");
+    response.end("Method not allowed");
+  } catch (error) {
+    json(response, 502, {
+      error: {
+        code: "CONTROL_ROOM_UPDATE_FAILED",
+        message: error instanceof Error ? error.message : "Trusted update operation failed",
+      },
+    });
+  }
 }
 
 async function proxy(
@@ -178,15 +297,12 @@ async function proxy(
     }
     response.end(Buffer.from(await upstream.arrayBuffer()));
   } catch (error) {
-    response.statusCode = 502;
-    response.setHeader("content-type", "application/json; charset=utf-8");
-    response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({
+    json(response, 502, {
       error: {
         code: "LOCAL_PROXY_UNAVAILABLE",
         message: error instanceof Error ? error.message : "Operator API is unavailable",
       },
-    }));
+    });
   }
 }
 
@@ -252,6 +368,8 @@ export class ControlRoomServer {
     readonly port: number;
     readonly operatorOrigin: string;
     readonly operatorToken: string;
+    readonly onShutdown?: () => void;
+    readonly updates?: ControlRoomUpdateService;
   }): Promise<ControlRoomServer> {
     const root = resolve(options.root);
     const index = resolve(root, "index.html");
@@ -262,30 +380,72 @@ export class ControlRoomServer {
     }
     if (!options.operatorToken.trim()) throw new Error("Control Room operator token is required");
 
-    const bootstrapToken = randomBytes(24).toString("base64url");
     const sessionToken = randomBytes(32).toString("base64url");
     const sessionProof = randomBytes(32).toString("base64url");
-    let bootstrapAvailable = true;
+    const availableBootstraps = new Set<string>();
+    const consumedBootstraps = new Set<string>();
     let controlRoomOrigin = "";
     let sessionCookieName = SESSION_COOKIE_PREFIX;
+    let installInFlight: Promise<ControlRoomUpdateStatus> | undefined;
+    const updateService = options.updates ? {
+      check: () => options.updates!.check(),
+      install: () => {
+        if (!installInFlight) {
+          installInFlight = options.updates!.install().finally(() => { installInFlight = undefined; });
+        }
+        return installInFlight;
+      },
+    } satisfies ControlRoomUpdateService : undefined;
+
+    const mintBootstrap = (): string => {
+      if (!controlRoomOrigin) throw new Error("Control Room origin is unavailable");
+      const token = randomBytes(24).toString("base64url");
+      availableBootstraps.add(token);
+      return `${controlRoomOrigin}/session/${token}`;
+    };
+    const consumeBootstrap = (token: string): BootstrapConsumeResult => {
+      if (availableBootstraps.delete(token)) {
+        consumedBootstraps.add(token);
+        if (consumedBootstraps.size > 64) {
+          const oldest = consumedBootstraps.values().next().value as string | undefined;
+          if (oldest) consumedBootstraps.delete(oldest);
+        }
+        return "accepted";
+      }
+      if (consumedBootstraps.has(token)) return "used";
+      return "invalid";
+    };
+
     const server = createServer((request, response) => {
       securityHeaders(response);
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
       let task: Promise<void>;
-      if (pathname.startsWith("/session/")) {
+      if (pathname === "/local/launch") {
+        mintLaunch(request, response, controlRoomOrigin, options.operatorToken, mintBootstrap);
+        task = Promise.resolve();
+      } else if (pathname === "/local/shutdown") {
+        requestShutdown(request, response, controlRoomOrigin, options.operatorToken, options.onShutdown);
+        task = Promise.resolve();
+      } else if (pathname === "/local/update" || pathname === "/local/update/install") {
+        task = updateAction(
+          request,
+          response,
+          pathname,
+          controlRoomOrigin,
+          sessionCookieName,
+          sessionToken,
+          sessionProof,
+          updateService,
+        );
+      } else if (pathname.startsWith("/session/")) {
         bootstrapSession(
           request,
           response,
           controlRoomOrigin,
           sessionCookieName,
-          bootstrapToken,
           sessionToken,
           sessionProof,
-          () => {
-            if (!bootstrapAvailable) return false;
-            bootstrapAvailable = false;
-            return true;
-          },
+          consumeBootstrap,
         );
         task = Promise.resolve();
       } else if (pathname === "/api" || pathname.startsWith("/api/")) {
@@ -330,7 +490,7 @@ export class ControlRoomServer {
     return new ControlRoomServer(
       server,
       controlRoomOrigin,
-      `${controlRoomOrigin}/session/${bootstrapToken}`,
+      mintBootstrap(),
     );
   }
 

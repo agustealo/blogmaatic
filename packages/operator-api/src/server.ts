@@ -25,12 +25,14 @@ import {
   registerPublicationGroupRoutes,
 } from "./publication-groups.js";
 import { listOperatorRuns } from "./runs.js";
+import { parseScheduleActivationBody } from "./schedule-validation.js";
 import type {
   ManualRunBody,
   OperatorApiListenOptions,
   OperatorApiOptions,
   OperatorConnectionManager,
   OperatorConnectionView,
+  OperatorScheduleManager,
 } from "./types.js";
 import {
   OperatorRequestError,
@@ -107,6 +109,13 @@ function connectionManager(options: OperatorApiOptions): OperatorConnectionManag
   return options.connections;
 }
 
+function scheduleManager(options: OperatorApiOptions): OperatorScheduleManager {
+  if (!options.schedules) {
+    throw new OperatorApiError(503, "SCHEDULE_MANAGEMENT_UNAVAILABLE", "Schedule management is unavailable");
+  }
+  return options.schedules;
+}
+
 function connectionOr404(manager: OperatorConnectionManager, connectionId: string): OperatorConnectionView {
   try {
     return manager.get(connectionId);
@@ -123,6 +132,21 @@ async function domainCall<T>(fn: () => Promise<T>): Promise<T> {
       throw error;
     }
     throw new OperatorApiError(422, "DOMAIN_REJECTED", "The requested operation was rejected");
+  }
+}
+
+async function scheduleDomainCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof OperatorApiError || error instanceof OperatorRequestError || error instanceof OperatorAuthError) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : "Schedule operation was rejected";
+    if (/Schedule .* changed from .* to .*/.test(message)) {
+      throw new OperatorApiError(409, "SCHEDULE_VERSION_CONFLICT", message);
+    }
+    throw new OperatorApiError(422, "DOMAIN_REJECTED", message);
   }
 }
 
@@ -494,11 +518,13 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
   app.post("/v1/schedules", async (request, reply) => {
     const principal = await authorize(request, "schedules:write");
     const input = parseScheduleBody(request.body);
+    const existing = await options.store.getSchedule(input.id);
+    if (existing) throw new OperatorApiError(409, "SCHEDULE_EXISTS", "Schedule already exists; create a replacement with a new id");
     const schedule = await auditedMutation({
       store: options.store,
       principal,
       requestId: request.id,
-      action: "schedule.upsert",
+      action: "schedule.create",
       resource: { type: "schedule", id: input.id },
       evidence: {
         automationId: input.automationId,
@@ -517,6 +543,32 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
     const schedule = await options.store.getSchedule(scheduleId);
     if (!schedule) throw new OperatorApiError(404, "SCHEDULE_NOT_FOUND", "Schedule was not found");
     return schedule;
+  });
+
+  app.post("/v1/schedules/:scheduleId/activation", async (request) => {
+    const principal = await authorize(request, "schedules:write");
+    const scheduleId = requirePathString(params(request).scheduleId, "scheduleId");
+    const current = await options.store.getSchedule(scheduleId);
+    if (!current) throw new OperatorApiError(404, "SCHEDULE_NOT_FOUND", "Schedule was not found");
+    const body = parseScheduleActivationBody(request.body);
+    return auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "schedule.activate",
+      resource: { type: "schedule", id: scheduleId },
+      evidence: {
+        expectedUpdatedAt: body.expectedUpdatedAt,
+        currentUpdatedAt: current.updatedAt,
+        enabled: body.enabled,
+      },
+      now: () => clock.now(),
+      execute: () => scheduleDomainCall(() => scheduleManager(options).setEnabled(
+        scheduleId,
+        body.expectedUpdatedAt,
+        body.enabled,
+      )),
+    });
   });
 
   app.post("/v1/scheduler/dispatch", async (request) => {

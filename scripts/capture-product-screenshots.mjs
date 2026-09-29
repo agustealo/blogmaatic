@@ -10,7 +10,9 @@ const execFileAsync = promisify(execFile);
 const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
 const cli = join(root, "apps", "runtime", "dist", "cli.js");
 const outputDir = resolve(process.argv[2] ?? join(root, "docs", "screenshots"));
-const viewport = { width: 1600, height: 1000, deviceScaleFactor: 1.5 };
+const desktopViewport = { width: 1600, height: 1000, deviceScaleFactor: 1.5 };
+const mobileViewport = { width: 390, height: 844, deviceScaleFactor: 2 };
+let activeViewport = desktopViewport;
 
 const dataDir = await mkdtemp(join(tmpdir(), "blogmaatic-media-state-"));
 const repository = await mkdtemp(join(tmpdir(), "blogmaatic-media-jekyll-"));
@@ -148,7 +150,7 @@ async function startBrowser() {
     "--use-mock-keychain",
     `--user-data-dir=${chromeProfile}`,
     "--remote-debugging-port=0",
-    `--window-size=${viewport.width},${viewport.height}`,
+    `--window-size=${desktopViewport.width},${desktopViewport.height}`,
     "about:blank",
   ], { stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", (chunk) => appendOutput(state, chunk));
@@ -236,6 +238,16 @@ class CdpClient {
   }
 }
 
+async function setViewport(nextViewport) {
+  activeViewport = nextViewport;
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: nextViewport.width,
+    height: nextViewport.height,
+    deviceScaleFactor: nextViewport.deviceScaleFactor,
+    mobile: nextViewport.width < 700,
+  });
+}
+
 async function openPage(port, url) {
   const response = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: "PUT" });
   if (!response.ok) throw new Error(`Could not open screenshot tab: ${response.status} ${await response.text()}`);
@@ -243,12 +255,8 @@ async function openPage(port, url) {
   const client = await CdpClient.connect(target.webSocketDebuggerUrl);
   await client.send("Page.enable");
   await client.send("Runtime.enable");
-  await client.send("Emulation.setDeviceMetricsOverride", {
-    width: viewport.width,
-    height: viewport.height,
-    deviceScaleFactor: viewport.deviceScaleFactor,
-    mobile: false,
-  });
+  cdp = client;
+  await setViewport(desktopViewport);
   return client;
 }
 
@@ -284,11 +292,18 @@ async function navigate(origin, path, readyText) {
   await new Promise((resolveWait) => setTimeout(resolveWait, 350));
 }
 
+async function assertMobileLayout() {
+  await waitForExpression(`(() => {
+    const nav = document.querySelector(".mobile-nav");
+    return document.documentElement.scrollWidth <= window.innerWidth + 1 && nav && getComputedStyle(nav).display !== "none";
+  })()`);
+}
+
 function assertPng(buffer, name) {
   assert.ok(buffer.length > 20_000, `${name} screenshot is unexpectedly small`);
   assert.equal(buffer.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", `${name} is not a PNG`);
-  assert.equal(buffer.readUInt32BE(16), Math.round(viewport.width * viewport.deviceScaleFactor));
-  assert.equal(buffer.readUInt32BE(20), Math.round(viewport.height * viewport.deviceScaleFactor));
+  assert.equal(buffer.readUInt32BE(16), Math.round(activeViewport.width * activeViewport.deviceScaleFactor));
+  assert.equal(buffer.readUInt32BE(20), Math.round(activeViewport.height * activeViewport.deviceScaleFactor));
 }
 
 async function capture(name) {
@@ -300,34 +315,6 @@ async function capture(name) {
   const buffer = Buffer.from(result.data, "base64");
   assertPng(buffer, name);
   await writeFile(join(outputDir, `${name}.png`), buffer);
-}
-
-function publication() {
-  return {
-    id: "pub-product-media",
-    createdAt: "2026-09-23T12:00:00.000Z",
-    slug: "durable-publishing",
-    status: "approved",
-    current: {
-      id: "rev-product-media-1",
-      ordinal: 1,
-      createdAt: "2026-09-23T12:00:00.000Z",
-      content: {
-        schemaVersion: 1,
-        title: "Why durable publishing needs a control plane",
-        language: "en",
-        blocks: [
-          { id: "heading", kind: "heading", data: { level: 2, text: "One publication, many destinations" } },
-          { id: "paragraph", kind: "paragraph", data: { text: "Blogmaatic keeps delivery, policy, verification, and reconciliation behind one durable publishing authority." } },
-        ],
-        assets: [],
-        tags: ["publishing", "automation"],
-        attributes: {},
-      },
-    },
-    canonicalUrl: "https://journal.example.test/durable-publishing/",
-    provenance: { source: "product-media-capture" },
-  };
 }
 
 async function seedProductState(token) {
@@ -388,7 +375,7 @@ async function seedProductState(token) {
     version: 1,
     name: "Publish approved content",
     enabled: true,
-    trigger: { kind: "manual" },
+    trigger: { kind: "event", eventType: "publication.approved" },
     steps: [{ id: "publish", kind: "publish_group", groupId: group.group.id }],
   };
   const automationResponse = await api(token, "/v1/automations", {
@@ -397,17 +384,31 @@ async function seedProductState(token) {
   });
   await expectStatus(automationResponse, 201);
 
-  const runResponse = await api(token, "/v1/runs/manual", {
+  const publicationResponse = await api(token, "/v1/publications", {
     method: "POST",
-    headers: { "idempotency-key": "product-media-run-1" },
     body: JSON.stringify({
-      automationId: automation.id,
-      publication: publication(),
-      groups: [group.group],
+      title: "Why durable publishing needs a control plane",
+      summary: "One publication, many destinations, one durable authority.",
+      body: "Blogmaatic keeps delivery, policy, verification, and reconciliation behind one durable publishing authority.",
+      language: "en",
+      tags: ["publishing", "automation"],
+      slug: "durable-publishing",
+      canonicalUrl: "https://journal.example.test/durable-publishing/",
+      status: "ready",
     }),
   });
-  await expectStatus(runResponse, 202);
-  const run = await runResponse.json();
+  await expectStatus(publicationResponse, 201);
+  const workspace = await publicationResponse.json();
+
+  const publishResponse = await api(token, `/v1/publications/${encodeURIComponent(workspace.publication.id)}/publish`, {
+    method: "POST",
+    body: JSON.stringify({ expectedVersion: workspace.version }),
+  });
+  await expectStatus(publishResponse, 200);
+  const dispatch = await publishResponse.json();
+  assert.equal(dispatch.runs.length, 1);
+  const run = dispatch.runs[0];
+  assert.ok(run?.runId);
 
   const deadline = Date.now() + 25_000;
   while (Date.now() < deadline) {
@@ -415,14 +416,63 @@ async function seedProductState(token) {
     if (resultResponse.status === 200) {
       const result = await resultResponse.json();
       assert.equal(result.outcome, "completed");
-      return { connection, group, automation, run };
+      break;
     }
     if (resultResponse.status !== 409) {
       throw new Error(`Unexpected run result status ${resultResponse.status}: ${await resultResponse.text()}`);
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
-  throw new Error(`Timed out waiting for product-media run ${run.runId}`);
+
+  const resultResponse = await api(token, `/v1/runs/${encodeURIComponent(run.runId)}/result`);
+  await expectStatus(resultResponse, 200);
+  assert.equal((await resultResponse.json()).outcome, "completed");
+
+  const scheduleId = "schedule-editorial-future";
+  const scheduleAutomation = {
+    id: "automation-editorial-schedule",
+    version: 1,
+    name: "Publish the durable editorial on schedule",
+    enabled: true,
+    trigger: { kind: "schedule", scheduleId },
+    steps: [{ id: "publish", kind: "publish_group", groupId: group.group.id }],
+  };
+  const scheduleAutomationResponse = await api(token, "/v1/automations", {
+    method: "POST",
+    body: JSON.stringify(scheduleAutomation),
+  });
+  await expectStatus(scheduleAutomationResponse, 201);
+
+  const scheduleResponse = await api(token, "/v1/schedules", {
+    method: "POST",
+    body: JSON.stringify({
+      id: scheduleId,
+      automationId: scheduleAutomation.id,
+      automationVersion: scheduleAutomation.version,
+      publication: dispatch.publication.publication,
+      groups: [group.group],
+      timezone: "America/Detroit",
+      localDate: "2030-01-15",
+      localTime: "09:00",
+      recurrence: { kind: "weekly", weekdays: [1, 3, 5] },
+      missedRunPolicy: "skip",
+      enabled: true,
+    }),
+  });
+  await expectStatus(scheduleResponse, 201);
+  const schedule = await scheduleResponse.json();
+  assert.equal(schedule.id, scheduleId);
+  assert.equal(schedule.enabled, true);
+
+  return {
+    connection,
+    group,
+    automation,
+    scheduleAutomation,
+    schedule,
+    workspace: dispatch.publication,
+    run,
+  };
 }
 
 try {
@@ -482,30 +532,63 @@ try {
   await navigate(origin, "/operations", "Operations");
   await capture("08-operations");
 
+  await navigate(origin, "/publication-groups", "Publication Groups");
+  await capture("09-publication-groups");
+
+  await navigate(origin, "/publications", "Publications");
+  await capture("10-publications");
+
+  await navigate(origin, "/schedules", "Schedules");
+  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await capture("11-schedules");
+
+  await setViewport(mobileViewport);
+  await navigate(origin, "/publications", "Publications");
+  await assertMobileLayout();
+  await capture("12-mobile-publications");
+
+  await navigate(origin, "/publication-groups", "Publication Groups");
+  await assertMobileLayout();
+  await capture("13-mobile-publication-groups");
+
+  await navigate(origin, "/schedules", "Schedules");
+  await assertMobileLayout();
+  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await capture("14-mobile-schedules");
+
   const manifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     sourceCommit: process.env.GITHUB_SHA ?? null,
     source: "real-runtime-capture",
     browser: await browserBinary(),
-    viewport,
+    viewport: desktopViewport,
+    mobileViewport,
     fixture: {
       runtime: "managed local runtime",
       publisher: "Jekyll/Git",
       connection: "created through Operator API",
       publicationGroup: "created through canonical Publication Group authority",
-      automation: "registered through canonical automation registry",
-      run: "real completed durable publication run",
+      publication: "created and approved through canonical Publication Workspace authority",
+      automation: "publication.approved automation registered through canonical automation registry",
+      schedule: "future weekly schedule created through canonical schedule authority against an approved publication snapshot",
+      run: "real completed durable publication run dispatched by Publication Workspace",
     },
     captures: [
-      { file: "01-first-run-setup.png", route: "/setup", feature: "fresh first-run setup" },
-      { file: "02-first-run-ready.png", route: "/setup", feature: "completed first-run readiness" },
-      { file: "03-connections.png", route: "/connections", feature: "real managed destination and health" },
-      { file: "04-control-room-overview.png", route: "/", feature: "Control Room overview" },
-      { file: "05-automations.png", route: "/automations", feature: "durable automation management" },
-      { file: "06-runs.png", route: "/runs", feature: "durable run history" },
-      { file: "07-run-detail.png", route: `/runs/${state.run.runId}`, feature: "verified run detail" },
-      { file: "08-operations.png", route: "/operations", feature: "operator attention surface" },
+      { file: "01-first-run-setup.png", route: "/setup", feature: "fresh first-run setup", viewport: "desktop" },
+      { file: "02-first-run-ready.png", route: "/setup", feature: "completed first-run readiness", viewport: "desktop" },
+      { file: "03-connections.png", route: "/connections", feature: "real managed destination and health", viewport: "desktop" },
+      { file: "04-control-room-overview.png", route: "/", feature: "Control Room overview", viewport: "desktop" },
+      { file: "05-automations.png", route: "/automations", feature: "durable automation management", viewport: "desktop" },
+      { file: "06-runs.png", route: "/runs", feature: "durable run history", viewport: "desktop" },
+      { file: "07-run-detail.png", route: `/runs/${state.run.runId}`, feature: "verified run detail", viewport: "desktop" },
+      { file: "08-operations.png", route: "/operations", feature: "operator attention surface", viewport: "desktop" },
+      { file: "09-publication-groups.png", route: "/publication-groups", feature: "durable publication topology management", viewport: "desktop" },
+      { file: "10-publications.png", route: "/publications", feature: "canonical Publication Workspace", viewport: "desktop" },
+      { file: "11-schedules.png", route: "/schedules", feature: "durable schedule management with a real frozen publication snapshot", viewport: "desktop" },
+      { file: "12-mobile-publications.png", route: "/publications", feature: "mobile Publication Workspace with no document overflow", viewport: "mobile" },
+      { file: "13-mobile-publication-groups.png", route: "/publication-groups", feature: "mobile publication topology with visible mobile navigation", viewport: "mobile" },
+      { file: "14-mobile-schedules.png", route: "/schedules", feature: "mobile schedule management with no document overflow", viewport: "mobile" },
     ],
   };
   await writeFile(join(outputDir, "capture-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

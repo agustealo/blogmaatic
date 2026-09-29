@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-23T18:33:34.402Z",
-  "sourceCommit": "0ecd73f99d18af6ddc1a36ebaae5cb6546ecd643",
+  "generatedAt": "2026-09-29T03:13:06.710Z",
+  "sourceCommit": "51c9520049c4e8b86e02b039920c1f5f7fdfa106",
   "source": "real-runtime-capture",
   "browser": "/usr/bin/google-chrome",
   "viewport": {
@@ -50,7 +50,7 @@
     },
     {
       "file": "07-run-detail.png",
-      "route": "/runs/run_6aa9c1a6331954729bfccf8ef53af2c777e86488",
+      "route": "/runs/run_4564b60a5555db5a384f87f9cde9fad53dd98948",
       "feature": "verified run detail"
     },
     {

@@ -3,7 +3,7 @@ name: Product Media
 on:
   push:
     branches:
-      - feat/connection-manager-onboarding-slice-15
+      - "**"
     paths:
       - ".github/workflows/product-media.yml"
       - "apps/control-room/**"
@@ -14,12 +14,15 @@ on:
       - "packages/operator-api/**"
       - "packages/operator-client/**"
       - "scripts/capture-product-screenshots.mjs"
+      - "scripts/smoke-consumer-publishing.mjs"
+      - "scripts/smoke-control-room-keyboard.mjs"
+      - "docs/screenshots/**"
       - "package.json"
       - "package-lock.json"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: product-media-${{ github.ref }}
@@ -48,6 +51,12 @@ jobs:
       - name: Build production workspaces
         run: npm run build
 
+      - name: Burn real keyboard accessibility contract
+        run: node scripts/smoke-control-room-keyboard.mjs
+
+      - name: Burn canonical consumer publishing journey
+        run: node scripts/smoke-consumer-publishing.mjs
+
       - name: Capture real Control Room product media
         run: npm run product:screenshots
 
@@ -64,25 +73,42 @@ jobs:
             06-runs.png
             07-run-detail.png
             08-operations.png
+            09-publication-groups.png
+            10-publications.png
+            11-schedules.png
+            12-mobile-publications.png
+            13-mobile-publication-groups.png
+            14-mobile-schedules.png
             capture-manifest.json
           )
           for asset in "${expected[@]}"; do
             test -s "docs/screenshots/${asset}"
           done
-          test "$(find docs/screenshots -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 8
+          test "$(find docs/screenshots -maxdepth 1 -type f -name '*.png' | wc -l)" -eq 14
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("docs/screenshots/capture-manifest.json", "utf8"));
+            if (manifest.sourceCommit !== process.env.GITHUB_SHA) {
+              throw new Error(`Screenshot manifest source ${manifest.sourceCommit} does not match exact head ${process.env.GITHUB_SHA}`);
+            }
+            if (manifest.source !== "real-runtime-capture") throw new Error("Screenshot manifest is not a real-runtime capture");
+            if (manifest.captures.length !== 14) throw new Error(`Expected 14 canonical captures, got ${manifest.captures.length}`);
+            const mobile = manifest.captures.filter((item) => item.viewport === "mobile");
+            if (mobile.length !== 3) throw new Error(`Expected 3 mobile captures, got ${mobile.length}`);
+            if (!manifest.fixture?.schedule) throw new Error("Schedule fixture evidence is missing");
+          '
 
-      - name: Commit captured product media
+      - name: Report exact-head media evidence
         shell: bash
-        env:
-          BRANCH_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          git config user.name "blogmaatic-product-media[bot]"
-          git config user.email "blogmaatic-product-media[bot]@users.noreply.github.com"
-          git add docs/screenshots/*.png docs/screenshots/capture-manifest.json
-          if git diff --cached --quiet; then
-            echo "Product screenshots already match this runtime/UI state."
-            exit 0
-          fi
-          git commit -m "docs: refresh real Control Room screenshots"
-          git push origin "HEAD:${BRANCH_NAME}"
+          sha256sum docs/screenshots/*.png docs/screenshots/capture-manifest.json
+          echo "Product Media is evidence-only. It never rewrites the candidate SHA it is certifying."
+
+      - name: Retain exact-head product media artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: control-room-product-media-${{ github.sha }}
+          path: docs/screenshots/
+          if-no-files-found: error
+          retention-days: 30

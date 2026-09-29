@@ -68,6 +68,7 @@ async function signMacPayload(payload, { identity, timestamp }) {
   const files = await machoFiles(payload);
   if (files.length === 0) throw new Error("No Mach-O executables were found in the macOS payload");
   const nodePath = resolve(payload, "opt", "blogmaatic", "bin", "node");
+  const appPath = resolve(payload, "Applications", "Blogmaatic.app");
   const nodeEntitlements = resolve(root, "packaging", "macos", "node-entitlements.plist");
   if (!(await exists(nodeEntitlements))) throw new Error(`Node entitlements are missing: ${nodeEntitlements}`);
 
@@ -80,10 +81,79 @@ async function signMacPayload(payload, { identity, timestamp }) {
     await execFileAsync("codesign", ["--verify", "--strict", "--verbose=2", path], { encoding: "utf8" });
   }
 
+  if (await exists(appPath)) {
+    const args = ["--force", "--options", "runtime"];
+    if (timestamp) args.push("--timestamp");
+    args.push("--sign", identity, appPath);
+    await execFileAsync("codesign", args, { encoding: "utf8" });
+    await execFileAsync("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], { encoding: "utf8" });
+  }
+
   const nodeDetails = await execFileAsync("codesign", ["--display", "--verbose=4", "--entitlements", ":-", nodePath], { encoding: "utf8" });
   const diagnostic = `${nodeDetails.stdout}\n${nodeDetails.stderr}`;
   if (!diagnostic.includes("runtime") || !diagnostic.includes("com.apple.security.cs.allow-jit")) {
     throw new Error(`Bundled Node is missing Hardened Runtime/JIT signing authority: ${diagnostic}`);
+  }
+}
+
+async function addLinuxLauncher(payload) {
+  const applicationsDir = join(payload, "usr", "share", "applications");
+  await mkdir(applicationsDir, { recursive: true });
+  await writeFile(join(applicationsDir, "blogmaatic.desktop"), [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Version=1.0",
+    "Name=Blogmaatic",
+    "GenericName=Publishing Automation",
+    "Comment=Open the Blogmaatic publishing Control Room",
+    "TryExec=/usr/local/bin/blogmaatic",
+    "Exec=/usr/local/bin/blogmaatic open",
+    "Terminal=false",
+    "Categories=Office;Network;",
+    "StartupNotify=true",
+    "",
+  ].join("\n"), { mode: 0o644 });
+}
+
+async function addMacLauncher(payload, artifactRoot, version) {
+  const appPath = join(payload, "Applications", "Blogmaatic.app");
+  const contents = join(appPath, "Contents");
+  const macos = join(contents, "MacOS");
+  await mkdir(macos, { recursive: true });
+  await writeFile(join(contents, "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>Blogmaatic</string>
+  <key>CFBundleExecutable</key><string>Blogmaatic</string>
+  <key>CFBundleIdentifier</key><string>com.blogmaatic.controlroom</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Blogmaatic</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${version}</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+`, { mode: 0o644 });
+
+  const source = join(artifactRoot, `.blogmaatic-launcher-${process.pid}.c`);
+  const executable = join(macos, "Blogmaatic");
+  await writeFile(source, [
+    "#include <unistd.h>",
+    "int main(void) {",
+    "  execl(\"/usr/local/bin/blogmaatic\", \"blogmaatic\", \"open\", (char *)0);",
+    "  return 127;",
+    "}",
+    "",
+  ].join("\n"), { mode: 0o600 });
+  try {
+    await execFileAsync("clang", ["-Os", "-Wall", "-Wextra", "-o", executable, source], { encoding: "utf8" });
+    await chmod(executable, 0o755);
+  } finally {
+    await rm(source, { force: true });
   }
 }
 
@@ -116,6 +186,7 @@ await chmod(nativeLauncher, 0o755);
 let output;
 if (process.platform === "linux") {
   if (signed || adhocSigned) throw new Error("macOS signing modes are not valid for Linux packages");
+  await addLinuxLauncher(payload);
   const controlDir = join(payload, "DEBIAN");
   await mkdir(controlDir, { recursive: true });
   const architecture = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : null;
@@ -127,7 +198,7 @@ if (process.platform === "linux") {
     "Priority: optional",
     `Architecture: ${architecture}`,
     "Maintainer: Agustealo Johnson <8550514+agustealo@users.noreply.github.com>",
-    "Depends: git, ca-certificates, libsecret-tools, gnome-keyring",
+    "Depends: git, ca-certificates, libsecret-tools, gnome-keyring, xdg-utils",
     "Homepage: https://github.com/agustealo/blogmaatic",
     "Description: Publication automation control plane runtime and Control Room",
     " Blogmaatic connects publishing destinations through durable automation workflows.",
@@ -137,6 +208,7 @@ if (process.platform === "linux") {
   await rm(output, { force: true });
   await execFileAsync("dpkg-deb", ["--build", "--root-owner-group", payload, output], { encoding: "utf8" });
 } else if (process.platform === "darwin") {
+  await addMacLauncher(payload, artifactRoot, version);
   if (signed) {
     const applicationIdentity = process.env.APPLE_DEVELOPER_ID_APPLICATION?.trim();
     if (!applicationIdentity) throw new Error("APPLE_DEVELOPER_ID_APPLICATION is required for signed macOS packaging");
@@ -178,4 +250,5 @@ console.log(JSON.stringify({
   sha256: digest,
   payloadSigning: signed ? "developer-id" : adhocSigned ? "adhoc-hardened" : "none",
   installerSigned: process.platform === "darwin" && signed,
+  consumerLauncher: process.platform === "darwin" ? "/Applications/Blogmaatic.app" : "/usr/share/applications/blogmaatic.desktop",
 }));
