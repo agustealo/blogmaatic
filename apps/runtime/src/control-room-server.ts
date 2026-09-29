@@ -20,12 +20,34 @@ const MIME: Readonly<Record<string, string>> = {
   ".ico": "image/x-icon",
 };
 
+export interface ControlRoomUpdateStatus {
+  readonly currentVersion: string;
+  readonly latestVersion: string;
+  readonly tag: string;
+  readonly releaseUrl: string;
+  readonly updateAvailable: boolean;
+  readonly packageName?: string;
+  readonly installerOpened?: boolean;
+}
+
+export interface ControlRoomUpdateService {
+  check(): Promise<ControlRoomUpdateStatus>;
+  install(): Promise<ControlRoomUpdateStatus>;
+}
+
 function securityHeaders(response: ServerResponse): void {
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "no-referrer");
   response.setHeader("x-frame-options", "DENY");
   response.setHeader("cross-origin-resource-policy", "same-origin");
   response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+}
+
+function json(response: ServerResponse, statusCode: number, body: unknown): void {
+  response.statusCode = statusCode;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.end(JSON.stringify(body));
 }
 
 async function requestBody(request: IncomingMessage, limit = 2 * 1024 * 1024): Promise<Uint8Array<ArrayBuffer> | undefined> {
@@ -110,27 +132,21 @@ function sessionAuthorized(
 }
 
 function forbiddenProxy(response: ServerResponse): void {
-  response.statusCode = 403;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("cache-control", "no-store");
-  response.end(JSON.stringify({
+  json(response, 403, {
     error: {
       code: "CONTROL_ROOM_SESSION_REQUIRED",
       message: "Open the Control Room using a one-time launch URL minted by the Blogmaatic runtime",
     },
-  }));
+  });
 }
 
 function forbiddenLauncher(response: ServerResponse): void {
-  response.statusCode = 403;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("cache-control", "no-store");
-  response.end(JSON.stringify({
+  json(response, 403, {
     error: {
       code: "CONTROL_ROOM_LOCAL_AUTHORITY_REQUIRED",
       message: "A local Blogmaatic operator credential is required",
     },
-  }));
+  });
 }
 
 type BootstrapConsumeResult = "accepted" | "used" | "invalid";
@@ -181,10 +197,7 @@ function mintLaunch(
     return;
   }
   const launchAddress = mint();
-  response.statusCode = 201;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("cache-control", "no-store");
-  response.end(JSON.stringify({ launchAddress }));
+  json(response, 201, { launchAddress });
 }
 
 function requestShutdown(
@@ -199,17 +212,52 @@ function requestShutdown(
     return;
   }
   if (!onShutdown) {
-    response.statusCode = 409;
-    response.setHeader("content-type", "application/json; charset=utf-8");
-    response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({ error: { code: "CONTROL_ROOM_SHUTDOWN_UNAVAILABLE", message: "This runtime was not started with local shutdown ownership" } }));
+    json(response, 409, { error: { code: "CONTROL_ROOM_SHUTDOWN_UNAVAILABLE", message: "This runtime was not started with local shutdown ownership" } });
     return;
   }
-  response.statusCode = 202;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("cache-control", "no-store");
-  response.end(JSON.stringify({ accepted: true }));
+  json(response, 202, { accepted: true });
   setImmediate(onShutdown);
+}
+
+async function updateAction(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  controlRoomOrigin: string,
+  sessionCookieName: string,
+  sessionToken: string,
+  sessionProof: string,
+  updates: ControlRoomUpdateService | undefined,
+): Promise<void> {
+  if (!sessionAuthorized(request, controlRoomOrigin, sessionCookieName, sessionToken, sessionProof)) {
+    forbiddenProxy(response);
+    return;
+  }
+  if (!updates) {
+    json(response, 503, { error: { code: "CONTROL_ROOM_UPDATE_UNAVAILABLE", message: "This runtime does not own the trusted native update channel" } });
+    return;
+  }
+  try {
+    if (pathname === "/local/update" && request.method === "GET") {
+      json(response, 200, await updates.check());
+      return;
+    }
+    if (pathname === "/local/update/install" && request.method === "POST") {
+      json(response, 202, await updates.install());
+      return;
+    }
+    response.statusCode = 405;
+    response.setHeader("allow", pathname.endsWith("/install") ? "POST" : "GET");
+    response.setHeader("cache-control", "no-store");
+    response.end("Method not allowed");
+  } catch (error) {
+    json(response, 502, {
+      error: {
+        code: "CONTROL_ROOM_UPDATE_FAILED",
+        message: error instanceof Error ? error.message : "Trusted update operation failed",
+      },
+    });
+  }
 }
 
 async function proxy(
@@ -249,15 +297,12 @@ async function proxy(
     }
     response.end(Buffer.from(await upstream.arrayBuffer()));
   } catch (error) {
-    response.statusCode = 502;
-    response.setHeader("content-type", "application/json; charset=utf-8");
-    response.setHeader("cache-control", "no-store");
-    response.end(JSON.stringify({
+    json(response, 502, {
       error: {
         code: "LOCAL_PROXY_UNAVAILABLE",
         message: error instanceof Error ? error.message : "Operator API is unavailable",
       },
-    }));
+    });
   }
 }
 
@@ -324,6 +369,7 @@ export class ControlRoomServer {
     readonly operatorOrigin: string;
     readonly operatorToken: string;
     readonly onShutdown?: () => void;
+    readonly updates?: ControlRoomUpdateService;
   }): Promise<ControlRoomServer> {
     const root = resolve(options.root);
     const index = resolve(root, "index.html");
@@ -340,6 +386,16 @@ export class ControlRoomServer {
     const consumedBootstraps = new Set<string>();
     let controlRoomOrigin = "";
     let sessionCookieName = SESSION_COOKIE_PREFIX;
+    let installInFlight: Promise<ControlRoomUpdateStatus> | undefined;
+    const updateService = options.updates ? {
+      check: () => options.updates!.check(),
+      install: () => {
+        if (!installInFlight) {
+          installInFlight = options.updates!.install().finally(() => { installInFlight = undefined; });
+        }
+        return installInFlight;
+      },
+    } satisfies ControlRoomUpdateService : undefined;
 
     const mintBootstrap = (): string => {
       if (!controlRoomOrigin) throw new Error("Control Room origin is unavailable");
@@ -370,6 +426,17 @@ export class ControlRoomServer {
       } else if (pathname === "/local/shutdown") {
         requestShutdown(request, response, controlRoomOrigin, options.operatorToken, options.onShutdown);
         task = Promise.resolve();
+      } else if (pathname === "/local/update" || pathname === "/local/update/install") {
+        task = updateAction(
+          request,
+          response,
+          pathname,
+          controlRoomOrigin,
+          sessionCookieName,
+          sessionToken,
+          sessionProof,
+          updateService,
+        );
       } else if (pathname.startsWith("/session/")) {
         bootstrapSession(
           request,
