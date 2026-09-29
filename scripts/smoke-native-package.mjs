@@ -10,6 +10,7 @@ const packageArg = process.argv[2];
 if (!packageArg) throw new Error("Usage: node scripts/smoke-native-package.mjs <package>");
 const packagePath = resolve(packageArg);
 const dataDir = await mkdtemp(join(tmpdir(), "blogmaatic-native-state-"));
+const launcherDataDir = await mkdtemp(join(tmpdir(), "blogmaatic-native-launcher-state-"));
 const repository = await mkdtemp(join(tmpdir(), "blogmaatic-native-jekyll-"));
 let runtime;
 
@@ -101,6 +102,64 @@ async function verifyInstalledLauncherSurface() {
   await exec("codesign", ["--verify", "--deep", "--strict", "--verbose=2", app]);
 }
 
+function launchAddress(output) {
+  const match = output.match(/Control Room: (http:\/\/[^\s]+)/);
+  assert.ok(match?.[1], `Control Room launch address missing from output:\n${output}`);
+  return match[1];
+}
+
+async function consumeLaunch(url) {
+  const response = await fetch(url, { redirect: "manual", headers: { "sec-fetch-site": "none" } });
+  assert.equal(response.status, 303, `Control Room bootstrap returned ${response.status}: ${await response.text()}`);
+  const setCookie = response.headers.get("set-cookie");
+  const location = response.headers.get("location");
+  assert.ok(setCookie, "Control Room bootstrap did not set a session cookie");
+  assert.ok(location, "Control Room bootstrap did not return a session-proof redirect");
+  const origin = new URL(url).origin;
+  const proof = new URL(location, origin).hash.replace(/^#session=/, "");
+  assert.match(proof, /^[A-Za-z0-9_-]{32,128}$/);
+  return { origin, launchAddress: url, cookie: setCookie.split(";", 1)[0], proof };
+}
+
+async function waitUntilStopped(url, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(250) });
+    } catch {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  throw new Error(`Installed Blogmaatic did not stop at ${url}`);
+}
+
+async function proveConsumerLifecycle(binary) {
+  const first = await exec(binary, ["open", "--no-browser", "--data-dir", launcherDataDir], { timeout: 30_000 });
+  assert.match(first.stdout, /Initialized Blogmaatic for first launch/);
+  const firstLaunch = launchAddress(first.stdout);
+  const firstSession = await consumeLaunch(firstLaunch);
+
+  const doctor = await exec(binary, ["doctor", "--json", "--data-dir", launcherDataDir]);
+  const report = JSON.parse(doctor.stdout);
+  assert.equal(report.ok, true, JSON.stringify(report));
+  assert.match(requireDoctorCheck(report, "config").detail, /0 configured connection/);
+
+  const second = await exec(binary, ["open", "--no-browser", "--data-dir", launcherDataDir], { timeout: 30_000 });
+  assert.doesNotMatch(second.stdout, /Initialized Blogmaatic for first launch/);
+  const secondLaunch = launchAddress(second.stdout);
+  assert.notEqual(secondLaunch, firstLaunch);
+  const secondSession = await consumeLaunch(secondLaunch);
+  assert.equal(secondSession.origin, firstSession.origin);
+
+  const replay = await fetch(secondLaunch, { redirect: "manual", headers: { "sec-fetch-site": "none" } });
+  assert.equal(replay.status, 410, "Installed reopen capability was not one-use");
+
+  const stopped = await exec(binary, ["stop", "--data-dir", launcherDataDir], { timeout: 30_000 });
+  assert.match(stopped.stdout, /stopped cleanly/i);
+  await waitUntilStopped(firstSession.origin);
+}
+
 function startInstalledRuntime(binary) {
   const state = { exited: false, output: "" };
   const child = spawn(binary, ["start", "--data-dir", dataDir], {
@@ -135,27 +194,7 @@ async function controlRoomSession(state, timeoutMs = 20_000) {
   while (Date.now() < deadline) {
     if (state.exited) throw new Error(`Installed Blogmaatic exited before Control Room session bootstrap:\n${state.output}`);
     const match = state.output.match(/Control Room: (http:\/\/[^\s]+)/);
-    if (match?.[1]) {
-      const launchAddress = match[1];
-      const response = await fetch(launchAddress, {
-        redirect: "manual",
-        headers: { "sec-fetch-site": "none" },
-      });
-      assert.equal(response.status, 303, `Control Room bootstrap returned ${response.status}: ${await response.text()}`);
-      const setCookie = response.headers.get("set-cookie");
-      const location = response.headers.get("location");
-      assert.ok(setCookie, "Control Room bootstrap did not set a session cookie");
-      assert.ok(location, "Control Room bootstrap did not return a session-proof redirect");
-      const origin = new URL(launchAddress).origin;
-      const proof = new URL(location, origin).hash.replace(/^#session=/, "");
-      assert.match(proof, /^[A-Za-z0-9_-]{32,128}$/);
-      return {
-        origin,
-        launchAddress,
-        cookie: setCookie.split(";", 1)[0],
-        proof,
-      };
-    }
+    if (match?.[1]) return consumeLaunch(match[1]);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   throw new Error(`Timed out waiting for the Control Room launch URL:\n${state.output}`);
@@ -175,24 +214,11 @@ async function controlRoomApi(session, path) {
 
 async function burnInstalledReopen(binary, initialSession) {
   const reopened = await exec(binary, ["open", "--no-browser", "--data-dir", dataDir]);
-  const match = reopened.stdout.match(/Control Room: (http:\/\/[^\s]+)/);
-  assert.ok(match?.[1], `Installed open command did not return a Control Room capability: ${reopened.stdout}${reopened.stderr}`);
-  const launchAddress = match[1];
-  assert.notEqual(launchAddress, initialSession.launchAddress);
-  assert.equal(new URL(launchAddress).origin, initialSession.origin);
-
-  const bootstrap = await fetch(launchAddress, {
-    redirect: "manual",
-    headers: { "sec-fetch-site": "none" },
-  });
-  assert.equal(bootstrap.status, 303, `Installed reopen capability returned ${bootstrap.status}: ${await bootstrap.text()}`);
-  assert.ok(bootstrap.headers.get("set-cookie"));
-  assert.match(bootstrap.headers.get("location") ?? "", /^\/#session=[A-Za-z0-9_-]{32,128}$/);
-
-  const replay = await fetch(launchAddress, {
-    redirect: "manual",
-    headers: { "sec-fetch-site": "none" },
-  });
+  const launch = launchAddress(reopened.stdout);
+  assert.notEqual(launch, initialSession.launchAddress);
+  assert.equal(new URL(launch).origin, initialSession.origin);
+  await consumeLaunch(launch);
+  const replay = await fetch(launch, { redirect: "manual", headers: { "sec-fetch-site": "none" } });
   assert.equal(replay.status, 410, "Installed reopen capability was not one-use");
 }
 
@@ -251,6 +277,8 @@ try {
   const version = (await exec(binary, ["version"])).stdout.trim();
   assert.match(version, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/);
 
+  await proveConsumerLifecycle(binary);
+
   await git(["init", "-b", "main"]);
   await git(["config", "user.name", "Native Package Fixture"]);
   await git(["config", "user.email", "native-package@example.test"]);
@@ -258,7 +286,7 @@ try {
   await git(["add", "_config.yml"]);
   await git(["commit", "-m", "seed"]);
 
-  // Start from empty publisher state, matching the consumer first-run path.
+  // Advanced init remains supported for scripted/custom first-run configuration.
   await exec(binary, ["init", "--data-dir", dataDir]);
 
   const doctor = await exec(binary, ["doctor", "--json", "--data-dir", dataDir]);
@@ -350,10 +378,12 @@ try {
   await stopInstalledRuntime(runtime);
   runtime = undefined;
 
-  console.log(`Native installer launcher + first-run + reopen + restart smoke passed: ${basename(packagePath)}`);
+  console.log(`Native installer zero-terminal launch + reopen + stop + first-run + restart smoke passed: ${basename(packagePath)}`);
 } finally {
   if (runtime) await stopInstalledRuntime(runtime).catch(() => undefined);
+  await exec("/usr/local/bin/blogmaatic", ["stop", "--data-dir", launcherDataDir]).catch(() => undefined);
   await cleanupInstall();
   await rm(dataDir, { recursive: true, force: true });
+  await rm(launcherDataDir, { recursive: true, force: true });
   await rm(repository, { recursive: true, force: true });
 }
