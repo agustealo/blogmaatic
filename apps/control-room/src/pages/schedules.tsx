@@ -79,7 +79,7 @@ function CreateSchedulePanel({
     setError(null);
     try {
       if (!name.trim()) throw new Error("Schedule name is required");
-      const selectedGroupId = pendingPlan?.groupId ?? groupId || groups[0]?.group.id;
+      const selectedGroupId = pendingPlan?.groupId ?? (groupId || groups[0]?.group.id);
       const selectedPublicationId = publicationId || publications[0]?.publication.id;
       if (!selectedGroupId) throw new Error("Create and enable a Publication Group first");
       if (!selectedPublicationId) throw new Error("Approve a Publication in the Workspace before scheduling it");
@@ -159,7 +159,7 @@ function CreateSchedulePanel({
     }
   };
 
-  const effectiveGroupId = pendingPlan?.groupId ?? groupId || groups[0]?.group.id || "";
+  const effectiveGroupId = pendingPlan?.groupId ?? (groupId || groups[0]?.group.id || "");
 
   return (
     <Panel title="Create Schedule" meta="Immutable publication snapshot">
