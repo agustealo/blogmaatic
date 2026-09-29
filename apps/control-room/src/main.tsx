@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router";
 import { App } from "./app";
 import { ConnectionProvider } from "./connection";
 import "./styles.css";
+import "./accessibility.css";
 import "./confirmations.css";
 import "./connections.css";
 import "./publication-groups.css";
