@@ -347,9 +347,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           language: "en",
           blocks,
           assets,
-          tags: snapshot.tagNames,
+          tags: [...snapshot.tagNames],
           attributes: {
-            categories: snapshot.categoryNames,
+            categories: [...snapshot.categoryNames],
             wordpress: {
               connectionId,
               remoteId: String(snapshot.post.id),
