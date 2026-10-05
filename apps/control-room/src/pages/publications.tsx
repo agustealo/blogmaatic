@@ -32,6 +32,7 @@ interface PublicationEditor {
   readonly title: string;
   readonly summary: string;
   readonly body: string;
+  readonly bodyFormat: "plain" | "html";
   readonly tags: string;
   readonly language: string;
   readonly slug: string;
@@ -48,18 +49,30 @@ const statusOptions: readonly { readonly value: WorkspacePublicationStatus; read
   { value: "archived", label: "Archived" },
 ];
 
-function paragraphText(entry: PublicationWorkspaceEntry): { readonly body: string; readonly unsupported: boolean } {
-  const paragraphs: string[] = [];
-  let unsupported = false;
-  for (const block of entry.publication.current.content.blocks) {
-    if (block.kind !== "paragraph") {
-      unsupported = true;
-      continue;
-    }
-    const text = block.data.text;
-    if (typeof text === "string" && text.trim()) paragraphs.push(text.trim());
+function editableBody(entry: PublicationWorkspaceEntry): {
+  readonly body: string;
+  readonly format: "plain" | "html";
+  readonly unsupported: boolean;
+} {
+  const blocks = entry.publication.current.content.blocks;
+  if (blocks.length === 0) return { body: "", format: "plain", unsupported: false };
+
+  if (blocks.every((block) => block.kind === "paragraph")) {
+    const paragraphs = blocks.flatMap((block) => {
+      const text = block.data.text;
+      return typeof text === "string" && text.trim() ? [text.trim()] : [];
+    });
+    return { body: paragraphs.join("\n\n"), format: "plain", unsupported: false };
   }
-  return { body: paragraphs.join("\n\n"), unsupported };
+
+  if (blocks.length === 1 && blocks[0]?.kind === "embed") {
+    const html = blocks[0].data.html;
+    if (typeof html === "string") {
+      return { body: html, format: "html", unsupported: false };
+    }
+  }
+
+  return { body: "", format: "plain", unsupported: true };
 }
 
 function editorForCreate(): PublicationEditor {
@@ -68,6 +81,7 @@ function editorForCreate(): PublicationEditor {
     title: "",
     summary: "",
     body: "",
+    bodyFormat: "plain",
     tags: "",
     language: "en",
     slug: "",
@@ -78,7 +92,7 @@ function editorForCreate(): PublicationEditor {
 }
 
 function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
-  const body = paragraphText(entry);
+  const body = editableBody(entry);
   return {
     mode: "edit",
     publicationId: entry.publication.id,
@@ -86,6 +100,7 @@ function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
     title: entry.publication.current.content.title,
     summary: entry.publication.current.content.summary ?? "",
     body: body.body,
+    bodyFormat: body.format,
     tags: entry.publication.current.content.tags.join(", "),
     language: entry.publication.current.content.language,
     slug: entry.publication.slug ?? "",
@@ -264,6 +279,7 @@ export function PublicationsPage() {
       const common = {
         title: editor.title.trim(),
         body: editor.body,
+        bodyFormat: editor.bodyFormat,
         summary: editor.summary,
         language: editor.language.trim() || "en",
         tags: tagsFromInput(editor.tags),
@@ -372,13 +388,23 @@ export function PublicationsPage() {
             <form className="publication-editor__form" onSubmit={save}>
               {editor.hasUnsupportedBlocks ? (
                 <div className="warning-banner" role="alert">
-                  <strong>This publication contains non-paragraph blocks.</strong>
-                  <span>The simple editor is read-only for body content so Blogmaatic does not destroy unsupported structure.</span>
+                  <strong>This publication contains mixed or unsupported blocks.</strong>
+                  <span>The body remains read-only here so Blogmaatic does not flatten structured content. WordPress HTML imports are editable separately in HTML mode.</span>
                 </div>
               ) : null}
               <label className="field"><span>Title *</span><input value={editor.title} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, title: event.target.value } : current); }} required autoComplete="off" /></label>
               <label className="field"><span>Summary</span><textarea rows={3} value={editor.summary} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, summary: event.target.value } : current); }} /></label>
-              <label className="field publication-body-field"><span>Body</span><textarea rows={16} value={editor.body} readOnly={editor.hasUnsupportedBlocks} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, body: event.target.value } : current); }} placeholder="Write the publication body. Blank lines create paragraph blocks." /></label>
+              <label className="field publication-body-field">
+                <span>{editor.bodyFormat === "html" ? "Body HTML" : "Body"}</span>
+                <textarea
+                  rows={16}
+                  value={editor.body}
+                  readOnly={editor.hasUnsupportedBlocks}
+                  onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, body: event.target.value } : current); }}
+                  placeholder={editor.bodyFormat === "html" ? "Edit the imported WordPress HTML source." : "Write the publication body. Blank lines create paragraph blocks."}
+                />
+                {editor.bodyFormat === "html" ? <small>This publication preserves imported WordPress HTML losslessly. Saving creates a new canonical Blogmaatic revision without flattening the markup.</small> : null}
+              </label>
               <div className="publication-editor__grid">
                 <label className="field"><span>Tags</span><input value={editor.tags} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, tags: event.target.value } : current); }} placeholder="news, launch, product" /></label>
                 <label className="field"><span>Language</span><input value={editor.language} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, language: event.target.value } : current); }} required /></label>

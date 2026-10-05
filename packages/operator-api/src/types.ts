@@ -150,6 +150,68 @@ export interface OperatorConnectionManager {
   test(connectionId: string): Promise<OperatorConnectionTestResult>;
 }
 
+export interface SourceContentQuery {
+  readonly search?: string;
+  readonly status?: string;
+  readonly page?: number;
+  readonly limit?: number;
+}
+
+export interface SourceContentRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly remoteId: string;
+  readonly remoteUrl: string;
+  readonly title: string;
+  readonly excerpt: string;
+  readonly contentHtml: string;
+  readonly slug: string;
+  readonly status: string;
+  readonly publishedAt?: string | null;
+  readonly modifiedAt?: string;
+  readonly managed: boolean;
+  readonly publicationId?: string;
+  readonly routeId?: string;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceContentPage {
+  readonly items: readonly SourceContentRecord[];
+  readonly page: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
+export interface SourceContentRevision {
+  readonly remoteRevisionId: string;
+  readonly title: string;
+  readonly excerpt: string;
+  readonly contentHtml: string;
+  readonly createdAt?: string | null;
+  readonly modifiedAt?: string;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceContentImportBody {
+  readonly groupId: string;
+  readonly routeId: string;
+}
+
+export interface SourceContentImportResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly remote: SourceContentRecord;
+}
+
+export interface OperatorSourceContentManager {
+  list(connectionId: string, query?: SourceContentQuery): Promise<SourceContentPage>;
+  get(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
+  revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
+  import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
+  trash(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
+  restore(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
+  deletePermanent(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
+}
+
 export interface PublicationGroupCreateBody {
   readonly name: string;
   readonly policySetId: string;
@@ -192,10 +254,12 @@ export interface OperatorPublicationGroupManager {
 }
 
 export type WorkspacePublicationStatus = Extract<PublicationStatus, "idea" | "draft" | "ready" | "approved" | "archived">;
+export type PublicationBodyFormat = "plain" | "html";
 
 export interface PublicationWorkspaceCreateBody {
   readonly title: string;
   readonly body?: string;
+  readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
@@ -208,6 +272,7 @@ export interface PublicationWorkspaceUpdateBody {
   readonly expectedVersion: number;
   readonly title?: string;
   readonly body?: string;
+  readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
@@ -263,6 +328,7 @@ export interface OperatorApiOptions {
   readonly store: ControlPlaneStore;
   readonly runtime: OperatorAutomationRuntime;
   readonly connections?: OperatorConnectionManager;
+  readonly sourceContent?: OperatorSourceContentManager;
   readonly publicationGroups?: OperatorPublicationGroupManager;
   readonly publications?: OperatorPublicationWorkspaceManager;
   readonly distributions?: OperatorDistributionHistory;

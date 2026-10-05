@@ -40,6 +40,12 @@ import type {
   PublicationWorkspaceUpdateBody,
   ScheduleActivationBody,
   ScheduleRegistrationBody,
+  SourceContentImportBody,
+  SourceContentImportResult,
+  SourceContentPage,
+  SourceContentQuery,
+  SourceContentRecord,
+  SourceContentRevision,
   WorkspacePublicationStatus,
 } from "@blogmaatic/operator-api";
 
@@ -85,6 +91,12 @@ export type {
   ScheduleActivationBody,
   ScheduleListQuery,
   ScheduleRegistrationBody,
+  SourceContentImportBody,
+  SourceContentImportResult,
+  SourceContentPage,
+  SourceContentQuery,
+  SourceContentRecord,
+  SourceContentRevision,
   WorkspacePublicationStatus,
 };
 

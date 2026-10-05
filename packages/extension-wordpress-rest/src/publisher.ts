@@ -19,7 +19,7 @@ import {
 import { SecretAuthority } from "@blogmaatic/secrets";
 
 import { compileAssets } from "./assets.js";
-import { WordPressRestClient } from "./client.js";
+import { WordPressHttpError, WordPressRestClient } from "./client.js";
 import {
   documentWithMarker,
   parseMarker,
@@ -37,6 +37,7 @@ import { resolveTerms, termSlug } from "./taxonomy.js";
 import type {
   WordPressPostRecord,
   WordPressProjectionPayload,
+  WordPressRevisionRecord,
   WordPressSettings,
 } from "./types.js";
 
@@ -134,6 +135,24 @@ function remoteIdentity(post: WordPressPostRecord): RemoteIdentity {
     url: post.link,
     ...(post.modified_gmt ? { version: post.modified_gmt } : {}),
   };
+}
+
+async function latestNativeRevision(
+  client: WordPressRestClient,
+  settings: WordPressSettings,
+  postId: number,
+): Promise<WordPressRevisionRecord | undefined> {
+  try {
+    const revisions = await client.requestJson<readonly WordPressRevisionRecord[]>(
+      `/${settings.postTypeRestBase}/${postId}/revisions?context=edit&per_page=1&orderby=modified&order=desc`,
+    );
+    return revisions[0];
+  } catch (error) {
+    if (error instanceof WordPressHttpError && (error.status === 404 || error.status === 400)) {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 async function findPostBySlug(
@@ -236,6 +255,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     capabilities: [
       "article.create",
       "article.update",
+      "article.delete",
       "article.inspect",
       "article.draft",
       "article.schedule",
@@ -473,6 +493,8 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       current = await fetchPost(client, settings, String(saved.id));
     }
 
+    const nativeRevision = await latestNativeRevision(client, settings, current.id);
+
     return {
       remote: remoteIdentity(current),
       acceptedAt: new Date().toISOString(),
@@ -487,6 +509,8 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         tagIds: [...tags],
         idempotencyKey: request.idempotencyKey,
         serverNormalized: actualHash !== preliminaryHash,
+        wordpressRevisionId: nativeRevision?.id ?? null,
+        wordpressRevisionModifiedGmt: nativeRevision?.modified_gmt ?? null,
       },
     };
   }

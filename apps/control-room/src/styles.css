@@ -299,3 +299,24 @@ a.data-table__row:hover { background: var(--surface-2); }
 .receipt-record details { margin-top: 10px; }
 .receipt-record summary { cursor: pointer; color: var(--muted); font-size: .72rem; }
 .receipt-record pre { max-height: 220px; overflow: auto; padding: 9px; border-radius: 7px; background: var(--surface-2); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+
+.wordpress-content-panel { margin-top: 16px; box-shadow: none; }
+.wordpress-content-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, 1fr) auto; gap: 10px; align-items: end; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.wordpress-content-list { display: grid; }
+.wordpress-content-row { padding: 15px 16px; border-bottom: 1px solid var(--line); }
+.wordpress-content-row:last-child { border-bottom: 0; }
+.wordpress-content-row__headline { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.wordpress-content-row__headline > span, .wordpress-content-row__headline > div { display: grid; gap: 4px; min-width: 0; }
+.wordpress-content-row__headline strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wordpress-content-row__headline small, .wordpress-content-row > p { color: var(--muted); font-size: .72rem; }
+.wordpress-content-row > p { margin: 10px 0; line-height: 1.5; }
+.wordpress-content-row__actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-top: 10px; }
+.wordpress-revision-list { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); display: grid; gap: 8px; }
+.wordpress-revision-list > span { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.wordpress-revision-list small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .wordpress-content-toolbar { grid-template-columns: 1fr; }
+  .wordpress-content-row__headline { flex-direction: column; }
+}
