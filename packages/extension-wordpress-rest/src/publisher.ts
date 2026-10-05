@@ -236,6 +236,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     capabilities: [
       "article.create",
       "article.update",
+      "article.delete",
       "article.inspect",
       "article.draft",
       "article.schedule",
