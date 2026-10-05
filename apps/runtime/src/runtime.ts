@@ -234,7 +234,7 @@ export async function startRuntime(options: {
     });
 
     projectionState = new SqliteProjectionStateStore(paths.projectionStatePath);
-    const kernel = new PublicationKernel(extensions.publishers, new PolicyEngine(config.policies), undefined, projectionState);
+    const kernel = new PublicationKernel(extensions.publishers, new PolicyEngine(config.policies), undefined, projectionState, projectionState);
     const workflow = createPublicationAutomationWorkflow({ publisher: createKernelAutomationPublisher(kernel) });
     workflowServer = await startWorkflowEndpoint(workflow, config.restate.workflowHost, config.restate.workflowPort);
     if (config.restate.mode === "managed-local") await registerManagedDeployment(config);
@@ -250,6 +250,7 @@ export async function startRuntime(options: {
       connections: connectionManager,
       publicationGroups,
       publications,
+      distributions: projectionState,
       schedules,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
