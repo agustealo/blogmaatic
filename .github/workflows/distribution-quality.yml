@@ -1,16 +1,19 @@
 name: Distribution Quality
 
 on:
-  pull_request:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
+    inputs:
+      consumer_ready:
+        description: "I have completed human consumer-release verification and want to build distribution evidence."
+        required: true
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   package:
+    if: ${{ inputs.consumer_ready }}
     name: package-${{ matrix.target }}
     strategy:
       fail-fast: false

@@ -19,6 +19,8 @@ A trusted release must satisfy all of the following:
 
 The release workflow never invents or moves a tag. `gh release create --verify-tag` is the publication boundary.
 
+Packaging is **not** a pull-request or merge gate. Distribution construction begins only after a human has completed consumer-readiness verification and explicitly dispatches the relevant workflow with the consumer-readiness confirmation enabled.
+
 ## Supported release surfaces
 
 ### Linux x64
@@ -84,7 +86,7 @@ portable payload
     -> create GitHub/Sigstore provenance attestation
 ```
 
-PR and `master` Distribution Quality use the same payload-signing implementation with ad-hoc signatures. This exercises Hardened Runtime and the Node JIT entitlement without pretending that CI has production Developer ID credentials.
+The manually dispatched Distribution Quality workflow uses the same payload-signing implementation with ad-hoc signatures. This exercises Hardened Runtime and the Node JIT entitlement without pretending that ordinary CI has production Developer ID credentials. It is release evidence only and does not run on normal pull requests or `master` pushes.
 
 ## Linux package proof
 
@@ -127,15 +129,17 @@ The release manifest records the product version, tag, source SHA, package manag
 
 ## Release procedure
 
-1. Land the intended release source on `master` with Core Quality and Distribution Quality green on the exact merge SHA.
-2. Confirm the canonical Control Room screenshots represent the current implemented UI; regenerate them from the real runtime when a represented surface materially changed.
-3. Update `package.json` and `package-lock.json` to the release version in one change.
-4. Run Core Quality and Distribution Quality again; the release contract must be green.
-5. Confirm all required Apple trust secrets are configured.
-6. Create the exact version tag, for example `v0.12.0`, on the green `master` commit.
-7. Push the tag without moving it afterward.
-8. Trusted Release validates source authority, rebuilds all platforms, signs/notarizes macOS, burns native installers, creates provenance attestations, and publishes the GitHub Release only after every platform succeeds.
-9. Verify the published release, checksums, and consumer-facing documentation before announcing it.
+1. Land the intended release source on `master` with **Core Quality green** on the exact merge SHA. Distribution packaging is not required for merge.
+2. Complete human consumer-readiness verification against the real product. Confirm the publication workflow, Control Room UX, first-run path, connection setup, real provider behavior, recovery/error states, and canonical screenshots are acceptable for consumer use.
+3. If a represented Control Room surface materially changed, regenerate and review its canonical screenshot from the real runtime.
+4. Update `package.json` and `package-lock.json` to the intended release version in one reviewed change and land it with Core Quality green.
+5. Explicitly dispatch **Distribution Quality** with `consumer_ready=true` to build and burn release candidates only after the human verification above. Treat failures as release-readiness defects, not as retroactive blockers for unrelated development merges.
+6. Confirm all required Apple trust secrets are configured.
+7. Create the exact immutable version tag, for example `v0.12.0`, on the verified `master` commit and push it without moving it afterward.
+8. Explicitly dispatch **Trusted Release** with that existing `release_tag` and `consumer_ready=true`. The workflow validates source authority, rebuilds all platforms, signs/notarizes macOS, burns native installers, creates provenance attestations, and publishes the GitHub Release only after every platform succeeds.
+9. Verify the published release, checksums, attestations, install path, and consumer-facing documentation before announcing it.
+
+A tag by itself does **not** start a build or publish a release.
 
 If a tag-triggered release fails, fix the source on `master`, advance the package version, and create a new tag. Do not retarget or rewrite a published release tag.
 
