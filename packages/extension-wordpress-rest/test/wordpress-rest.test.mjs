@@ -263,6 +263,8 @@ test("real HTTP WordPress contract: auth, media, taxonomy, create, drift repair,
     assert.equal((await publisher.inspect({ projection })).state, "missing");
     const delivered = await publisher.deliver({ idempotencyKey: "key-1", projection });
     assert.equal(api.counts.postCreates, 1);
+    assert.equal(delivered.evidence.wordpressRevisionId, 9010);
+    assert.match(delivered.evidence.wordpressRevisionModifiedGmt, /^2026-09-22T18:00:/);
     assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
     const post = api.posts.get(Number(delivered.remote.id));
     assert.match(post.content.raw, /blogmaatic:/);
