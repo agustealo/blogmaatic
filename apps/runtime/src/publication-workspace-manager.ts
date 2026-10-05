@@ -120,6 +120,25 @@ export class PublicationWorkspaceManager {
     return this.#store.getVersion(publicationId, version);
   }
 
+  async findImportedSource(
+    extensionId: string,
+    connectionId: string,
+    remoteId: string,
+  ): Promise<PublicationWorkspaceEntry | undefined> {
+    let cursor: string | undefined;
+    do {
+      const page = await this.#store.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+      const match = page.items.find((entry) =>
+        entry.publication.provenance.extensionId === extensionId &&
+        entry.publication.provenance.connectionId === connectionId &&
+        entry.publication.provenance.remoteId === remoteId,
+      );
+      if (match) return match;
+      cursor = page.nextCursor;
+    } while (cursor);
+    return undefined;
+  }
+
   async registerImported(publication: Publication): Promise<PublicationWorkspaceEntry> {
     if (!publication.id.trim() || !publication.current.id.trim()) {
       throw new Error("Imported publication and revision ids are required");
