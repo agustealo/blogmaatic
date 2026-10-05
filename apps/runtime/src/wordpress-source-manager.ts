@@ -312,7 +312,15 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   }
 
   async deletePermanent(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
-    return sourceRecord(connectionId, await this.#content.deletePermanent(connectionId, remoteId));
+    const current = await this.#content.get(connectionId, remoteId);
+    const deleted = await this.#content.deletePermanent(connectionId, remoteId);
+    if (current.ownership.publicationId && current.ownership.routeId) {
+      await this.#projectionState.delete(
+        current.ownership.publicationId,
+        current.ownership.routeId,
+      );
+    }
+    return sourceRecord(connectionId, deleted);
   }
 
   #importedPublication(
