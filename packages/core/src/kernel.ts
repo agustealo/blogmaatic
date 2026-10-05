@@ -1,5 +1,6 @@
 import { ExtensionRegistry, type PublisherExtension } from "./extension.js";
 import { PolicyEngine } from "./policy.js";
+import type { DistributionHistoryStore } from "./distribution-history.js";
 import {
   InMemoryProjectionStateStore,
   type ProjectionStateStore,
@@ -32,6 +33,7 @@ export interface PublishInput {
   readonly publication: Publication;
   readonly group: PublicationGroup;
   readonly approvals?: readonly ApprovalGrant[];
+  readonly runId?: string;
 }
 
 function projectionId(publication: Publication, route: PublicationRoute): string {
@@ -105,17 +107,20 @@ export class PublicationKernel {
   readonly #policies: PolicyEngine;
   readonly #clock: KernelClock;
   readonly #projectionState: ProjectionStateStore;
+  readonly #distributionHistory?: DistributionHistoryStore;
 
   constructor(
     extensions: ExtensionRegistry,
     policies: PolicyEngine,
     clock: KernelClock = systemClock,
     projectionState: ProjectionStateStore = new InMemoryProjectionStateStore(),
+    distributionHistory?: DistributionHistoryStore,
   ) {
     this.#extensions = extensions;
     this.#policies = policies;
     this.#clock = clock;
     this.#projectionState = projectionState;
+    this.#distributionHistory = distributionHistory;
   }
 
   async #knownRemote(publication: Publication, route: PublicationRoute): Promise<RemoteIdentity | undefined> {
@@ -350,6 +355,38 @@ export class PublicationKernel {
         observed,
         completedAt: this.#clock.now(),
       });
+    }
+
+    if (this.#distributionHistory) {
+      for (const receipt of receipts) {
+        const route = input.group.routes.find((candidate) => candidate.id === receipt.routeId);
+        if (!route) {
+          throw new Error(`Delivery receipt references missing route ${receipt.routeId}`);
+        }
+        const recordId = [
+          "delivery",
+          input.runId ?? "direct",
+          receipt.publicationId,
+          receipt.revisionId,
+          receipt.groupId,
+          receipt.routeId,
+          receipt.idempotencyKey ?? "no-idempotency-key",
+          receipt.status,
+        ].map(encodeURIComponent).join(":");
+        await this.#distributionHistory.append({
+          id: recordId,
+          ...(input.runId ? { runId: input.runId } : {}),
+          publicationId: receipt.publicationId,
+          revisionId: receipt.revisionId,
+          groupId: receipt.groupId,
+          routeId: receipt.routeId,
+          projectionId: receipt.projectionId,
+          destination: route.destination,
+          groupSnapshot: input.group,
+          receipt,
+          recordedAt: receipt.completedAt,
+        });
+      }
     }
 
     return receipts;
