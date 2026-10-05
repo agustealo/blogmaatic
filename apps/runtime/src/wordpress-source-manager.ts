@@ -123,6 +123,21 @@ function routeForImport(
   return route;
 }
 
+function importProjectionRoute(route: PublicationRoute, post: WordPressPostView): PublicationRoute {
+  const supported = new Set(["publish", "draft", "pending", "private", "future"]);
+  if (!supported.has(post.status)) {
+    throw new Error(`WordPress post status ${post.status} cannot be imported into an active publication route`);
+  }
+  return {
+    ...route,
+    variant: {
+      status: post.status,
+      slug: post.slug,
+      ...(post.status === "future" && post.dateGmt ? { scheduledAt: post.dateGmt } : {}),
+    },
+  };
+}
+
 export class WordPressSourceManager implements OperatorSourceContentManager {
   readonly #content: WordPressContentService;
   readonly #publisher: WordPressRestPublisher;
@@ -200,7 +215,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
 
     const projection = await this.#publisher.compile({
       publication: workspace.publication,
-      route,
+      route: importProjectionRoute(route, snapshot.post),
     });
 
     let adopted = snapshot.post;
