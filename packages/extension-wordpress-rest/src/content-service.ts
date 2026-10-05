@@ -217,6 +217,9 @@ export class WordPressContentService {
     const { client, restBase } = this.#client(connectionId);
     const current = await this.#getRecord(connectionId, remoteId);
     this.#assertManaged(current);
+    if (current.status !== "trash") {
+      throw new Error("WordPress post must be moved to trash before permanent deletion");
+    }
     await client.requestJson<unknown>(
       `/${restBase}/${requireRemoteId(remoteId)}?force=true`,
       { method: "DELETE" },
