@@ -120,6 +120,22 @@ export class PublicationWorkspaceManager {
     return this.#store.getVersion(publicationId, version);
   }
 
+  async registerImported(publication: Publication): Promise<PublicationWorkspaceEntry> {
+    if (!publication.id.trim() || !publication.current.id.trim()) {
+      throw new Error("Imported publication and revision ids are required");
+    }
+    if (publication.current.ordinal !== 1) {
+      throw new Error("Imported publication must begin at canonical revision ordinal 1");
+    }
+    if (publication.status !== "draft") {
+      throw new Error("Imported publication must enter the workspace as a draft");
+    }
+    if (publication.provenance.source === "blogmaatic.publication-workspace") {
+      throw new Error("registerImported cannot register workspace-native publications");
+    }
+    return this.#store.create(publication, this.#now());
+  }
+
   async create(input: PublicationWorkspaceCreateInput): Promise<PublicationWorkspaceEntry> {
     const now = this.#now();
     const slug = trimmed(input.slug);
