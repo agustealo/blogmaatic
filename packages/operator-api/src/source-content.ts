@@ -10,6 +10,17 @@ import type {
 } from "./types.js";
 import { OperatorRequestError, requirePathString } from "./validation.js";
 
+export class SourceContentApiError extends Error {
+  constructor(
+    readonly statusCode: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SourceContentApiError";
+  }
+}
+
 function params(request: FastifyRequest): Record<string, unknown> {
   return request.params as Record<string, unknown>;
 }
@@ -24,8 +35,27 @@ function query(request: FastifyRequest): Record<string, unknown> {
 }
 
 function manager(options: OperatorApiOptions): OperatorSourceContentManager {
-  if (!options.sourceContent) throw new Error("Source content management is unavailable");
+  if (!options.sourceContent) {
+    throw new SourceContentApiError(
+      503,
+      "SOURCE_CONTENT_UNAVAILABLE",
+      "Source content management is unavailable",
+    );
+  }
   return options.sourceContent;
+}
+
+async function domainCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof SourceContentApiError || error instanceof OperatorRequestError) throw error;
+    throw new SourceContentApiError(
+      422,
+      "SOURCE_CONTENT_REJECTED",
+      error instanceof Error ? error.message : "Source content operation was rejected",
+    );
+  }
 }
 
 function optionalString(input: Record<string, unknown>, key: string): string | undefined {
@@ -104,26 +134,26 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
   app.get("/v1/connections/:connectionId/content", async (request) => {
     await authorize(options, request, "source-content:read");
     const connectionId = requirePathString(params(request).connectionId, "connectionId");
-    return manager(options).list(connectionId, parseQuery(request));
+    return domainCall(() => manager(options).list(connectionId, parseQuery(request)));
   });
 
   app.get("/v1/connections/:connectionId/content/:remoteId", async (request) => {
     await authorize(options, request, "source-content:read");
     const values = params(request);
-    return manager(options).get(
+    return domainCall(() => manager(options).get(
       requirePathString(values.connectionId, "connectionId"),
       requirePathString(values.remoteId, "remoteId"),
-    );
+    ));
   });
 
   app.get("/v1/connections/:connectionId/content/:remoteId/revisions", async (request) => {
     await authorize(options, request, "source-content:read");
     const values = params(request);
     return {
-      items: await manager(options).revisions(
+      items: await domainCall(() => manager(options).revisions(
         requirePathString(values.connectionId, "connectionId"),
         requirePathString(values.remoteId, "remoteId"),
-      ),
+      )),
     };
   });
 
@@ -141,7 +171,7 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
       evidence: { connectionId, remoteId, groupId: body.groupId, routeId: body.routeId },
       now: () => clock.now(),
-      execute: () => manager(options).import(connectionId, remoteId, body),
+      execute: () => domainCall(() => manager(options).import(connectionId, remoteId, body)),
       success: (value) => ({
         evidence: {
           publicationId: value.publication.publication.id,
@@ -165,7 +195,7 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
       evidence: { connectionId, remoteId },
       now: () => clock.now(),
-      execute: () => manager(options).trash(connectionId, remoteId),
+      execute: () => domainCall(() => manager(options).trash(connectionId, remoteId)),
     });
   });
 
@@ -182,7 +212,7 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
       evidence: { connectionId, remoteId },
       now: () => clock.now(),
-      execute: () => manager(options).restore(connectionId, remoteId),
+      execute: () => domainCall(() => manager(options).restore(connectionId, remoteId)),
     });
   });
 
@@ -199,7 +229,7 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
       evidence: { connectionId, remoteId, permanent: true },
       now: () => clock.now(),
-      execute: () => manager(options).deletePermanent(connectionId, remoteId),
+      execute: () => domainCall(() => manager(options).deletePermanent(connectionId, remoteId)),
     });
   });
 }
