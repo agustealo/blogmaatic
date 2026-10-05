@@ -107,7 +107,7 @@ export class PublicationKernel {
   readonly #policies: PolicyEngine;
   readonly #clock: KernelClock;
   readonly #projectionState: ProjectionStateStore;
-  readonly #distributionHistory?: DistributionHistoryStore;
+  readonly #distributionHistory: DistributionHistoryStore | undefined;
 
   constructor(
     extensions: ExtensionRegistry,
