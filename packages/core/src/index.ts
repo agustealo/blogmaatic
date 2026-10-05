@@ -1,3 +1,4 @@
+export * from "./distribution-history.js";
 export * from "./extension.js";
 export * from "./kernel.js";
 export * from "./policy.js";
