@@ -61,7 +61,7 @@ export function RunsPage() {
   );
 }
 
-function StepResults({ result }: { readonly result: AutomationRunResult }) {
+function StepResults({ result, run }: { readonly result: AutomationRunResult; readonly run: ControlPlaneRunRecord }) {
   return (
     <div className="step-results">
       {result.stepResults.map((step) => (
@@ -69,10 +69,36 @@ function StepResults({ result }: { readonly result: AutomationRunResult }) {
           <div><strong>{step.stepId}</strong><StatusPill value={step.outcome} /></div>
           <small>{humanize(step.kind)}</small>
           {step.kind === "publish_group" ? (
-            <div className="receipt-list">
-              {step.receipts.map((receipt) => (
-                <div key={`${receipt.routeId}:${receipt.projectionId}`}><span>{receipt.routeId}</span><StatusPill value={receipt.status} /></div>
-              ))}
+            <div className="receipt-list receipt-list--detailed">
+              {step.receipts.map((receipt) => {
+                const group = run.request.groups.find((candidate) => candidate.id === step.groupId);
+                const route = group?.routes.find((candidate) => candidate.id === receipt.routeId);
+                return (
+                  <article className="receipt-record" key={`${receipt.routeId}:${receipt.projectionId}`}>
+                    <div className="receipt-record__top">
+                      <span>
+                        <strong>{route?.destination.extensionId ?? receipt.routeId}</strong>
+                        <small>{route ? `${route.destination.connectionId} · ${route.destination.channel}` : receipt.routeId}</small>
+                      </span>
+                      <StatusPill value={receipt.status} />
+                    </div>
+                    <dl className="receipt-record__facts">
+                      <div><dt>Revision</dt><dd>{receipt.revisionId}</dd></div>
+                      <div><dt>Projection</dt><dd>{receipt.projectionId}</dd></div>
+                      <div><dt>Observed</dt><dd>{receipt.observed?.state ?? "not observed"}</dd></div>
+                      <div><dt>Completed</dt><dd>{formatInstant(receipt.completedAt)}</dd></div>
+                      {receipt.remote ? <div><dt>Remote</dt><dd>{receipt.remote.url ? <a href={receipt.remote.url} target="_blank" rel="noreferrer">{receipt.remote.id}</a> : receipt.remote.id}</dd></div> : null}
+                      {receipt.remote?.version ? <div><dt>Remote version</dt><dd>{receipt.remote.version}</dd></div> : null}
+                    </dl>
+                    {receipt.evidence ? (
+                      <details>
+                        <summary>Delivery evidence</summary>
+                        <pre>{JSON.stringify(receipt.evidence, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           ) : null}
           {step.kind === "approval" ? <p>Decision by {step.approval.approvedBy} · {formatInstant(step.approval.decidedAt)}</p> : null}
@@ -136,7 +162,7 @@ export function RunDetailPage() {
             </div>
           </Panel>
           <Panel title="Terminal result" className="detail-grid__wide">
-            {result ? <><div className="result-summary"><StatusPill value={result.outcome} /><span>Completed {formatInstant(result.completedAt)}</span></div><StepResults result={result} /></> : <EmptyState title="Run is not terminal">Terminal step results become available from the durable runtime after completion, stop, or rejection.</EmptyState>}
+            {result ? <><div className="result-summary"><StatusPill value={result.outcome} /><span>Completed {formatInstant(result.completedAt)}</span></div><StepResults result={result} run={run} /></> : <EmptyState title="Run is not terminal">Terminal step results become available from the durable runtime after completion, stop, or rejection.</EmptyState>}
           </Panel>
         </div>
       ) : null}
