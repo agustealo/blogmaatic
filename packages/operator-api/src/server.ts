@@ -25,7 +25,7 @@ import {
   registerPublicationGroupRoutes,
 } from "./publication-groups.js";
 import { listOperatorRuns } from "./runs.js";
-import { registerSourceContentRoutes } from "./source-content.js";
+import { SourceContentApiError, registerSourceContentRoutes } from "./source-content.js";
 import { parseScheduleActivationBody } from "./schedule-validation.js";
 import type {
   ManualRunBody,
@@ -187,7 +187,7 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
       void reply.code(400).send(errorBody(request, "INVALID_REQUEST", error.message));
       return;
     }
-    if (error instanceof PublicationGroupApiError) {
+    if (error instanceof PublicationGroupApiError || error instanceof SourceContentApiError) {
       void reply.code(error.statusCode).send(errorBody(request, error.code, error.message));
       return;
     }
