@@ -14,10 +14,12 @@ import type { Publication, PublicationBlock, PublicationGroup, PublicationStatus
 import type { PublicationGroupManager } from "./publication-group-manager.js";
 
 export type WorkspacePublicationStatus = Extract<PublicationStatus, "idea" | "draft" | "ready" | "approved" | "archived">;
+export type PublicationBodyFormat = "plain" | "html";
 
 export interface PublicationWorkspaceCreateInput {
   readonly title: string;
   readonly body?: string;
+  readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
@@ -30,6 +32,7 @@ export interface PublicationWorkspaceUpdateInput {
   readonly expectedVersion: number;
   readonly title?: string;
   readonly body?: string;
+  readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
@@ -67,9 +70,19 @@ function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
   return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function blocksFromBody(body: string | undefined): readonly PublicationBlock[] {
+function blocksFromBody(
+  body: string | undefined,
+  format: PublicationBodyFormat = "plain",
+): readonly PublicationBlock[] {
   const text = body?.trim() ?? "";
   if (!text) return [];
+  if (format === "html") {
+    return [{
+      id: "html-source",
+      kind: "embed",
+      data: { html: text },
+    }];
+  }
   return text
     .split(/\n\s*\n/g)
     .map((paragraph) => paragraph.trim())
@@ -156,6 +169,9 @@ export class PublicationWorkspaceManager {
   }
 
   async create(input: PublicationWorkspaceCreateInput): Promise<PublicationWorkspaceEntry> {
+    if (input.bodyFormat !== undefined && input.body === undefined) {
+      throw new Error("Publication bodyFormat requires body");
+    }
     const now = this.#now();
     const slug = trimmed(input.slug);
     const summary = trimmed(input.summary);
@@ -174,7 +190,7 @@ export class PublicationWorkspaceManager {
           title: requireText(input.title, "Publication title"),
           ...(summary ? { summary } : {}),
           language: trimmed(input.language) ?? "en",
-          blocks: blocksFromBody(input.body),
+          blocks: blocksFromBody(input.body, input.bodyFormat),
           assets: [],
           tags: normalizeTags(input.tags),
           attributes: {},
@@ -187,6 +203,9 @@ export class PublicationWorkspaceManager {
   }
 
   async update(publicationId: string, input: PublicationWorkspaceUpdateInput): Promise<PublicationWorkspaceEntry> {
+    if (input.bodyFormat !== undefined && input.body === undefined) {
+      throw new Error("Publication bodyFormat requires body");
+    }
     const current = await this.#store.get(publicationId);
     if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
     if (current.version !== input.expectedVersion) {
@@ -205,7 +224,7 @@ export class PublicationWorkspaceManager {
         title: input.title === undefined ? oldContent.title : requireText(input.title, "Publication title"),
         ...(summary ? { summary } : {}),
         language: input.language === undefined ? oldContent.language : requireText(input.language, "Publication language"),
-        blocks: input.body === undefined ? oldContent.blocks : blocksFromBody(input.body),
+        blocks: input.body === undefined ? oldContent.blocks : blocksFromBody(input.body, input.bodyFormat),
         assets: oldContent.assets,
         tags: input.tags === undefined ? oldContent.tags : normalizeTags(input.tags),
         attributes: oldContent.attributes,
