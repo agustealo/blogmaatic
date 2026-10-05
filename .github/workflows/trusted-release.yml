@@ -1,15 +1,23 @@
 name: Trusted Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing immutable release tag to publish (for example v0.12.0)."
+        required: true
+        type: string
+      consumer_ready:
+        description: "I have completed human consumer-release verification for this exact tagged source."
+        required: true
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   validate:
+    if: ${{ inputs.consumer_ready }}
     name: validate-release-authority
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -17,6 +25,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.release_tag }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -33,7 +42,7 @@ jobs:
 
       - name: Validate tag, version, lockfile, and source ancestry
         env:
-          BLOGMAATIC_RELEASE_TAG: ${{ github.ref_name }}
+          BLOGMAATIC_RELEASE_TAG: ${{ inputs.release_tag }}
         run: npm run release:validate
 
   build:
@@ -59,6 +68,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.release_tag }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -247,6 +257,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.release_tag }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -264,7 +275,7 @@ jobs:
 
       - name: Generate release manifest and checksums
         env:
-          BLOGMAATIC_RELEASE_TAG: ${{ github.ref_name }}
+          BLOGMAATIC_RELEASE_TAG: ${{ inputs.release_tag }}
         run: node scripts/generate-release-metadata.mjs release-assets
 
       - name: Attest release metadata and checksum sidecars
@@ -281,12 +292,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" release-assets/* \
+          release_tag="${{ inputs.release_tag }}"
+          gh release create "$release_tag" release-assets/* \
             --verify-tag \
             --generate-notes \
-            --title "Blogmaatic $GITHUB_REF_NAME"
+            --title "Blogmaatic $release_tag"
 
       - name: Verify published release attestations
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
+        run: gh release verify "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY"
