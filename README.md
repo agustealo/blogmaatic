@@ -84,7 +84,9 @@ Restate is an execution adapter, not Blogmaatic's domain model. SQLite owns loca
 
 ## Consumer installation
 
-Blogmaatic's verified runtime is self-contained: the target machine does **not** need a repository checkout, Node.js, npm, or its own Restate installation.
+> **Release status:** Blogmaatic does not currently publish a consumer release. Packaging is deliberately not a PR or merge gate. Native installers are built only after human consumer-readiness verification. When a release is approved and published, downloads will appear on the [GitHub Releases page](https://github.com/agustealo/blogmaatic/releases).
+
+Blogmaatic's release runtime is designed to be self-contained: the target machine does **not** need a repository checkout, Node.js, npm, or its own Restate installation.
 
 The native installation layout is:
 
@@ -95,7 +97,7 @@ The native installation layout is:
 
 ### Linux x64
 
-Trusted releases publish a Debian package as the primary installer and retain the portable archive as a fallback distribution:
+An approved trusted release publishes a Debian package as the primary installer and retains the portable archive as a fallback distribution:
 
 ```bash
 sudo dpkg -i blogmaatic-<version>-amd64.deb
@@ -117,7 +119,7 @@ Use `blogmaatic stop` to stop the background runtime before offline backup or re
 
 ### macOS Apple Silicon and Intel
 
-Trusted releases publish native `.pkg` installers. The release path signs the payload with Developer ID + Hardened Runtime, grants bundled Node only the JIT entitlement required by V8, signs the installer with Developer ID Installer, notarizes it with Apple's notary service, and staples the resulting ticket before publication.
+An approved trusted release publishes native `.pkg` installers. The release path signs the payload with Developer ID + Hardened Runtime, grants bundled Node only the JIT entitlement required by V8, signs the installer with Developer ID Installer, notarizes it with Apple's notary service, and staples the resulting ticket before publication.
 
 The portable macOS archive remains a build/clean-install proof and is **not** published as a consumer release asset because it is created before the Developer ID signing/notarization boundary.
 
@@ -220,7 +222,7 @@ npm run product:screenshots
 
 The capture contract and gallery live in [`docs/screenshots/`](docs/screenshots/README.md). Screenshots must come from the real runtime-backed Control Room; generated concept art and browser-only mock state are not accepted as product evidence.
 
-To burn a local portable distribution after building:
+For deliberate release engineering only, after human consumer-readiness verification, a developer can burn a local portable distribution:
 
 ```bash
 npm run build
@@ -235,7 +237,7 @@ To build the native installer from that stage:
 npm run distribution:native
 ```
 
-On macOS CI, Distribution Quality uses `--adhoc-signed` to exercise Hardened Runtime and Node's JIT entitlement without production signing credentials. The trusted tag workflow is the only path that uses Developer ID and notarization credentials.
+The manually dispatched Distribution Quality workflow uses `--adhoc-signed` on macOS to exercise Hardened Runtime and Node's JIT entitlement without production signing credentials. It is release evidence, not a merge gate. The manually dispatched Trusted Release workflow is the only path that uses Developer ID and notarization credentials, and it requires an existing release tag plus explicit human consumer-readiness confirmation.
 
 Provider credentials belong in connection/secrets infrastructure, never in `@blogmaatic/core`. Durable-runtime code belongs behind the automation adapter. Trigger, schedule and run authority belongs in the control plane rather than extensions.
 
