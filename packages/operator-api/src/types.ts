@@ -254,10 +254,12 @@ export interface OperatorPublicationGroupManager {
 }
 
 export type WorkspacePublicationStatus = Extract<PublicationStatus, "idea" | "draft" | "ready" | "approved" | "archived">;
+export type PublicationBodyFormat = "plain" | "html";
 
 export interface PublicationWorkspaceCreateBody {
   readonly title: string;
   readonly body?: string;
+  readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
@@ -270,6 +272,7 @@ export interface PublicationWorkspaceUpdateBody {
   readonly expectedVersion: number;
   readonly title?: string;
   readonly body?: string;
+  readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
