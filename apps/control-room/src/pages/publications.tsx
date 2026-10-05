@@ -134,6 +134,60 @@ function VersionsPanel({ publicationId, nonce }: { readonly publicationId: strin
   );
 }
 
+function DistributionHistoryPanel({ publicationId, nonce }: { readonly publicationId: string; readonly nonce: number }) {
+  const { session } = useConnection();
+  const loader = useCallback((cursor?: string) => {
+    if (!session) return Promise.resolve({ items: [] });
+    return session.client.listPublicationDistributions(publicationId, {
+      limit: 30,
+      ...(cursor ? { cursor } : {}),
+    });
+  }, [publicationId, session]);
+  const collection = usePagedCollection(`publication-distributions:${publicationId}:${nonce}`, loader);
+
+  return (
+    <Panel title="Distribution history" meta="Canonical delivery evidence" className="publication-distribution-history">
+      <ErrorBanner error={collection.error} />
+      {collection.loading ? <LoadingBlock /> : (
+        <div className="distribution-history-list">
+          {collection.items.map((record) => (
+            <article className="distribution-history-row" key={record.id}>
+              <div className="distribution-history-row__identity">
+                <strong>{record.destination.extensionId}</strong>
+                <small>{record.destination.connectionId} · {record.destination.channel}</small>
+              </div>
+              <div>
+                <small>Revision</small>
+                <strong>{record.revisionId}</strong>
+              </div>
+              <div>
+                <small>Route</small>
+                <strong>{record.routeId}</strong>
+              </div>
+              <div>
+                <small>Remote</small>
+                {record.receipt.remote?.url ? (
+                  <a href={record.receipt.remote.url} target="_blank" rel="noreferrer">
+                    {record.receipt.remote.id}
+                  </a>
+                ) : <strong>{record.receipt.remote?.id ?? "Not created"}</strong>}
+              </div>
+              <div>
+                <StatusPill value={record.receipt.status} tone={record.receipt.status === "verified" ? "good" : record.receipt.status === "drifted" ? "warn" : "bad"} />
+                <small>{formatInstant(record.recordedAt)}</small>
+              </div>
+            </article>
+          ))}
+          {collection.items.length === 0 ? (
+            <EmptyState title="No delivery history yet">Publishing this publication will record each destination result here without replacing earlier revisions.</EmptyState>
+          ) : null}
+        </div>
+      )}
+      <CollectionFooter hasMore={Boolean(collection.nextCursor)} busy={collection.loadingMore} onLoadMore={() => void collection.loadMore()} />
+    </Panel>
+  );
+}
+
 export function PublicationsPage() {
   const { publicationId } = useParams();
   const navigate = useNavigate();
@@ -353,7 +407,12 @@ export function PublicationsPage() {
         ) : null}
       </div>
 
-      {editor?.mode === "edit" && editor.publicationId ? <VersionsPanel publicationId={editor.publicationId} nonce={changeNonce} /> : null}
+      {editor?.mode === "edit" && editor.publicationId ? (
+        <>
+          <VersionsPanel publicationId={editor.publicationId} nonce={changeNonce} />
+          <DistributionHistoryPanel publicationId={editor.publicationId} nonce={changeNonce} />
+        </>
+      ) : null}
     </>
   );
 }
