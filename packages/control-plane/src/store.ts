@@ -1,3 +1,4 @@
+import "./suppress-warning.js";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 

@@ -100,12 +100,20 @@ Trusted releases publish a Debian package as the primary installer and retain th
 ```bash
 sudo dpkg -i blogmaatic-<version>-amd64.deb
 blogmaatic version
+blogmaatic open
+```
+
+`blogmaatic open` is the recommended consumer entrypoint: on first launch it initializes an empty secure runtime automatically, starts the background runtime if not already running, and launches the Control Room in your browser.
+
+Alternatively, for manual or foreground operation:
+
+```bash
 blogmaatic init
 blogmaatic doctor
 blogmaatic start
 ```
 
-After `blogmaatic start`, open the one-time Control Room launch URL and complete the guided first run to configure a publisher destination, validate it, create a Publication Group, and register the first Automation. The legacy CLI Jekyll bootstrap flags remain available for explicit scripted setup, but they are not required for the normal consumer path.
+Use `blogmaatic stop` to stop the background runtime before offline backup or restore. After `blogmaatic start` or `blogmaatic open`, complete the guided first run in the Control Room to configure a publisher destination, validate it, create a Publication Group, and register the first Automation. The legacy CLI Jekyll bootstrap flags remain available for explicit scripted setup, but they are not required for the normal consumer path.
 
 ### macOS Apple Silicon and Intel
 
@@ -117,6 +125,12 @@ After installation:
 
 ```bash
 blogmaatic version
+blogmaatic open
+```
+
+Or for foreground mode:
+
+```bash
 blogmaatic init
 blogmaatic doctor
 blogmaatic start
@@ -163,16 +177,27 @@ Requirements:
 - Docker for the existing Restate Testcontainers integration burn
 - Chromium/Chrome only when regenerating product screenshots locally
 
+If your system Node.js does not match the required version, install Node.js 24.21.x locally and use it for this workspace.
+
 ```bash
 npm ci --ignore-scripts
 npm run check
 ```
 
-For live Control Room development, initialize and start the real local runtime first. In a second shell, start Vite:
+Two deprecated transitive dependencies are resolved via `overrides` in `package.json`:
+
+```json
+"overrides": {
+  "glob": "^13.0.6",
+  "uuid": "^14.0.2"
+}
+```
+
+For live Control Room development, initialize and start the real local runtime first (or use `npm run runtime:open` for background launch). In a second shell, start Vite:
 
 ```bash
 npm run runtime:init   # first run only
-npm run runtime:start
+npm run runtime:start  # foreground, or 'npm run runtime:open' for background
 
 # second shell
 npm run dev:control-room

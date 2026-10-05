@@ -114,7 +114,24 @@ export async function inspectConfiguredConnections(
 }
 
 async function startWorkflowEndpoint(workflow: ReturnType<typeof createPublicationAutomationWorkflow>, host: string, port: number): Promise<Http2Server> {
-  const handler = restate.createEndpointHandler({ services: [workflow] });
+  const handler = restate.createEndpointHandler({
+    services: [workflow],
+    logger: (params, message, ...optionalParams) => {
+      if (typeof message === "string" && message.includes("Accepting requests without validating request signatures")) {
+        return;
+      }
+      if (params.replaying) return;
+      const p = `[restate][${new Date().toISOString()}] ${params.level.toUpperCase()}:`;
+      switch (params.level) {
+        case "trace": return console.trace(p, message, ...optionalParams);
+        case "debug": return console.debug(p, message, ...optionalParams);
+        case "info": return console.info(p, message, ...optionalParams);
+        case "warn": return console.warn(p, message, ...optionalParams);
+        case "error": return console.error(p, message, ...optionalParams);
+        default: return console.log(p, message, ...optionalParams);
+      }
+    },
+  });
   const server = createHttp2Server(handler);
   await new Promise<void>((resolveListen, reject) => {
     server.once("error", reject);

@@ -52,15 +52,17 @@ Publisher credentials are a third authority. `runtime.json` stores only secret r
 ## First run
 
 ```bash
-npm install
+npm ci --ignore-scripts
 npm run build
-npm run runtime:init -- --jekyll-repo /absolute/path/to/site
+npm run runtime:init
 npm run runtime:start
 ```
 
-For an existing Jekyll repository, initialization discovers its current Git branch and Git author identity. `--author-name` and `--author-email` may be supplied when the repository has no local Git identity. Publishing does not push by default. `--push` must be explicit.
+Alternatively, `npm run runtime:open` (or `blogmaatic open`) initializes the runtime on first launch if needed, starts the background runtime, and launches the browser Control Room in one step. Use `npm run runtime:stop` (or `blogmaatic stop`) to halt a background runtime.
 
-`runtime:start` prints a one-time Control Room launch URL. Open that URL in the browser. There is no Operator API token field and no credential-copy step.
+For scripted setups targeting an existing Jekyll repository, `--jekyll-repo /absolute/path/to/site` may be passed to `runtime:init`. Initialization discovers its current Git branch and Git author identity. `--author-name` and `--author-email` may be supplied when the repository has no local Git identity. Publishing does not push by default; `--push` must be explicit. For normal consumer workflows, publisher destinations are configured directly in the Control Room guided onboarding.
+
+`runtime:start` prints a one-time Control Room launch URL, while `runtime:open` automatically opens it in the default browser. Opening that URL exchanges the launch capability for a runtime-memory `HttpOnly; SameSite=Strict` session cookie. There is no Operator API token field and no credential-copy step.
 
 `npm run runtime:token` remains an advanced escape hatch for an explicit external Operator API client. It is not part of the normal Control Room flow.
 

@@ -1,3 +1,4 @@
+import "./suppress-warning.js";
 import { DatabaseSync } from "node:sqlite";
 
 import type {

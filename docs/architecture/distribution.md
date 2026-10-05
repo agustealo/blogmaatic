@@ -74,12 +74,22 @@ After extraction, no npm command is required:
 
 ```bash
 ./blogmaatic-<version>-<platform>-<arch>/bin/blogmaatic version
-./blogmaatic-<version>-<platform>-<arch>/bin/blogmaatic init --jekyll-repo /absolute/path/to/site
+./blogmaatic-<version>-<platform>-<arch>/bin/blogmaatic open
+```
+
+`blogmaatic open` automatically initializes an empty secure runtime on first launch if needed, starts the background runtime, and launches the Control Room in your browser.
+
+Alternatively, for manual or foreground execution:
+
+```bash
+./blogmaatic-<version>-<platform>-<arch>/bin/blogmaatic init
 ./blogmaatic-<version>-<platform>-<arch>/bin/blogmaatic doctor
 ./blogmaatic-<version>-<platform>-<arch>/bin/blogmaatic start
 ```
 
-Retrieve the local operator credential deliberately when the Control Room needs it:
+Use `blogmaatic stop` to stop the background runtime process.
+
+Retrieve the local operator credential deliberately if an external Operator API client needs it:
 
 ```bash
 ./blogmaatic-<version>-<platform>-<arch>/bin/blogmaatic token
