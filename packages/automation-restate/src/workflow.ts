@@ -230,6 +230,7 @@ export function createPublicationAutomationWorkflow(options: PublicationAutomati
                 publication: request.publication,
                 group,
                 approvals: grants,
+                runId: request.runId,
               });
             } catch (error) {
               if (options.isRetryablePublisherError?.(error)) throw error;

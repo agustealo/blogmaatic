@@ -12,6 +12,7 @@ export interface PublishGroupInput {
   readonly publication: Publication;
   readonly group: PublicationGroup;
   readonly approvals: readonly ApprovalGrant[];
+  readonly runId?: string;
 }
 
 export interface AutomationPublisher {
@@ -20,8 +21,8 @@ export interface AutomationPublisher {
 
 export function createKernelAutomationPublisher(kernel: PublicationKernel): AutomationPublisher {
   return {
-    publishGroup: ({ publication, group, approvals }) =>
-      kernel.publish({ publication, group, approvals }),
+    publishGroup: ({ publication, group, approvals, runId }) =>
+      kernel.publish({ publication, group, approvals, ...(runId ? { runId } : {}) }),
   };
 }
 

@@ -268,3 +268,34 @@ a.data-table__row:hover { background: var(--surface-2); }
   .operation-card__topline { align-items: start; flex-direction: column; }
   .operation-card__meta a { margin-left: 0; }
 }
+
+
+.publication-distribution-history { margin-top: 16px; box-shadow: none; }
+.distribution-history-list { display: grid; }
+.distribution-history-row { min-height: 72px; padding: 12px 16px; display: grid; grid-template-columns: minmax(190px, 1.25fr) minmax(150px, .9fr) minmax(150px, .9fr) minmax(150px, .9fr) auto; gap: 16px; align-items: center; border-bottom: 1px solid var(--line); font-size: .78rem; }
+.distribution-history-row:last-child { border-bottom: 0; }
+.distribution-history-row > div { min-width: 0; display: grid; gap: 4px; }
+.distribution-history-row small { color: var(--muted); font-size: .68rem; }
+.distribution-history-row strong, .distribution-history-row a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.distribution-history-row a { color: var(--accent); font-weight: 750; }
+.distribution-history-row__identity strong { font-size: .83rem; }
+
+@media (max-width: 900px) {
+  .publication-distribution-history { overflow-x: auto; }
+  .distribution-history-list { min-width: 900px; }
+}
+
+
+.receipt-list--detailed { gap: 10px; }
+.receipt-record { border: 1px solid var(--line); border-radius: 9px; padding: 11px; background: var(--surface); }
+.receipt-record__top { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.receipt-record__top > span { min-width: 0; display: grid; gap: 3px; }
+.receipt-record__top small { color: var(--muted); }
+.receipt-record__facts { margin: 10px 0 0; display: grid; gap: 6px; }
+.receipt-record__facts div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; font-size: .7rem; }
+.receipt-record__facts dt { color: var(--muted); }
+.receipt-record__facts dd { margin: 0; overflow-wrap: anywhere; }
+.receipt-record__facts a { color: var(--accent); font-weight: 700; }
+.receipt-record details { margin-top: 10px; }
+.receipt-record summary { cursor: pointer; color: var(--muted); font-size: .72rem; }
+.receipt-record pre { max-height: 220px; overflow: auto; padding: 9px; border-radius: 7px; background: var(--surface-2); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }

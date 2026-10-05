@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   ExtensionRegistry,
+  InMemoryDistributionHistoryStore,
   PolicyEngine,
   PublicationKernel,
   deliveryIdempotencyKey,
@@ -245,4 +246,37 @@ test("denied policy routes never invoke the publisher", async () => {
 
   assert.equal(receipts[0].status, "blocked");
   assert.equal(fixture.publisher.deliveryCount, 0);
+});
+
+
+test("records the exact group snapshot and run identity in distribution history", async () => {
+  const publisher = new ContractPublisher();
+  const registry = new ExtensionRegistry();
+  registry.register(publisher);
+  const policies = new PolicyEngine([{ id: "default", defaultEffect: "allow", rules: [] }]);
+  const history = new InMemoryDistributionHistoryStore();
+  const publicationGroup = group();
+  const item = publication();
+  const publicationKernel = new PublicationKernel(
+    registry,
+    policies,
+    fixedClock,
+    undefined,
+    history,
+  );
+
+  const receipts = await publicationKernel.publish({
+    publication: item,
+    group: publicationGroup,
+    runId: "run-42",
+  });
+  const page = await history.list(item.id);
+
+  assert.equal(receipts.length, 1);
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].runId, "run-42");
+  assert.equal(page.items[0].revisionId, item.current.id);
+  assert.equal(page.items[0].destination.connectionId, "connection-1");
+  assert.deepEqual(page.items[0].groupSnapshot, publicationGroup);
+  assert.equal(page.items[0].receipt.status, "verified");
 });

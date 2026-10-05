@@ -155,3 +155,24 @@ export function parsePublicationWorkspaceVersionListQuery(query: unknown): { rea
     ...(cursor === undefined ? {} : { cursor }),
   };
 }
+
+
+export function parsePublicationDistributionHistoryQuery(query: unknown): {
+  readonly revisionId?: string;
+  readonly routeId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+} {
+  const input = query === undefined || query === null ? {} : record(query, "query");
+  rejectUnknown(input, ["revisionId", "routeId", "limit", "cursor"], "query");
+  const revisionId = optionalQueryString(input, "revisionId");
+  const routeId = optionalQueryString(input, "routeId");
+  const limit = optionalQueryLimit(input);
+  const cursor = optionalQueryString(input, "cursor");
+  return {
+    ...(revisionId === undefined ? {} : { revisionId }),
+    ...(routeId === undefined ? {} : { routeId }),
+    ...(limit === undefined ? {} : { limit }),
+    ...(cursor === undefined ? {} : { cursor }),
+  };
+}
