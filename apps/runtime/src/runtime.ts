@@ -33,6 +33,7 @@ import {
 import { ConnectionAuthority, ExtensionRuntime } from "@blogmaatic/extension-sdk";
 import {
   WORDPRESS_CONNECTION_CONTRACT,
+  WordPressContentService,
   WordPressRestPublisher,
 } from "@blogmaatic/extension-wordpress-rest";
 import { StaticBearerAuthorizer, closeOperatorApi, startOperatorApi } from "@blogmaatic/operator-api";
@@ -54,6 +55,7 @@ import { PublicationGroupManager } from "./publication-group-manager.js";
 import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 import { ScheduleManager } from "./schedule-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
+import { WordPressSourceManager } from "./wordpress-source-manager.js";
 import { checkForUpdate, openPreparedInstaller, prepareUpdate, verifyPreparedUpdate, type UpdateCheck } from "./update.js";
 
 export interface RunningRuntime {
@@ -209,7 +211,9 @@ export async function startRuntime(options: {
     const secrets = createSecretAuthority();
     const extensions = new ExtensionRuntime(connections);
     extensions.registerPublisher(new JekyllGitPublisher(connections), JEKYLL_CONNECTION_CONTRACT);
-    extensions.registerPublisher(new WordPressRestPublisher(connections, secrets), WORDPRESS_CONNECTION_CONTRACT);
+    const wordpressPublisher = new WordPressRestPublisher(connections, secrets);
+    const wordpressContent = new WordPressContentService(connections, secrets);
+    extensions.registerPublisher(wordpressPublisher, WORDPRESS_CONNECTION_CONTRACT);
     extensions.registerPublisher(new LinkedInRestPublisher(connections, secrets), LINKEDIN_CONNECTION_CONTRACT);
     extensions.registerPublisher(new FacebookPagesPublisher(connections, secrets), FACEBOOK_CONNECTION_CONTRACT);
     await inspectConfiguredConnections(extensions, connections, logger);
@@ -243,11 +247,20 @@ export async function startRuntime(options: {
     const controlPlane = new AutomationControlPlane({ store: controlPlaneStore, launcher: runtime });
     const publications = new PublicationWorkspaceManager({ store: publicationWorkspaceStore, publicationGroups, controlPlane });
     const schedules = new ScheduleManager({ store: controlPlaneStore });
+    const sourceContent = new WordPressSourceManager({
+      content: wordpressContent,
+      publisher: wordpressPublisher,
+      publicationGroups,
+      publications,
+      projectionState,
+      distributionHistory: projectionState,
+    });
     operator = await startOperatorApi({
       controlPlane,
       store: controlPlaneStore,
       runtime,
       connections: connectionManager,
+      sourceContent,
       publicationGroups,
       publications,
       distributions: projectionState,
