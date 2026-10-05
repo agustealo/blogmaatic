@@ -21,6 +21,8 @@ import type {
   PageRequest,
 } from "@blogmaatic/control-plane";
 import type {
+  DistributionHistoryPage,
+  DistributionHistoryQuery,
   ExtensionCapability,
   JsonValue,
   Publication,
@@ -223,6 +225,16 @@ export interface PublicationWorkspaceDispatchResult {
   readonly runs: readonly ControlPlaneRunRecord[];
 }
 
+export interface OperatorDistributionHistory {
+  list(
+    publicationId: string,
+    query?: DistributionHistoryQuery,
+  ): Promise<DistributionHistoryPage>;
+}
+
+export type OperatorDistributionHistoryQuery = DistributionHistoryQuery;
+export type OperatorDistributionHistoryPage = DistributionHistoryPage;
+
 export interface OperatorPublicationWorkspaceManager {
   list(query?: PublicationWorkspaceListQuery): Promise<Page<PublicationWorkspaceEntry>>;
   get(publicationId: string): Promise<PublicationWorkspaceEntry | undefined>;
@@ -253,6 +265,7 @@ export interface OperatorApiOptions {
   readonly connections?: OperatorConnectionManager;
   readonly publicationGroups?: OperatorPublicationGroupManager;
   readonly publications?: OperatorPublicationWorkspaceManager;
+  readonly distributions?: OperatorDistributionHistory;
   readonly schedules?: OperatorScheduleManager;
   readonly authorizer: OperatorAuthorizer;
   readonly clock?: OperatorClock;
