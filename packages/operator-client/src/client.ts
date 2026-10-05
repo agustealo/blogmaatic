@@ -20,6 +20,8 @@ import type {
   ManualRunBody,
   OperatorConnectionTestResult,
   OperatorConnectionView,
+  OperatorDistributionHistoryPage,
+  OperatorDistributionHistoryQuery,
   OperatorErrorBody,
   OperatorHealth,
   OperatorOperationsPage,
@@ -264,6 +266,16 @@ export class OperatorClient {
 
   getPublication(publicationId: string): Promise<PublicationWorkspaceEntry> {
     return this.#request<PublicationWorkspaceEntry>(`/v1/publications/${encodeURIComponent(publicationId)}`);
+  }
+
+  listPublicationDistributions(
+    publicationId: string,
+    query: OperatorDistributionHistoryQuery = {},
+  ): Promise<OperatorDistributionHistoryPage> {
+    return this.#request<OperatorDistributionHistoryPage>(pathWithQuery(
+      `/v1/publications/${encodeURIComponent(publicationId)}/distributions`,
+      query,
+    ));
   }
 
   listPublicationVersions(publicationId: string, query: PageRequest = {}): Promise<PublicationWorkspaceVersionPage> {
