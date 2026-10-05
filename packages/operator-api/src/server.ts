@@ -25,6 +25,7 @@ import {
   registerPublicationGroupRoutes,
 } from "./publication-groups.js";
 import { listOperatorRuns } from "./runs.js";
+import { registerSourceContentRoutes } from "./source-content.js";
 import { parseScheduleActivationBody } from "./schedule-validation.js";
 import type {
   ManualRunBody,
@@ -308,6 +309,7 @@ export function createOperatorApi(options: OperatorApiOptions): FastifyInstance 
   });
 
   registerPublicationGroupRoutes(app, options);
+  registerSourceContentRoutes(app, options);
 
   app.get("/v1/automations", async (request) => {
     await authorize(request, "automations:read");
