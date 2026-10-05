@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { auditedMutation } from "./audit.js";
 import type { OperatorPermission, OperatorPrincipal } from "./auth.js";
 import {
+  parsePublicationDistributionHistoryQuery,
   parsePublicationWorkspaceCreateBody,
   parsePublicationWorkspaceDispatchBody,
   parsePublicationWorkspaceListQuery,
@@ -20,6 +21,7 @@ import {
 } from "./publication-group-validation.js";
 import type {
   OperatorApiOptions,
+  OperatorDistributionHistory,
   OperatorPublicationGroupManager,
   OperatorPublicationWorkspaceManager,
 } from "./types.js";
@@ -53,6 +55,17 @@ function manager(options: OperatorApiOptions): OperatorPublicationGroupManager {
     );
   }
   return options.publicationGroups;
+}
+
+function distributionManager(options: OperatorApiOptions): OperatorDistributionHistory {
+  if (!options.distributions) {
+    throw new PublicationGroupApiError(
+      503,
+      "PUBLICATION_DISTRIBUTION_HISTORY_UNAVAILABLE",
+      "Publication distribution history is unavailable",
+    );
+  }
+  return options.distributions;
 }
 
 function publicationManager(options: OperatorApiOptions): OperatorPublicationWorkspaceManager {
@@ -152,6 +165,16 @@ function registerPublicationWorkspaceRoutes(app: FastifyInstance, options: Opera
     await authorize(options, request, "publications:read");
     const publicationId = requirePathString(params(request).publicationId, "publicationId");
     return publicationOr404(publicationManager(options), publicationId);
+  });
+
+  app.get("/v1/publications/:publicationId/distributions", async (request) => {
+    await authorize(options, request, "publications:read");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    await publicationOr404(publicationManager(options), publicationId);
+    return publicationDomainCall(() => distributionManager(options).list(
+      publicationId,
+      parsePublicationDistributionHistoryQuery(query(request)),
+    ));
   });
 
   app.get("/v1/publications/:publicationId/versions", async (request) => {
