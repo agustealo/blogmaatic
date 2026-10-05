@@ -284,3 +284,18 @@ a.data-table__row:hover { background: var(--surface-2); }
   .publication-distribution-history { overflow-x: auto; }
   .distribution-history-list { min-width: 900px; }
 }
+
+
+.receipt-list--detailed { gap: 10px; }
+.receipt-record { border: 1px solid var(--line); border-radius: 9px; padding: 11px; background: var(--surface); }
+.receipt-record__top { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.receipt-record__top > span { min-width: 0; display: grid; gap: 3px; }
+.receipt-record__top small { color: var(--muted); }
+.receipt-record__facts { margin: 10px 0 0; display: grid; gap: 6px; }
+.receipt-record__facts div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; font-size: .7rem; }
+.receipt-record__facts dt { color: var(--muted); }
+.receipt-record__facts dd { margin: 0; overflow-wrap: anywhere; }
+.receipt-record__facts a { color: var(--accent); font-weight: 700; }
+.receipt-record details { margin-top: 10px; }
+.receipt-record summary { cursor: pointer; color: var(--muted); font-size: .72rem; }
+.receipt-record pre { max-height: 220px; overflow: auto; padding: 9px; border-radius: 7px; background: var(--surface-2); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
