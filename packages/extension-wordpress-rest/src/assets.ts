@@ -13,11 +13,18 @@ export async function compileAssets(
   const compiled: CompiledWordPressAsset[] = [];
   for (const asset of publication.current.content.assets) {
     if (/^https?:\/\//i.test(asset.source)) {
+      const wordpressMediaId =
+        asset.attributes &&
+        typeof asset.attributes.wordpressMediaId === "number" &&
+        Number.isSafeInteger(asset.attributes.wordpressMediaId)
+          ? asset.attributes.wordpressMediaId
+          : undefined;
       compiled.push({
         assetId: asset.id,
         source: asset.source,
         ...(asset.mediaType ? { mediaType: asset.mediaType } : {}),
         ...(asset.alt ? { alt: asset.alt } : {}),
+        ...(wordpressMediaId === undefined ? {} : { wordpressMediaId }),
       });
       continue;
     }
