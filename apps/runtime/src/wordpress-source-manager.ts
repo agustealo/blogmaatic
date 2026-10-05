@@ -123,6 +123,15 @@ function routeForImport(
   return route;
 }
 
+function wordpressGmtInstant(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new Error("WordPress GMT date is empty");
+  const instant = /(?:Z|[+-]\d{2}:\d{2})$/.test(normalized) ? normalized : `${normalized}Z`;
+  const parsed = new Date(instant);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid WordPress GMT date: ${value}`);
+  return parsed.toISOString();
+}
+
 function importProjectionRoute(route: PublicationRoute, post: WordPressPostView): PublicationRoute {
   const supported = new Set(["publish", "draft", "pending", "private", "future"]);
   if (!supported.has(post.status)) {
@@ -133,7 +142,7 @@ function importProjectionRoute(route: PublicationRoute, post: WordPressPostView)
     variant: {
       status: post.status,
       slug: post.slug,
-      ...(post.status === "future" && post.dateGmt ? { scheduledAt: post.dateGmt } : {}),
+      ...(post.status === "future" && post.dateGmt ? { scheduledAt: wordpressGmtInstant(post.dateGmt) } : {}),
     },
   };
 }
