@@ -106,6 +106,23 @@ function makeServer() {
       posts.set(id, post);
       return json(response, 201, post);
     }
+    const revisionItemMatch = path.match(/^\/posts\/(\d+)\/revisions\/(\d+)$/);
+    if (revisionItemMatch && request.method === "GET") {
+      const id = Number(revisionItemMatch[1]);
+      const revisionId = Number(revisionItemMatch[2]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, {
+        id: revisionId,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: { raw: `Revision ${revisionId}` },
+        excerpt: { raw: "<p>Revision excerpt</p>" },
+        content: { raw: `<h2>Revision ${revisionId}</h2><p>Recovered body.</p>` },
+      });
+    }
     const revisionMatch = path.match(/^\/posts\/(\d+)\/revisions$/);
     if (revisionMatch && request.method === "GET") {
       const id = Number(revisionMatch[1]);
@@ -705,6 +722,60 @@ test("source content service verifies image bytes before WordPress upload and pr
 
     await content.deleteMediaPermanent("wp-1", String(uploaded.id));
     assert.equal(api.media.has(uploaded.id), false);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("source content service fetches one WordPress native revision in edit context", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.posts.set(55, {
+      id: 55,
+      author: 7,
+      link: "http://example.test/?p=55",
+      slug: "revision-source",
+      status: "publish",
+      title: { raw: "Current title" },
+      excerpt: { raw: "<p>Current excerpt</p>" },
+      content: { raw: "<p>Current body</p>" },
+      categories: [],
+      tags: [],
+      featured_media: 0,
+      date_gmt: "2026-10-17T19:00:00",
+      modified_gmt: "2026-10-17T20:00:00",
+    });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+
+    const revision = await content.getRevision("wp-1", "55", "9055");
+    assert.deepEqual(revision, {
+      id: 9055,
+      parent: 55,
+      author: 7,
+      dateGmt: "2026-10-17T19:00:00",
+      modifiedGmt: "2026-10-17T20:00:00",
+      title: "Revision 9055",
+      excerpt: "<p>Revision excerpt</p>",
+      contentHtml: "<h2>Revision 9055</h2><p>Recovered body.</p>",
+    });
   } finally {
     api.server.close();
   }
