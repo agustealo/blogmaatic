@@ -176,10 +176,16 @@ function makeServer() {
         byteLength: rawBuffer.length,
       });
       const id = nextMedia++;
+      const contentType = request.headers["content-type"] ?? "application/octet-stream";
+      const extension = contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "png";
       const item = {
         id,
         slug: `media-${id}`,
-        source_url: `http://127.0.0.1:${server.address().port}/uploads/${id}.png`,
+        source_url: `http://127.0.0.1:${server.address().port}/uploads/${id}.${extension}`,
+        media_type: contentType.startsWith("image/") ? "image" : "file",
+        mime_type: contentType,
+        alt_text: "",
+        title: { raw: "" },
       };
       media.set(id, item);
       return json(response, 201, item);
@@ -191,9 +197,20 @@ function makeServer() {
     }
     if (mediaMatch && request.method === "POST") {
       const id = Number(mediaMatch[1]);
-      const item = { ...media.get(id), ...body };
+      const current = media.get(id);
+      const item = {
+        ...current,
+        ...body,
+        ...(typeof body.title === "string" ? { title: { raw: body.title } } : {}),
+      };
       media.set(id, item);
       return json(response, 200, item);
+    }
+    if (mediaMatch && request.method === "DELETE" && url.searchParams.get("force") === "true") {
+      const id = Number(mediaMatch[1]);
+      const current = media.get(id);
+      media.delete(id);
+      return json(response, 200, { deleted: true, previous: current });
     }
     return json(response, 404, { code: "not_found", message: path, data: { status: 404 } });
   });
@@ -613,6 +630,61 @@ test("source content service searches and paginates WordPress categories and tag
       count: 11,
     }]);
     assert.equal(tags.hasMore, false);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("source content service verifies image bytes before WordPress upload and preserves media metadata", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const bytes = validPng(16, 9);
+    const uploaded = await content.uploadMedia("wp-1", {
+      bytes,
+      mediaType: "image/png",
+      filename: "Editorial Hero.jpeg",
+      alt: "A descriptive hero",
+      title: "Editorial Hero",
+    });
+    assert.equal(api.mediaUploads.length, 1);
+    assert.equal(api.mediaUploads[0].contentType, "image/png");
+    assert.match(api.mediaUploads[0].contentDisposition, /Editorial Hero\.png"/);
+    assert.equal(uploaded.mediaType, "image/png");
+    assert.equal(uploaded.mediaKind, "image");
+    assert.equal(uploaded.alt, "A descriptive hero");
+    assert.equal(uploaded.title, "Editorial Hero");
+
+    await assert.rejects(
+      content.uploadMedia("wp-1", {
+        bytes,
+        mediaType: "image/jpeg",
+        filename: "spoofed.jpg",
+      }),
+      /does not match detected bytes image\/png/,
+    );
+    assert.equal(api.mediaUploads.length, 1);
+
+    await content.deleteMediaPermanent("wp-1", String(uploaded.id));
+    assert.equal(api.media.has(uploaded.id), false);
   } finally {
     api.server.close();
   }
