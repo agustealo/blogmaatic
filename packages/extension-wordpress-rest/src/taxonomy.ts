@@ -23,16 +23,32 @@ async function findTerm(
   return terms.find((term) => term.slug === slug);
 }
 
-async function createTerm(
+export async function findOrCreateTerm(
   client: WordPressRestClient,
   taxonomy: "categories" | "tags",
-  name: string,
-  slug: string,
+  input: {
+    readonly name: string;
+    readonly slug?: string;
+    readonly description?: string;
+  },
 ): Promise<WordPressTermRecord> {
+  const name = input.name.trim();
+  if (!name) throw new Error("WordPress taxonomy term name is required");
+  const requestedSlug = input.slug?.trim();
+  if (input.slug !== undefined && !requestedSlug) {
+    throw new Error("WordPress taxonomy term slug must be non-empty when provided");
+  }
+  const slug = requestedSlug ?? termSlug(name);
+  const existing = await findTerm(client, taxonomy, slug);
+  if (existing) return existing;
   try {
     return await client.requestJson<WordPressTermRecord>(`/${taxonomy}`, {
       method: "POST",
-      body: JSON.stringify({ name, slug }),
+      body: JSON.stringify({
+        name,
+        slug,
+        ...(input.description?.trim() ? { description: input.description.trim() } : {}),
+      }),
     });
   } catch (error) {
     if (error instanceof WordPressHttpError && error.code === "term_exists" && error.termId) {
@@ -59,7 +75,7 @@ export async function resolveTerms(
     if (!createMissing) {
       throw new Error(`WordPress ${taxonomy.slice(0, -1)} does not exist and auto-create is disabled: ${rawName}`);
     }
-    ids.push((await createTerm(client, taxonomy, rawName, slug)).id);
+    ids.push((await findOrCreateTerm(client, taxonomy, { name: rawName, slug })).id);
   }
   return ids;
 }
