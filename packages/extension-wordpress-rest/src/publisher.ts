@@ -16,6 +16,7 @@ import {
   type ExtensionHealth,
   type ManagedPublisherExtension,
 } from "@blogmaatic/extension-sdk";
+import { imageTransformSpecFromJson } from "@blogmaatic/media";
 import { SecretAuthority } from "@blogmaatic/secrets";
 
 import { compileAssets } from "./assets.js";
@@ -105,6 +106,10 @@ function semanticPayload(
       mediaType: asset.mediaType ?? null,
       alt: asset.alt ?? null,
       fingerprint: asset.fingerprint ?? null,
+      transformFingerprint: asset.transform?.transformationFingerprint ?? null,
+      outputWidth: asset.transform?.output.width ?? null,
+      outputHeight: asset.transform?.output.height ?? null,
+      outputMediaType: asset.transform?.output.mediaType ?? null,
     })),
   };
 }
@@ -331,7 +336,10 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const settings = parseSettings(connection);
     const status = desiredStatus(route);
     const scheduledAt = desiredSchedule(route, status);
-    const assets = await compileAssets(publication, settings);
+    const imageTransform = variant(route).imageTransform === undefined
+      ? undefined
+      : imageTransformSpecFromJson(variant(route).imageTransform);
+    const assets = await compileAssets(publication, settings, imageTransform);
     const featured = featuredAssetId(publication, route);
     const payload: WordPressProjectionPayload = {
       title: publication.current.content.title,
@@ -348,6 +356,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         ...(asset.alt ? { alt: asset.alt } : {}),
         ...(asset.fingerprint ? { fingerprint: asset.fingerprint } : {}),
         ...(asset.localPath ? { localPath: asset.localPath } : {}),
+        ...(asset.transform ? { transform: asset.transform as unknown as JsonValue } : {}),
       })),
       ...(scheduledAt ? { scheduledAt } : {}),
       ...(featured ? { featuredAssetId: featured } : {}),
