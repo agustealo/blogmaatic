@@ -175,6 +175,7 @@ function makeServer() {
   return {
     server,
     posts,
+    media,
     mediaUploads,
     get counts() {
       return { postCreates, postUpdates };
@@ -509,6 +510,60 @@ test("source content service browses, adopts, reads revisions, trashes, restores
   }
 });
 
+
+test("source content service searches and maps WordPress Media Library images", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    api.media.set(77, {
+      id: 77,
+      slug: "editorial-hero",
+      source_url: "http://example.test/uploads/editorial-hero.jpg",
+      mime_type: "image/jpeg",
+      alt_text: "Editorial hero",
+      title: { raw: "Editorial Hero" },
+      modified_gmt: "2026-10-18T12:00:00",
+      media_details: { width: 1600, height: 900 },
+    });
+
+    const page = await content.listMedia("wp-1", { search: "editorial", page: 1, perPage: 10 });
+    assert.equal(page.page, 1);
+    assert.equal(page.perPage, 10);
+    assert.equal(page.hasMore, false);
+    assert.deepEqual(page.items[0], {
+      id: 77,
+      sourceUrl: "http://example.test/uploads/editorial-hero.jpg",
+      slug: "editorial-hero",
+      mediaType: "image/jpeg",
+      alt: "Editorial hero",
+      title: "Editorial Hero",
+      width: 1600,
+      height: 900,
+      modifiedGmt: "2026-10-18T12:00:00",
+    });
+    assert.deepEqual(await content.getMedia("wp-1", "77"), page.items[0]);
+  } finally {
+    api.server.close();
+  }
+});
 
 test("WordPress uploads rendered route-specific image derivatives with traceable evidence", async () => {
   const api = makeServer();
