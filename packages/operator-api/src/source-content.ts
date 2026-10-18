@@ -5,6 +5,8 @@ import type { OperatorPermission } from "./auth.js";
 import type {
   OperatorApiOptions,
   OperatorSourceContentManager,
+  SourceAssetAttachBody,
+  SourceAssetQuery,
   SourceContentImportBody,
   SourceContentQuery,
 } from "./types.js";
@@ -102,6 +104,46 @@ function parseQuery(request: FastifyRequest): SourceContentQuery {
   };
 }
 
+function parseAssetQuery(request: FastifyRequest): SourceAssetQuery {
+  const input = query(request);
+  const allowed = new Set(["search", "page", "limit"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+  const search = optionalString(input, "search");
+  const page = optionalInteger(input, "page", 1, 1000000);
+  const limit = optionalInteger(input, "limit", 1, 100);
+  return {
+    ...(search ? { search } : {}),
+    ...(page === undefined ? {} : { page }),
+    ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion", "featured"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  if (input.featured !== undefined && typeof input.featured !== "boolean") {
+    throw new OperatorRequestError("featured must be a boolean");
+  }
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    ...(typeof input.featured === "boolean" ? { featured: input.featured } : {}),
+  };
+}
+
 function parseImportBody(body: unknown): SourceContentImportBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -130,6 +172,44 @@ async function authorize(
 
 export function registerSourceContentRoutes(app: FastifyInstance, options: OperatorApiOptions): void {
   const clock = options.clock ?? { now: () => new Date().toISOString() };
+
+  app.get("/v1/connections/:connectionId/assets", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    return domainCall(() => manager(options).listAssets(connectionId, parseAssetQuery(request)));
+  });
+
+  app.post("/v1/connections/:connectionId/assets/:remoteId/attach", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const remoteId = requirePathString(values.remoteId, "remoteId");
+    const body = parseAssetAttachBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-asset.attach",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        remoteId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        featured: body.featured ?? false,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).attachAsset(connectionId, remoteId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          assetRemoteId: value.asset.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
 
   app.get("/v1/connections/:connectionId/content", async (request) => {
     await authorize(options, request, "source-content:read");
