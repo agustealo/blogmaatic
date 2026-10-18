@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import type {
@@ -34,6 +34,42 @@ function localTimezone(): string {
   } catch {
     return "UTC";
   }
+}
+
+
+function nextLocalDate(schedule: AutomationSchedule): string {
+  if (!schedule.nextFireAt) return schedule.localDate;
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: schedule.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(schedule.nextFireAt));
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (year && month && day) return `${year}-${month}-${day}`;
+  } catch {
+    // Fall back to the stored local start date if the timezone is unavailable.
+  }
+  return schedule.localDate;
+}
+
+function displayCalendarDate(localDate: string): { readonly day: string; readonly date: string; readonly year: string } {
+  const parsed = new Date(`${localDate}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return { day: localDate, date: "", year: "" };
+  return {
+    day: new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: "UTC" }).format(parsed),
+    date: new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" }).format(parsed),
+    year: new Intl.DateTimeFormat(undefined, { year: "numeric", timeZone: "UTC" }).format(parsed),
+  };
+}
+
+function scheduleDestinationLabel(schedule: AutomationSchedule): string {
+  if (schedule.groups.length === 0) return "No destination group";
+  if (schedule.groups.length === 1) return schedule.groups[0]!.name;
+  return `${schedule.groups[0]!.name} + ${schedule.groups.length - 1} more`;
 }
 
 function CreateSchedulePanel({
@@ -272,6 +308,8 @@ export function SchedulesPage() {
   const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [actionError, setActionError] = useState<Error | null>(null);
   const [createdScheduleId, setCreatedScheduleId] = useState<string | null>(null);
+  const [calendarSchedules, setCalendarSchedules] = useState<readonly AutomationSchedule[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
   const loader = useCallback((cursor?: string) => {
     if (!session) return Promise.resolve({ items: [] });
     const query: ScheduleListQuery = {
@@ -282,6 +320,50 @@ export function SchedulesPage() {
     return session.client.listSchedules(query);
   }, [enabled, session]);
   const collection = usePagedCollection(`schedules:${enabled}`, loader);
+
+  const loadCalendar = useCallback(async () => {
+    if (!session) return;
+    setCalendarLoading(true);
+    try {
+      const items: AutomationSchedule[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await session.client.listSchedules({
+          enabled: true,
+          limit: 200,
+          ...(cursor ? { cursor } : {}),
+        });
+        items.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor);
+      setCalendarSchedules(items);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause : new Error("Publishing calendar could not be loaded"));
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => { void loadCalendar(); }, [loadCalendar]);
+
+  const calendarGroups = useMemo(() => {
+    const groups = new Map<string, AutomationSchedule[]>();
+    for (const schedule of calendarSchedules) {
+      if (!schedule.enabled || schedule.nextFireAt === null) continue;
+      const date = nextLocalDate(schedule);
+      const items = groups.get(date) ?? [];
+      items.push(schedule);
+      groups.set(date, items);
+    }
+    return [...groups.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, items]) => ({
+        date,
+        items: [...items].sort((left, right) =>
+          left.localTime.localeCompare(right.localTime) || left.id.localeCompare(right.id),
+        ),
+      }));
+  }, [calendarSchedules]);
 
   const openCreate = useCallback(async () => {
     if (!session) return;
@@ -337,7 +419,7 @@ export function SchedulesPage() {
         enabled: nextEnabled,
       });
       setPendingToggle(null);
-      await collection.reload();
+      await Promise.all([collection.reload(), loadCalendar()]);
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error("Schedule state could not be changed");
       setActionError(error);
@@ -345,13 +427,13 @@ export function SchedulesPage() {
     } finally {
       setBusyScheduleId(null);
     }
-  }, [collection, session]);
+  }, [collection, loadCalendar, session]);
 
   const created = useCallback((schedule: AutomationSchedule) => {
     setCreatedScheduleId(schedule.id);
     setCreateOpen(false);
-    void collection.reload();
-  }, [collection]);
+    void Promise.all([collection.reload(), loadCalendar()]);
+  }, [collection, loadCalendar]);
 
   return (
     <>
@@ -363,7 +445,11 @@ export function SchedulesPage() {
       />
       <ErrorBanner error={actionError ?? collection.error} />
       {createdScheduleId ? (
-        <div className="success-banner" role="status"><strong>Schedule created.</strong><span>{createdScheduleId}</span></div>
+        <div className="success-banner" role="status">
+          <strong>Schedule created.</strong>
+          <span>Your approved content is now on the publishing calendar.</span>
+          <details><summary>Technical ID</summary><code>{createdScheduleId}</code></details>
+        </div>
       ) : null}
       {createOpen ? (
         <CreateSchedulePanel
@@ -375,6 +461,57 @@ export function SchedulesPage() {
           {...(requestedPublicationId ? { initialPublicationId: requestedPublicationId } : {})}
         />
       ) : null}
+      {!createOpen && !calendarLoading ? (
+        <section className="editorial-calendar" aria-label="Upcoming publishing calendar">
+          <div className="editorial-calendar__header">
+            <div>
+              <span className="eyebrow">Next up</span>
+              <h2>Publishing calendar</h2>
+              <p>Upcoming enabled schedules, shown on the date they next fire in their configured timezone.</p>
+            </div>
+            <span>{calendarGroups.reduce((count, group) => count + group.items.length, 0)} upcoming</span>
+          </div>
+          {calendarGroups.length ? (
+            <div className="editorial-calendar__days">
+              {calendarGroups.map((group) => {
+                const display = displayCalendarDate(group.date);
+                return (
+                  <article className="calendar-day" key={group.date}>
+                    <div className="calendar-day__date">
+                      <span>{display.day}</span>
+                      <strong>{display.date}</strong>
+                      <small>{display.year}</small>
+                    </div>
+                    <div className="calendar-day__items">
+                      {group.items.map((schedule) => (
+                        <div className="calendar-item" key={schedule.id}>
+                          <div className="calendar-item__time">
+                            <strong>{schedule.localTime}</strong>
+                            <small>{schedule.timezone}</small>
+                          </div>
+                          <div className="calendar-item__content">
+                            <Link to={`/publications/${encodeURIComponent(schedule.publication.id)}`}>
+                              <strong>{schedule.publication.current.content.title}</strong>
+                            </Link>
+                            <small>{scheduleDestinationLabel(schedule)} · {recurrenceLabel(schedule)}</small>
+                          </div>
+                          <div className="calendar-item__state">
+                            <StatusPill value="scheduled" tone="good" />
+                            <small>r{schedule.publication.current.ordinal}</small>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState title="Nothing upcoming">No enabled schedule currently has a future fire time. Schedule approved content when you're ready.</EmptyState>
+          )}
+        </section>
+      ) : null}
+
       <div className="toolbar">
         <label className="field field--inline">
           <span>State</span>
@@ -384,23 +521,26 @@ export function SchedulesPage() {
             <option value="false">Disabled</option>
           </select>
         </label>
-        <button className="button button--quiet" type="button" onClick={() => void collection.reload()} disabled={collection.loading}>Refresh</button>
+        <button className="button button--quiet" type="button" onClick={() => void Promise.all([collection.reload(), loadCalendar()])} disabled={collection.loading || calendarLoading}>Refresh</button>
       </div>
       {collection.loading ? <LoadingBlock /> : (
-        <Panel className="table-panel" title="Upcoming and recurring" meta="Automatic publishing">
+        <Panel className="table-panel" title="Schedule management" meta="Advanced timing controls">
           <div className="data-table data-table--schedules">
-            <div className="data-table__head"><span>Schedule</span><span>Automation</span><span>Local time</span><span>Next fire</span><span>State</span></div>
+            <div className="data-table__head"><span>Content</span><span>Publish to</span><span>Timing</span><span>Next</span><span>State</span></div>
             {collection.items.map((schedule) => {
               const confirming = pendingToggle === schedule.id;
               return (
                 <div className="data-table__row" key={schedule.id}>
-                  <span><strong>{schedule.id}</strong><small>{recurrenceLabel(schedule)}</small></span>
                   <span>
-                    <Link to={`/automations/${encodeURIComponent(schedule.automationId)}`}><strong>{schedule.automationId}</strong></Link>
-                    <small>v{schedule.automationVersion}</small>
+                    <Link to={`/publications/${encodeURIComponent(schedule.publication.id)}`}><strong>{schedule.publication.current.content.title}</strong></Link>
+                    <small>Revision {schedule.publication.current.ordinal}</small>
                   </span>
-                  <span><strong>{schedule.localDate} · {schedule.localTime}</strong><small>{schedule.timezone}</small></span>
-                  <span><strong>{formatInstant(schedule.nextFireAt)}</strong>{schedule.lastFireAt ? <small>Last {formatInstant(schedule.lastFireAt)}</small> : null}</span>
+                  <span>
+                    <strong>{scheduleDestinationLabel(schedule)}</strong>
+                    <small>{schedule.groups.reduce((count, group) => count + group.routes.filter((route) => route.enabled).length, 0)} enabled route(s)</small>
+                  </span>
+                  <span><strong>{schedule.localDate} · {schedule.localTime}</strong><small>{schedule.timezone} · {recurrenceLabel(schedule)}</small></span>
+                  <span><strong>{schedule.nextFireAt ? formatInstant(schedule.nextFireAt) : "Finished"}</strong>{schedule.lastFireAt ? <small>Last {formatInstant(schedule.lastFireAt)}</small> : null}</span>
                   <span>
                     <StatusPill value={schedule.enabled ? "enabled" : "disabled"} />
                     {confirming ? (
@@ -433,8 +573,8 @@ export function SchedulesPage() {
           </div>
           {collection.items.length === 0 ? (
             <div className="publication-group-empty">
-              <EmptyState title="No matching schedules">Create a durable schedule here instead of using the Operator API. Timing changes are intentionally modeled as a new schedule so existing run history remains unambiguous.</EmptyState>
-              <button className="button button--primary" type="button" onClick={() => void openCreate()}>Create Schedule</button>
+              <EmptyState title="No matching schedules">Schedule approved content to see it here and on the calendar above.</EmptyState>
+              <button className="button button--primary" type="button" onClick={() => void openCreate()}>Schedule content</button>
             </div>
           ) : null}
         </Panel>
