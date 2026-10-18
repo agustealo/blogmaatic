@@ -244,7 +244,11 @@ function SourceAssetLibraryPanel({
     entry.publication.current.content.assets.flatMap((asset) => {
       const remoteId = asset.attributes?.sourceRemoteId;
       const sourceConnectionId = asset.attributes?.sourceConnectionId;
-      return typeof remoteId === "string" && sourceConnectionId === connectionId ? [remoteId] : [];
+      if (typeof remoteId === "string" && sourceConnectionId === connectionId) return [remoteId];
+      const wordpressMediaId = asset.attributes?.wordpressMediaId;
+      return typeof wordpressMediaId === "number" && Number.isSafeInteger(wordpressMediaId)
+        ? [String(wordpressMediaId)]
+        : [];
     }),
   ), [connectionId, entry.publication.current.content.assets]);
 
