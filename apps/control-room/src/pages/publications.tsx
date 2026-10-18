@@ -114,6 +114,23 @@ function tagsFromInput(value: string): readonly string[] {
   return [...new Set(value.split(/[,\n]/).map((tag) => tag.trim()).filter(Boolean))];
 }
 
+function destinationLabel(extensionId: string): string {
+  const leaf = extensionId.split(".").at(-1) ?? extensionId;
+  return leaf
+    .replace(/-rest$/i, "")
+    .replace(/-git$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function provenanceSource(entry: PublicationWorkspaceEntry): string {
+  const source = entry.publication.provenance.source;
+  if (typeof source !== "string" || !source.trim()) return "Blogmaatic";
+  return source === "wordpress" ? "WordPress import" :
+    source === "blogmaatic.publication-workspace" ? "Created in Blogmaatic" :
+      destinationLabel(source);
+}
+
 function statusTone(status: string): "good" | "warn" | "bad" | "neutral" {
   if (status === "approved" || status === "published") return "good";
   if (status === "ready") return "warn";
@@ -130,7 +147,7 @@ function VersionsPanel({ publicationId, nonce }: { readonly publicationId: strin
   const collection = usePagedCollection(`publication-versions:${publicationId}:${nonce}`, loader);
 
   return (
-    <Panel title="Workspace history" meta="Immutable snapshots" className="publication-history">
+    <Panel title="Content history" meta="Immutable revisions and workspace snapshots" className="publication-history">
       <ErrorBanner error={collection.error} />
       {collection.loading ? <LoadingBlock /> : (
         <div className="publication-version-list">
@@ -149,7 +166,109 @@ function VersionsPanel({ publicationId, nonce }: { readonly publicationId: strin
   );
 }
 
-function DistributionHistoryPanel({ publicationId, nonce }: { readonly publicationId: string; readonly nonce: number }) {
+function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationWorkspaceEntry; readonly nonce: number }) {
+  const { session } = useConnection();
+  const [records, setRecords] = useState<readonly Awaited<ReturnType<typeof session.client.listPublicationDistributions>>["items"]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void session.client.listPublicationDistributions(entry.publication.id, { limit: 50 })
+      .then((page) => {
+        if (active) setRecords(page.items);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("Publishing state could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [entry.publication.id, nonce, session]);
+
+  const latestByRoute = useMemo(() => {
+    const map = new Map<string, (typeof records)[number]>();
+    for (const record of records) {
+      if (!map.has(record.routeId)) map.set(record.routeId, record);
+    }
+    return [...map.values()];
+  }, [records]);
+
+  return (
+    <Panel title="Publishing" meta="Current publication state" className="publication-publishing-panel">
+      <ErrorBanner error={error} />
+      <div className="publication-publishing-summary">
+        <div>
+          <small>Status</small>
+          <StatusPill value={entry.publication.status} tone={statusTone(entry.publication.status)} />
+        </div>
+        <div>
+          <small>Current revision</small>
+          <strong>r{entry.publication.current.ordinal}</strong>
+        </div>
+        <div>
+          <small>Source</small>
+          <strong>{provenanceSource(entry)}</strong>
+        </div>
+        <div>
+          <small>Destinations</small>
+          <strong>{loading ? "…" : latestByRoute.length}</strong>
+        </div>
+      </div>
+
+      {latestByRoute.length ? (
+        <div className="publication-destination-summary">
+          {latestByRoute.slice(0, 6).map((record) => {
+            const current = record.revisionId === entry.publication.current.id;
+            return (
+              <div className="publication-destination-summary__row" key={record.routeId}>
+                <span>
+                  <strong>{destinationLabel(record.destination.extensionId)}</strong>
+                  <small>{record.destination.connectionId}</small>
+                </span>
+                <span>
+                  <StatusPill
+                    value={current ? record.receipt.status : "update available"}
+                    tone={current && record.receipt.status === "verified" ? "good" : "warn"}
+                  />
+                  {record.receipt.remote?.url ? <a href={record.receipt.remote.url} target="_blank" rel="noreferrer">Open remote</a> : null}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : !loading ? (
+        <div className="publication-publishing-empty">
+          <span>This publication has not been sent to a destination yet.</span>
+        </div>
+      ) : null}
+
+      <div className="publication-publishing-actions">
+        {entry.publication.status === "approved" ? (
+          <Link className="button button--primary" to={`/schedules?create=1&publication=${encodeURIComponent(entry.publication.id)}`}>Schedule</Link>
+        ) : (
+          <button className="button button--quiet" type="button" disabled title="Save this publication with Approved status before scheduling.">Schedule</button>
+        )}
+        <Link className="button button--quiet" to="/activity">Open Activity</Link>
+        {entry.publication.canonicalUrl ? <a className="button button--quiet" href={entry.publication.canonicalUrl} target="_blank" rel="noreferrer">Canonical URL</a> : null}
+      </div>
+
+      <details className="publication-technical-details">
+        <summary>Technical details</summary>
+        <dl>
+          <div><dt>Publication ID</dt><dd>{entry.publication.id}</dd></div>
+          <div><dt>Revision ID</dt><dd>{entry.publication.current.id}</dd></div>
+          <div><dt>Workspace version</dt><dd>v{entry.version}</dd></div>
+        </dl>
+      </details>
+    </Panel>
+  );
+}
+
+function DistributionHistoryPanel({ publicationId, currentRevisionId, nonce }: { readonly publicationId: string; readonly currentRevisionId: string; readonly nonce: number }) {
   const { session } = useConnection();
   const loader = useCallback((cursor?: string) => {
     if (!session) return Promise.resolve({ items: [] });
@@ -161,36 +280,38 @@ function DistributionHistoryPanel({ publicationId, nonce }: { readonly publicati
   const collection = usePagedCollection(`publication-distributions:${publicationId}:${nonce}`, loader);
 
   return (
-    <Panel title="Distribution history" meta="Canonical delivery evidence" className="publication-distribution-history">
+    <Panel title="Publishing history" meta="Where each revision was sent" className="publication-distribution-history">
       <ErrorBanner error={collection.error} />
       {collection.loading ? <LoadingBlock /> : (
         <div className="distribution-history-list">
           {collection.items.map((record) => (
             <article className="distribution-history-row" key={record.id}>
               <div className="distribution-history-row__identity">
-                <strong>{record.destination.extensionId}</strong>
+                <strong>{destinationLabel(record.destination.extensionId)}</strong>
                 <small>{record.destination.connectionId} · {record.destination.channel}</small>
               </div>
               <div>
-                <small>Revision</small>
-                <strong>{record.revisionId}</strong>
-              </div>
-              <div>
-                <small>Route</small>
-                <strong>{record.routeId}</strong>
+                <small>Content</small>
+                <strong>{record.revisionId === currentRevisionId ? "Current revision" : "Earlier revision"}</strong>
               </div>
               <div>
                 <small>Remote</small>
                 {record.receipt.remote?.url ? (
                   <a href={record.receipt.remote.url} target="_blank" rel="noreferrer">
-                    {record.receipt.remote.id}
+                    Open published item
                   </a>
-                ) : <strong>{record.receipt.remote?.id ?? "Not created"}</strong>}
+                ) : <strong>{record.receipt.remote?.id ? "Remote recorded" : "Not created"}</strong>}
               </div>
-              <div>
+              <div className="distribution-history-row__status">
                 <StatusPill value={record.receipt.status} tone={record.receipt.status === "verified" ? "good" : record.receipt.status === "drifted" ? "warn" : "bad"} />
                 <small>{formatInstant(record.recordedAt)}</small>
               </div>
+              <details className="distribution-history-row__technical">
+                <summary>Details</summary>
+                <small>Route {record.routeId}</small>
+                <small>Revision {record.revisionId}</small>
+                <small>Projection {record.projectionId}</small>
+              </details>
             </article>
           ))}
           {collection.items.length === 0 ? (
@@ -210,6 +331,7 @@ export function PublicationsPage() {
   const client = session!.client;
   const [statusFilter, setStatusFilter] = useState<"" | WorkspacePublicationStatus>("");
   const [editor, setEditor] = useState<PublicationEditor | null>(null);
+  const [activeEntry, setActiveEntry] = useState<PublicationWorkspaceEntry | null>(null);
   const [busy, setBusy] = useState<"save" | "publish" | null>(null);
   const [pendingPublish, setPendingPublish] = useState(false);
   const [actionError, setActionError] = useState<Error | null>(null);
@@ -232,6 +354,7 @@ export function PublicationsPage() {
     if (!publicationId || selectedEntry) return;
     void client.getPublication(publicationId)
       .then((entry) => {
+        setActiveEntry(entry);
         setEditor(editorForEntry(entry));
         setPendingPublish(false);
         setDispatchResult(null);
@@ -243,6 +366,7 @@ export function PublicationsPage() {
 
   useEffect(() => {
     if (selectedEntry && (!editor || editor.publicationId !== selectedEntry.publication.id)) {
+      setActiveEntry(selectedEntry);
       setEditor(editorForEntry(selectedEntry));
       setPendingPublish(false);
     }
@@ -252,6 +376,7 @@ export function PublicationsPage() {
     setActionError(null);
     setDispatchResult(null);
     setPendingPublish(false);
+    setActiveEntry(null);
     setEditor(editorForCreate());
     navigate("/publications");
   }, [navigate]);
@@ -260,6 +385,7 @@ export function PublicationsPage() {
     setActionError(null);
     setDispatchResult(null);
     setPendingPublish(false);
+    setActiveEntry(entry);
     setEditor(editorForEntry(entry));
     navigate(`/publications/${encodeURIComponent(entry.publication.id)}`);
   }, [navigate]);
@@ -295,6 +421,7 @@ export function PublicationsPage() {
         const update: PublicationWorkspaceUpdateBody = { expectedVersion: editor.expectedVersion, ...common };
         saved = await client.updatePublication(editor.publicationId, update);
       }
+      setActiveEntry(saved);
       setEditor(editorForEntry(saved));
       setChangeNonce((value) => value + 1);
       navigate(`/publications/${encodeURIComponent(saved.publication.id)}`, { replace: true });
@@ -318,6 +445,7 @@ export function PublicationsPage() {
     setDispatchResult(null);
     try {
       const result = await client.publishPublication(editor.publicationId, { expectedVersion: editor.expectedVersion });
+      setActiveEntry(result.publication);
       setEditor(editorForEntry(result.publication));
       setDispatchResult(result);
       setChangeNonce((value) => value + 1);
@@ -384,7 +512,7 @@ export function PublicationsPage() {
         </Panel>
 
         {editor ? (
-          <Panel title={editor.mode === "create" ? "New Publication" : editor.title || "Publication"} meta={editor.mode === "edit" ? `workspace v${editor.expectedVersion}` : "Draft"} className="publication-editor">
+          <Panel title={editor.mode === "create" ? "New Publication" : editor.title || "Publication"} meta={editor.mode === "edit" ? "Publication Studio" : "Draft"} className="publication-editor">
             <form className="publication-editor__form" onSubmit={save}>
               {editor.hasUnsupportedBlocks ? (
                 <div className="warning-banner" role="alert">
@@ -413,7 +541,7 @@ export function PublicationsPage() {
                 <label className="field"><span>Status</span><select value={editor.status} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, status: event.target.value as WorkspacePublicationStatus } : current); }}>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               </div>
               <div className="publication-editor__actions">
-                <button className="button button--quiet" type="button" onClick={() => { setEditor(null); setPendingPublish(false); setDispatchResult(null); navigate("/publications"); }} disabled={busy !== null}>Close</button>
+                <button className="button button--quiet" type="button" onClick={() => { setActiveEntry(null); setEditor(null); setPendingPublish(false); setDispatchResult(null); navigate("/publications"); }} disabled={busy !== null}>Close</button>
                 <button className="button button--primary" type="submit" disabled={busy !== null || !editor.title.trim() || editor.hasUnsupportedBlocks}>{busy === "save" ? "Saving…" : editor.mode === "create" ? "Create Draft" : "Save New Version"}</button>
                 {canPublish && !pendingPublish ? <button className="button publication-publish-button" type="button" onClick={() => setPendingPublish(true)} disabled={busy !== null}>{busy === "publish" ? "Publishing…" : "Approve & Publish"}</button> : null}
               </div>
@@ -433,11 +561,12 @@ export function PublicationsPage() {
         ) : null}
       </div>
 
-      {editor?.mode === "edit" && editor.publicationId ? (
-        <>
+      {editor?.mode === "edit" && editor.publicationId && activeEntry ? (
+        <div className="publication-studio-support">
+          <PublishingSummaryPanel entry={activeEntry} nonce={changeNonce} />
           <VersionsPanel publicationId={editor.publicationId} nonce={changeNonce} />
-          <DistributionHistoryPanel publicationId={editor.publicationId} nonce={changeNonce} />
-        </>
+          <DistributionHistoryPanel publicationId={editor.publicationId} currentRevisionId={activeEntry.publication.current.id} nonce={changeNonce} />
+        </div>
       ) : null}
     </>
   );
