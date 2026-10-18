@@ -290,6 +290,20 @@ export interface PublicationWorkspaceDispatchResult {
   readonly runs: readonly ControlPlaneRunRecord[];
 }
 
+export interface ProjectionPreviewMediaSummary {
+  readonly assetId?: string;
+  readonly sourceWidth?: number;
+  readonly sourceHeight?: number;
+  readonly sourceMediaType?: string;
+  readonly outputWidth?: number;
+  readonly outputHeight?: number;
+  readonly outputMediaType?: string;
+  readonly fit?: string;
+  readonly renderRequired?: boolean;
+  readonly transformationFingerprint?: string;
+  readonly derivedAssetId?: string;
+}
+
 export interface ProjectionPreviewSummary {
   readonly title?: string;
   readonly text?: string;
@@ -299,6 +313,7 @@ export interface ProjectionPreviewSummary {
   readonly publicUrl?: string;
   readonly scheduledAt?: string;
   readonly mediaCount?: number;
+  readonly media?: readonly ProjectionPreviewMediaSummary[];
   readonly fidelity?: {
     readonly score: number;
     readonly exact?: boolean;
