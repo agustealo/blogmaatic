@@ -90,6 +90,7 @@ function mediaView(media: WordPressMediaRecord): WordPressMediaView {
     sourceUrl: media.source_url,
     slug: media.slug,
     ...(media.mime_type ? { mediaType: media.mime_type } : {}),
+    ...(media.media_type ? { mediaKind: media.media_type } : {}),
     alt: media.alt_text ?? "",
     title: rawValue(media.title),
     ...(typeof media.media_details?.width === "number" ? { width: media.media_details.width } : {}),
@@ -225,7 +226,14 @@ export class WordPressContentService {
   async getMedia(connectionId: string, remoteId: string): Promise<WordPressMediaView> {
     const { client } = this.#client(connectionId);
     const id = requireRemoteId(remoteId);
-    return mediaView(await client.requestJson<WordPressMediaRecord>(`/media/${id}?context=edit`));
+    const record = await client.requestJson<WordPressMediaRecord>(`/media/${id}?context=edit`);
+    if (
+      (record.media_type && record.media_type !== "image") ||
+      (record.mime_type && !record.mime_type.toLowerCase().startsWith("image/"))
+    ) {
+      throw new Error(`WordPress media ${id} is not an image`);
+    }
+    return mediaView(record);
   }
 
   async revisions(connectionId: string, remoteId: string): Promise<readonly WordPressRevisionView[]> {
