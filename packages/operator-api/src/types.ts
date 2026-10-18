@@ -236,6 +236,19 @@ export interface SourceAuthorAssignResult {
   readonly author: SourceAuthorRecord;
 }
 
+export interface SourcePublishingStateBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly status: string;
+  readonly scheduledAt?: string;
+}
+
+export interface SourcePublishingStateResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly status: string;
+  readonly scheduledAt?: string;
+}
+
 export interface SourceAssetQuery {
   readonly search?: string;
   readonly page?: number;
@@ -320,6 +333,7 @@ export interface OperatorSourceContentManager {
   revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
   listAuthors(connectionId: string, query?: SourceAuthorQuery): Promise<SourceAuthorPage>;
   assignAuthor(connectionId: string, remoteId: string, body: SourceAuthorAssignBody): Promise<SourceAuthorAssignResult>;
+  setPublishingState(connectionId: string, body: SourcePublishingStateBody): Promise<SourcePublishingStateResult>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;
