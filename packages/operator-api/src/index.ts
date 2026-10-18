@@ -4,6 +4,7 @@ export * from "./operations.js";
 export * from "./publication-group-validation.js";
 export * from "./publication-groups.js";
 export * from "./runs.js";
+export * from "./source-content.js";
 export * from "./server.js";
 export * from "./types.js";
 export * from "./validation.js";

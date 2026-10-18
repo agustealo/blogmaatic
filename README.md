@@ -76,7 +76,7 @@ Publisher extensions
 Current real publisher classes prove materially different delivery models:
 
 - **Jekyll/Git** — files, assets, Git commits/push, build verification, drift repair.
-- **WordPress REST** — authenticated CMS API, media, taxonomy, scheduling, remote IDs and update-in-place reconciliation.
+- **WordPress REST** — authenticated CMS API, media, taxonomy, scheduling, source browse/search/read, explicit import/adoption, native revision evidence, guarded trash/restore/permanent delete, remote IDs and update-in-place reconciliation.
 - **LinkedIn** — constrained social projection, fidelity reporting, opaque post identity and safe partial updates.
 - **Facebook Pages** — Graph API text/link/image/multi-image/scheduled posts with immutable-drift protection.
 

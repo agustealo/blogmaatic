@@ -2,11 +2,13 @@ import type {
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
   PublicationWorkspaceUpdateBody,
+  PublicationBodyFormat,
   WorkspacePublicationStatus,
 } from "./types.js";
 import { OperatorRequestError } from "./validation.js";
 
 const statuses = new Set<WorkspacePublicationStatus>(["idea", "draft", "ready", "approved", "archived"]);
+const bodyFormats = new Set<PublicationBodyFormat>(["plain", "html"]);
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -60,6 +62,15 @@ function status(input: Record<string, unknown>): WorkspacePublicationStatus | un
   return value as WorkspacePublicationStatus;
 }
 
+function bodyFormat(input: Record<string, unknown>): PublicationBodyFormat | undefined {
+  const value = input.bodyFormat;
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !bodyFormats.has(value as PublicationBodyFormat)) {
+    throw new OperatorRequestError("bodyFormat must be plain or html");
+  }
+  return value as PublicationBodyFormat;
+}
+
 function optionalQueryLimit(input: Record<string, unknown>): number | undefined {
   const value = input.limit;
   if (value === undefined) return undefined;
@@ -82,10 +93,14 @@ function optionalQueryString(input: Record<string, unknown>, key: string): strin
 
 export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationWorkspaceCreateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["title", "body", "summary", "language", "tags", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "slug", "canonicalUrl", "status"], "request body");
   const parsedTags = tags(input);
   const parsedStatus = status(input);
   const bodyValue = optionalString(input, "body");
+  const parsedBodyFormat = bodyFormat(input);
+  if (parsedBodyFormat !== undefined && bodyValue === undefined) {
+    throw new OperatorRequestError("bodyFormat requires body");
+  }
   const summary = optionalString(input, "summary");
   const language = optionalString(input, "language");
   const slug = optionalString(input, "slug");
@@ -93,6 +108,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
   return {
     title: requiredString(input, "title"),
     ...(bodyValue === undefined ? {} : { body: bodyValue }),
+    ...(parsedBodyFormat === undefined ? {} : { bodyFormat: parsedBodyFormat }),
     ...(summary === undefined ? {} : { summary }),
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
@@ -104,9 +120,13 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
 
 export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationWorkspaceUpdateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["expectedVersion", "title", "body", "summary", "language", "tags", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "slug", "canonicalUrl", "status"], "request body");
   const title = optionalString(input, "title");
   const bodyValue = optionalString(input, "body");
+  const parsedBodyFormat = bodyFormat(input);
+  if (parsedBodyFormat !== undefined && bodyValue === undefined) {
+    throw new OperatorRequestError("bodyFormat requires body");
+  }
   const summary = optionalString(input, "summary");
   const language = optionalString(input, "language");
   const parsedTags = tags(input);
@@ -117,6 +137,7 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
     expectedVersion: expectedVersion(input),
     ...(title === undefined ? {} : { title }),
     ...(bodyValue === undefined ? {} : { body: bodyValue }),
+    ...(parsedBodyFormat === undefined ? {} : { bodyFormat: parsedBodyFormat }),
     ...(summary === undefined ? {} : { summary }),
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),

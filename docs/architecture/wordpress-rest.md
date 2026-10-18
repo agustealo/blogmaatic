@@ -29,6 +29,7 @@ The extension currently declares:
 
 - `article.create`
 - `article.update`
+- `article.delete`
 - `article.inspect`
 - `article.draft`
 - `article.schedule`
@@ -75,6 +76,29 @@ Managed posts therefore contain an HTML comment marker encoding:
 
 If a slug is occupied by a post without the expected marker, inspection returns `unreachable`. The control plane will not overwrite it.
 
+## Source content ownership
+
+The same WordPress extension also exposes authenticated source-content operations through Blogmaatic's Operator API and Control Room. The browser never talks to WordPress directly.
+
+Supported source operations are:
+
+- browse/list editable posts with pagination
+- search existing posts
+- read an existing post in `context=edit`
+- inspect WordPress-native revisions
+- explicitly import/adopt an existing post into Blogmaatic
+- move a Blogmaatic-managed post to Trash
+- restore a managed trashed post as a draft
+- permanently delete only a managed post that is already in Trash
+
+Import is route-bound. The operator selects the Publication Group route that will own the imported WordPress object. Blogmaatic creates a canonical draft Publication, preserves the imported raw WordPress HTML as an explicit `embed.html` block, resolves category/tag names, preserves featured-media identity, installs the Blogmaatic ownership marker on the existing WordPress post, seeds projection state, and appends import evidence to publication distribution history.
+
+The source identity `extensionId + connectionId + remoteId` is stored in publication provenance. Retrying an interrupted import recovers the same canonical publication rather than creating a second one.
+
+Unmanaged WordPress content remains read-only until explicit import. Destructive source operations fail closed when the ownership marker is absent or belongs to another publication/route.
+
+WordPress-native revisions are exposed as remote evidence only. They do not replace Blogmaatic's canonical immutable Publication revisions.
+
 ## Drift verification
 
 Authenticated inspection uses `context=edit` so raw editable content can be observed.
@@ -108,4 +132,4 @@ Credentials never appear in health evidence.
 
 ## Deferred WordPress-specific work
 
-A future WordPress slice may add explicit support for plugin-specific SEO metadata, custom taxonomies, custom post-type schemas, comment/engagement retrieval, deletion/trash policies, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.
+Future WordPress slices may add explicit support for plugin-specific SEO metadata, custom taxonomies, richer custom post-type schemas, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.

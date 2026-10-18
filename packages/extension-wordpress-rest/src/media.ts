@@ -32,7 +32,11 @@ export async function publishMedia(
   asset: CompiledWordPressAsset,
 ): Promise<PublishedMedia> {
   if (!asset.localPath) {
-    return { assetId: asset.assetId, sourceUrl: asset.source };
+    return {
+      assetId: asset.assetId,
+      ...(asset.wordpressMediaId === undefined ? {} : { mediaId: asset.wordpressMediaId }),
+      sourceUrl: asset.source,
+    };
   }
   const slug = mediaSlug(publicationId, asset);
   const existing = await findMedia(client, slug);

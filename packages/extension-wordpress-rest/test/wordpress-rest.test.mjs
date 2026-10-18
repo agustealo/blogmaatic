@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
-import { WordPressRestPublisher } from "../dist/index.js";
+import { WordPressContentService, WordPressRestPublisher } from "../dist/index.js";
 
 function makeServer() {
   const posts = new Map();
@@ -40,6 +40,7 @@ function makeServer() {
     modification += 1;
     return {
       id,
+      author: 1,
       link: `http://example.test/?p=${id}`,
       slug: body.slug ?? "",
       status: body.status ?? "draft",
@@ -82,6 +83,22 @@ function makeServer() {
       posts.set(id, post);
       return json(response, 201, post);
     }
+    const revisionMatch = path.match(/^\/posts\/(\d+)\/revisions$/);
+    if (revisionMatch && request.method === "GET") {
+      const id = Number(revisionMatch[1]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, [{
+        id: 9000 + id,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: current.title,
+        excerpt: current.excerpt,
+        content: current.content,
+      }]);
+    }
     const postMatch = path.match(/^\/posts\/(\d+)$/);
     if (postMatch) {
       const id = Number(postMatch[1]);
@@ -93,6 +110,10 @@ function makeServer() {
         const post = toPost(id, { ...flatten(current), ...body });
         posts.set(id, post);
         return json(response, 200, post);
+      }
+      if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
+        posts.delete(id);
+        return json(response, 200, { deleted: true, previous: current });
       }
     }
 
@@ -130,6 +151,10 @@ function makeServer() {
       return json(response, 201, item);
     }
     const mediaMatch = path.match(/^\/media\/(\d+)$/);
+    if (mediaMatch && request.method === "GET") {
+      const item = media.get(Number(mediaMatch[1]));
+      return item ? json(response, 200, item) : json(response, 404, { code: "not_found", message: "Not found", data: { status: 404 } });
+    }
     if (mediaMatch && request.method === "POST") {
       const id = Number(mediaMatch[1]);
       const item = { ...media.get(id), ...body };
@@ -238,6 +263,8 @@ test("real HTTP WordPress contract: auth, media, taxonomy, create, drift repair,
     assert.equal((await publisher.inspect({ projection })).state, "missing");
     const delivered = await publisher.deliver({ idempotencyKey: "key-1", projection });
     assert.equal(api.counts.postCreates, 1);
+    assert.equal(delivered.evidence.wordpressRevisionId, 9010);
+    assert.match(delivered.evidence.wordpressRevisionModifiedGmt, /^2026-09-22T18:00:/);
     assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
     const post = api.posts.get(Number(delivered.remote.id));
     assert.match(post.content.raw, /blogmaatic:/);
@@ -312,5 +339,118 @@ test("compile rejects local assets outside configured source roots", async () =>
   } finally {
     await rm(allowed, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+
+test("source content service browses, adopts, reads revisions, trashes, restores, and permanently deletes managed posts", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-05T01:00:00.000Z",
+      updatedAt: "2026-10-05T01:00:00.000Z",
+    };
+    const connections = new ConnectionAuthority([connection]);
+    const secrets = new SecretAuthority([
+      new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" }),
+    ]);
+    const publisher = new WordPressRestPublisher(connections, secrets);
+    const content = new WordPressContentService(connections, secrets);
+
+    api.posts.set(55, {
+      id: 55,
+      author: 1,
+      link: "http://example.test/?p=55",
+      slug: "existing-post",
+      status: "publish",
+      title: { raw: "Existing Post" },
+      excerpt: { raw: "Existing summary" },
+      content: { raw: "<p>Existing body</p>" },
+      categories: [],
+      tags: [],
+      featured_media: 0,
+      date_gmt: "2026-10-04T12:00:00",
+      modified_gmt: "2026-10-04T12:30:00",
+    });
+
+    const page = await content.list("wp-1", { perPage: 30 });
+    assert.equal(page.items.some((item) => item.id === 55), true);
+    assert.equal((await content.get("wp-1", "55")).ownership.managed, false);
+    assert.equal((await content.revisions("wp-1", "55"))[0].parent, 55);
+
+    const importedPublication = {
+      id: "publication-imported",
+      createdAt: "2026-10-05T01:00:00.000Z",
+      slug: "existing-post",
+      status: "draft",
+      current: {
+        id: "revision-imported",
+        ordinal: 1,
+        createdAt: "2026-10-05T01:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Existing Post",
+          summary: "Existing summary",
+          language: "en",
+          blocks: [{ id: "source", kind: "embed", data: { html: "<p>Existing body</p>" } }],
+          assets: [],
+          tags: [],
+          attributes: {},
+        },
+      },
+      canonicalUrl: "http://example.test/?p=55",
+      provenance: { source: "wordpress" },
+    };
+    const projection = await publisher.compile({ publication: importedPublication, route: route() });
+    const adopted = await content.adopt("wp-1", "55", projection);
+    assert.equal(adopted.ownership.managed, true);
+    assert.equal(adopted.ownership.publicationId, "publication-imported");
+
+    const trashed = await content.trash("wp-1", "55");
+    assert.equal(trashed.status, "trash");
+    const restored = await content.restore("wp-1", "55");
+    assert.equal(restored.status, "draft");
+    await assert.rejects(
+      content.deletePermanent("wp-1", "55"),
+      /must be moved to trash/,
+    );
+    await content.trash("wp-1", "55");
+    const deleted = await content.deletePermanent("wp-1", "55");
+    assert.equal(deleted.id, 55);
+    assert.equal(api.posts.has(55), false);
+
+    api.posts.set(56, {
+      id: 56,
+      author: 1,
+      link: "http://example.test/?p=56",
+      slug: "unmanaged",
+      status: "trash",
+      title: { raw: "Unmanaged" },
+      excerpt: { raw: "" },
+      content: { raw: "<p>Do not delete me</p>" },
+      categories: [],
+      tags: [],
+      featured_media: 0,
+      date_gmt: null,
+      modified_gmt: "2026-10-04T12:31:00",
+    });
+    await assert.rejects(
+      content.deletePermanent("wp-1", "56"),
+      /not owned by Blogmaatic/,
+    );
+    assert.equal(api.posts.has(56), true);
+  } finally {
+    api.server.close();
   }
 });

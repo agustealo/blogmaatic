@@ -51,6 +51,12 @@ import type {
   SchedulePage,
   ScheduleRegistrationBody,
   SchedulerDispatchInput,
+  SourceContentImportBody,
+  SourceContentImportResult,
+  SourceContentPage,
+  SourceContentQuery,
+  SourceContentRecord,
+  SourceContentRevision,
   SchedulerDispatchResponse,
 } from "./types.js";
 
@@ -216,6 +222,64 @@ export class OperatorClient {
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
+  }
+
+  listSourceContent(
+    connectionId: string,
+    query: SourceContentQuery = {},
+  ): Promise<SourceContentPage> {
+    return this.#request<SourceContentPage>(pathWithQuery(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content`,
+      query,
+    ));
+  }
+
+  getSourceContent(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
+    return this.#request<SourceContentRecord>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}`,
+    );
+  }
+
+  async listSourceContentRevisions(
+    connectionId: string,
+    remoteId: string,
+  ): Promise<readonly SourceContentRevision[]> {
+    const response = await this.#request<{ readonly items: readonly SourceContentRevision[] }>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}/revisions`,
+    );
+    return response.items;
+  }
+
+  importSourceContent(
+    connectionId: string,
+    remoteId: string,
+    input: SourceContentImportBody,
+  ): Promise<SourceContentImportResult> {
+    return this.#request<SourceContentImportResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}/import`,
+      { method: "POST", body: input },
+    );
+  }
+
+  trashSourceContent(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
+    return this.#request<SourceContentRecord>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}/trash`,
+      { method: "POST" },
+    );
+  }
+
+  restoreSourceContent(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
+    return this.#request<SourceContentRecord>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}/restore`,
+      { method: "POST" },
+    );
+  }
+
+  deleteSourceContentPermanently(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
+    return this.#request<SourceContentRecord>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}/delete-permanently`,
+      { method: "POST" },
+    );
   }
 
   getPublicationGroupOptions(): Promise<PublicationGroupOptionsResponse> {
