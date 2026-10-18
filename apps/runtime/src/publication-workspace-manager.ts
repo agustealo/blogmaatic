@@ -29,6 +29,13 @@ export interface PublicationWorkspaceCreateInput {
   readonly status?: WorkspacePublicationStatus;
 }
 
+export interface PublicationSourceAuthorRef {
+  readonly extensionId: string;
+  readonly connectionId: string;
+  readonly remoteId: string;
+  readonly name: string;
+}
+
 export interface PublicationWorkspaceUpdateInput {
   readonly expectedVersion: number;
   readonly title?: string;
@@ -39,6 +46,7 @@ export interface PublicationWorkspaceUpdateInput {
   readonly tags?: readonly string[];
   readonly categories?: readonly string[];
   readonly featuredAssetId?: string | null;
+  readonly sourceAuthor?: PublicationSourceAuthorRef | null;
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
@@ -125,6 +133,24 @@ function withCategories(
   return next;
 }
 
+function withSourceAuthor(
+  attributes: Readonly<Record<string, JsonValue>>,
+  sourceAuthor: PublicationSourceAuthorRef | null,
+): Readonly<Record<string, JsonValue>> {
+  const next: Record<string, JsonValue> = { ...attributes };
+  if (sourceAuthor) {
+    next.sourceAuthor = {
+      extensionId: requireText(sourceAuthor.extensionId, "Source author extensionId"),
+      connectionId: requireText(sourceAuthor.connectionId, "Source author connectionId"),
+      remoteId: requireText(sourceAuthor.remoteId, "Source author remoteId"),
+      name: requireText(sourceAuthor.name, "Source author name"),
+    };
+  } else {
+    delete next.sourceAuthor;
+  }
+  return next;
+}
+
 function blocksFromBody(
   body: string | undefined,
   format: PublicationBodyFormat = "plain",
@@ -156,7 +182,8 @@ function contentChanged(input: PublicationWorkspaceUpdateInput): boolean {
     input.language !== undefined ||
     input.tags !== undefined ||
     input.categories !== undefined ||
-    input.featuredAssetId !== undefined;
+    input.featuredAssetId !== undefined ||
+    input.sourceAuthor !== undefined;
 }
 
 export class PublicationWorkspaceManager {
@@ -286,9 +313,16 @@ export class PublicationWorkspaceManager {
           ? oldContent.assets
           : withFeaturedAsset(oldContent.assets, input.featuredAssetId),
         tags: input.tags === undefined ? oldContent.tags : normalizeTags(input.tags),
-        attributes: input.categories === undefined
-          ? oldContent.attributes
-          : withCategories(oldContent.attributes, normalizeCategories(input.categories)),
+        attributes: input.sourceAuthor === undefined
+          ? (input.categories === undefined
+              ? oldContent.attributes
+              : withCategories(oldContent.attributes, normalizeCategories(input.categories)))
+          : withSourceAuthor(
+              input.categories === undefined
+                ? oldContent.attributes
+                : withCategories(oldContent.attributes, normalizeCategories(input.categories)),
+              input.sourceAuthor,
+            ),
       },
     } : current.publication.current;
 
