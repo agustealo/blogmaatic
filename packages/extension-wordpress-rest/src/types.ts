@@ -56,6 +56,7 @@ export interface WordPressMediaRecord {
   readonly id: number;
   readonly source_url: string;
   readonly slug: string;
+  readonly media_type?: string;
   readonly mime_type?: string;
   readonly alt_text?: string;
   readonly modified_gmt?: string;
@@ -77,6 +78,7 @@ export interface WordPressMediaView {
   readonly sourceUrl: string;
   readonly slug: string;
   readonly mediaType?: string;
+  readonly mediaKind?: string;
   readonly alt: string;
   readonly title: string;
   readonly width?: number;
