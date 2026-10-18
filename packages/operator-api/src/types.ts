@@ -269,6 +269,36 @@ export interface SourceTaxonomyPage {
   readonly hasMore: boolean;
 }
 
+export interface SourceAuthorQuery {
+  readonly search?: string;
+  readonly page?: number;
+  readonly limit?: number;
+}
+
+export interface SourceAuthorRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly remoteId: string;
+  readonly name: string;
+  readonly slug?: string;
+  readonly avatarUrl?: string;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceAuthorPage {
+  readonly items: readonly SourceAuthorRecord[];
+  readonly page: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
+export interface PublicationSourceAuthorRef {
+  readonly extensionId: string;
+  readonly connectionId: string;
+  readonly remoteId: string;
+  readonly name: string;
+}
+
 export interface OperatorSourceContentManager {
   list(connectionId: string, query?: SourceContentQuery): Promise<SourceContentPage>;
   get(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
@@ -276,6 +306,7 @@ export interface OperatorSourceContentManager {
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
+  listAuthors(connectionId: string, query?: SourceAuthorQuery): Promise<SourceAuthorPage>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   restore(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
@@ -349,6 +380,7 @@ export interface PublicationWorkspaceUpdateBody {
   readonly tags?: readonly string[];
   readonly categories?: readonly string[];
   readonly featuredAssetId?: string | null;
+  readonly sourceAuthor?: PublicationSourceAuthorRef | null;
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
