@@ -216,7 +216,7 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
           <strong>{provenanceSource(entry)}</strong>
         </div>
         <div>
-          <small>Destinations</small>
+          <small>Published routes</small>
           <strong>{loading ? "…" : latestByRoute.length}</strong>
         </div>
       </div>
@@ -252,7 +252,10 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
         {entry.publication.status === "approved" ? (
           <Link className="button button--primary" to={`/schedules?create=1&publication=${encodeURIComponent(entry.publication.id)}`}>Schedule</Link>
         ) : (
-          <button className="button button--quiet" type="button" disabled title="Save this publication with Approved status before scheduling.">Schedule</button>
+          <span className="publication-schedule-lock">
+            <button className="button button--quiet" type="button" disabled>Schedule</button>
+            <small>Save with Approved status to schedule.</small>
+          </span>
         )}
         <Link className="button button--quiet" to="/activity">Open Activity</Link>
         {entry.publication.canonicalUrl ? <a className="button button--quiet" href={entry.publication.canonicalUrl} target="_blank" rel="noreferrer">Canonical URL</a> : null}
