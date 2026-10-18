@@ -76,7 +76,13 @@ Planning and rendering are deliberately separate authorities. Projection compila
 
 Rendered outputs are cached by the deterministic derived asset identity in a local media cache. Each cache record binds transformation fingerprint, source fingerprint, output fingerprint, final media type, dimensions, byte length and effective quality. Cache entries are verified before reuse, so retries can reuse identical derived bytes without trusting stale or corrupted artifacts.
 
-The first consumer is Facebook Pages. Its route variant may include `imageTransform`, and the resulting media plan participates in the projection fingerprint and Destination Preview. Facebook delivery materializes the derived bytes before upload and records the transformation fingerprint, derived asset id, output fingerprint, final dimensions/media type and cache-reuse state in delivery evidence.
+The shared route variant key is `imageTransform`. Facebook Pages, WordPress REST, and Jekyll/Git consume the same normalized media plan rather than defining independent resize/crop semantics.
+
+- Facebook materializes the derived bytes before Graph upload and records transform/output evidence in the delivery receipt.
+- WordPress materializes the derivative before Media Library upload. The transform fingerprint participates in the media slug, so distinct destination variants cannot collide with the canonical upload.
+- Jekyll computes the expected rendered byte fingerprint during compile without writing cache state, uses the derived output extension in the published asset path, then materializes/reuses the cached bytes during Git delivery. Remote drift therefore continues to compare exact published bytes against the desired projection.
+
+Destination Preview surfaces the same source/output dimensions, media type, fit, render requirement and transformation identity from any provider payload that carries this shared plan.
 
 ## Social projection proof
 
