@@ -241,12 +241,41 @@ export interface SourceAssetAttachResult {
   readonly asset: SourceAssetRecord;
 }
 
+export type SourceTaxonomyKind = "category" | "tag";
+
+export interface SourceTaxonomyQuery {
+  readonly kind: SourceTaxonomyKind;
+  readonly search?: string;
+  readonly page?: number;
+  readonly limit?: number;
+}
+
+export interface SourceTaxonomyRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly kind: SourceTaxonomyKind;
+  readonly remoteId: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly description?: string;
+  readonly count?: number;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceTaxonomyPage {
+  readonly items: readonly SourceTaxonomyRecord[];
+  readonly page: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
 export interface OperatorSourceContentManager {
   list(connectionId: string, query?: SourceContentQuery): Promise<SourceContentPage>;
   get(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
+  listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   restore(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
