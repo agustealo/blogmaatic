@@ -17,10 +17,7 @@ import {
   type ExtensionHealth,
   type ManagedPublisherExtension,
 } from "@blogmaatic/extension-sdk";
-import {
-  assertImagePlanRenderableWithoutTransformer,
-  type ImageTransformSpec,
-} from "@blogmaatic/media";
+import type { ImageTransformSpec } from "@blogmaatic/media";
 import { SecretAuthority } from "@blogmaatic/secrets";
 import { adaptPublicationForSocial } from "@blogmaatic/variants";
 
@@ -187,10 +184,10 @@ async function uploadImage(
   const common: Record<string, string> = { published: "false" };
   if (scheduled) common.temporary = "true";
   if (asset.localPath) {
-    if (asset.transform) assertImagePlanRenderableWithoutTransformer(asset.transform);
+    const local = await localAssetBlob(asset);
     const form = new FormData();
     for (const [key, value] of Object.entries(common)) form.set(key, value);
-    form.set("source", await localAssetBlob(asset), `${asset.assetId}.${asset.mediaType === "image/png" ? "png" : "jpg"}`);
+    form.set("source", local.blob, local.fileName);
     const uploaded = await client.postMultipart<{ readonly id: string }>(`${settings.pageId}/photos`, form);
     return uploaded.id;
   }
