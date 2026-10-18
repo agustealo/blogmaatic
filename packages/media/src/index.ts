@@ -69,10 +69,18 @@ function stable(value: JsonValue): string {
     .join(",")}}`;
 }
 
-function positiveInteger(value: number | undefined, label: string): number | undefined {
+function positiveDimension(value: number | undefined, label: string): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isSafeInteger(value) || value <= 0 || value > 32768) {
     throw new Error(`${label} must be an integer from 1 through 32768`);
+  }
+  return value;
+}
+
+function positiveByteLimit(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 1024 * 1024 * 1024) {
+    throw new Error("Image maxBytes must be an integer from 1 through 1073741824");
   }
   return value;
 }
@@ -85,13 +93,13 @@ function bounded(value: number, label: string): number {
 }
 
 export function normalizeImageTransformSpec(spec: ImageTransformSpec = {}): NormalizedImageTransformSpec {
-  const width = positiveInteger(spec.width, "Image width");
-  const height = positiveInteger(spec.height, "Image height");
+  const width = positiveDimension(spec.width, "Image width");
+  const height = positiveDimension(spec.height, "Image height");
   const quality = spec.quality ?? 85;
   if (!Number.isSafeInteger(quality) || quality < 1 || quality > 100) {
     throw new Error("Image quality must be an integer from 1 through 100");
   }
-  const maxBytes = positiveInteger(spec.maxBytes, "Image maxBytes");
+  const maxBytes = positiveByteLimit(spec.maxBytes);
   return {
     ...(width === undefined ? {} : { width }),
     ...(height === undefined ? {} : { height }),
