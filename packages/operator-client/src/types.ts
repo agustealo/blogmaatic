@@ -64,6 +64,8 @@ import type {
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceTaxonomyCreateBody,
+  SourceTaxonomyCreateBody,
   SourceTaxonomyKind,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
