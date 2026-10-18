@@ -834,3 +834,136 @@ test("WordPress publishing state validates native status and schedule before can
   });
   assert.equal(mutations, 1);
 });
+
+
+test("WordPress revision recovery is source-bound before remote fetch and maps selected revision canonically", async () => {
+  let revisionReads = 0;
+  let restoreInput;
+  const current = {
+    publication: {
+      id: "publication-wp",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Current",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {},
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-18T10:00:00.000Z",
+    updatedAt: "2026-10-18T10:00:00.000Z",
+  };
+  const revision = {
+    id: 9055,
+    parent: 55,
+    author: 9,
+    dateGmt: "2026-10-17T19:00:00",
+    modifiedGmt: "2026-10-17T20:00:00",
+    title: "Recovered title",
+    excerpt: "<p>Recovered <strong>summary</strong></p>",
+    contentHtml: "<h2>Recovered</h2><p>Body</p>",
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async getRevision(connectionId, remoteId, remoteRevisionId) {
+        revisionReads += 1;
+        assert.equal(connectionId, "wp-main");
+        assert.equal(remoteId, "55");
+        assert.equal(remoteRevisionId, "9055");
+        return revision;
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get(id) {
+        return id === "publication-wp" ? current : undefined;
+      },
+      async restoreSourceRevision(publicationId, expectedVersion, source) {
+        assert.equal(publicationId, "publication-wp");
+        assert.equal(expectedVersion, 4);
+        restoreInput = source;
+        return {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                title: source.title,
+                summary: source.summary,
+                blocks: [{ id: "restored", kind: "embed", data: { html: source.contentHtml } }],
+              },
+            },
+          },
+        };
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.restoreRevision("wp-other", "55", "9055", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+    }),
+    /does not match the publication source identity/,
+  );
+  await assert.rejects(
+    () => manager.restoreRevision("wp-main", "99", "9055", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+    }),
+    /does not match the publication source identity/,
+  );
+  await assert.rejects(
+    () => manager.restoreRevision("wp-main", "55", "9055", {
+      publicationId: "publication-wp",
+      expectedVersion: 3,
+    }),
+    /changed from version 3 to 4/,
+  );
+  assert.equal(revisionReads, 0);
+
+  const result = await manager.restoreRevision("wp-main", "55", "9055", {
+    publicationId: "publication-wp",
+    expectedVersion: 4,
+  });
+  assert.equal(revisionReads, 1);
+  assert.equal(result.publication.version, 5);
+  assert.equal(result.revision.remoteRevisionId, "9055");
+  assert.equal(result.revision.metadata.parentId, 55);
+  assert.equal(result.revision.metadata.authorId, 9);
+  assert.deepEqual(restoreInput, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "55",
+    remoteRevisionId: "9055",
+    title: "Recovered title",
+    summary: "Recovered summary",
+    contentHtml: "<h2>Recovered</h2><p>Body</p>",
+    sourceModifiedAt: "2026-10-17T20:00:00",
+    sourceAuthorId: 9,
+  });
+});
