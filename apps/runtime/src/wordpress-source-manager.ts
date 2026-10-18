@@ -22,6 +22,9 @@ import type {
   OperatorSourceContentManager,
   SourceAssetAttachBody,
   SourceAssetAttachResult,
+  SourceAuthorPage,
+  SourceAuthorQuery,
+  SourceAuthorRecord,
   SourceAssetPage,
   SourceAssetQuery,
   SourceAssetRecord,
@@ -73,6 +76,18 @@ function sourceRecord(connectionId: string, post: WordPressPostView): SourceCont
     ...(post.ownership.publicationId ? { publicationId: post.ownership.publicationId } : {}),
     ...(post.ownership.routeId ? { routeId: post.ownership.routeId } : {}),
     metadata,
+  };
+}
+
+function sourceAuthorRecord(connectionId: string, author: { readonly id: number; readonly name: string; readonly slug?: string; readonly avatarUrl?: string }): SourceAuthorRecord {
+  return {
+    connectionId,
+    extensionId: WORDPRESS_REST_EXTENSION_ID,
+    remoteId: String(author.id),
+    name: author.name,
+    ...(author.slug ? { slug: author.slug } : {}),
+    ...(author.avatarUrl ? { avatarUrl: author.avatarUrl } : {}),
+    metadata: { wordpressUserId: author.id },
   };
 }
 
@@ -224,6 +239,20 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     });
     return {
       items: page.items.map((post) => sourceRecord(connectionId, post)),
+      page: page.page,
+      limit: page.perPage,
+      hasMore: page.hasMore,
+    };
+  }
+
+  async listAuthors(connectionId: string, query: SourceAuthorQuery = {}): Promise<SourceAuthorPage> {
+    const page = await this.#content.listUsers(connectionId, {
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.page === undefined ? {} : { page: query.page }),
+      ...(query.limit === undefined ? {} : { perPage: query.limit }),
+    });
+    return {
+      items: page.items.map((author) => sourceAuthorRecord(connectionId, author)),
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
@@ -482,6 +511,14 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            ...(snapshot.author ? {
+              sourceAuthor: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                remoteId: String(snapshot.author.id),
+                name: snapshot.author.name,
+              },
+            } : {}),
             wordpress: {
               connectionId,
               remoteId: String(snapshot.post.id),
