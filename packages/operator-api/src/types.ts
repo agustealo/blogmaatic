@@ -290,6 +290,62 @@ export interface PublicationWorkspaceDispatchResult {
   readonly runs: readonly ControlPlaneRunRecord[];
 }
 
+export interface ProjectionPreviewSummary {
+  readonly title?: string;
+  readonly text?: string;
+  readonly mode?: string;
+  readonly status?: string;
+  readonly path?: string;
+  readonly publicUrl?: string;
+  readonly scheduledAt?: string;
+  readonly mediaCount?: number;
+  readonly fidelity?: {
+    readonly score: number;
+    readonly exact?: boolean;
+    readonly issues?: JsonValue;
+  };
+}
+
+export interface PublicationProjectionPreviewDestination {
+  readonly extensionId: string;
+  readonly extensionName: string;
+  readonly connectionId: string;
+  readonly connectionName: string;
+  readonly channel: string;
+}
+
+export type PublicationProjectionPreviewItem =
+  | {
+    readonly status: "ready";
+    readonly routeId: string;
+    readonly destination: PublicationProjectionPreviewDestination;
+    readonly projectionId: string;
+    readonly sourceRevisionId: string;
+    readonly fingerprint: string;
+    readonly payload: JsonValue;
+    readonly summary: ProjectionPreviewSummary;
+  }
+  | {
+    readonly status: "error";
+    readonly routeId: string;
+    readonly destination: PublicationProjectionPreviewDestination;
+    readonly sourceRevisionId: string;
+    readonly error: string;
+  };
+
+export interface PublicationProjectionPreview {
+  readonly publicationId: string;
+  readonly revisionId: string;
+  readonly revisionOrdinal: number;
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly items: readonly PublicationProjectionPreviewItem[];
+}
+
+export interface OperatorPublicationPreviewManager {
+  preview(publicationId: string, groupId: string): Promise<PublicationProjectionPreview>;
+}
+
 export interface OperatorDistributionHistory {
   list(
     publicationId: string,
@@ -331,6 +387,7 @@ export interface OperatorApiOptions {
   readonly sourceContent?: OperatorSourceContentManager;
   readonly publicationGroups?: OperatorPublicationGroupManager;
   readonly publications?: OperatorPublicationWorkspaceManager;
+  readonly previews?: OperatorPublicationPreviewManager;
   readonly distributions?: OperatorDistributionHistory;
   readonly schedules?: OperatorScheduleManager;
   readonly authorizer: OperatorAuthorizer;
