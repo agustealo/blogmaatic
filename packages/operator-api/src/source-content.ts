@@ -11,6 +11,7 @@ import type {
   SourceAuthorAssignBody,
   SourceAuthorQuery,
   SourceContentImportBody,
+  SourcePublishingStateBody,
   SourceTaxonomyQuery,
   SourceContentQuery,
 } from "./types.js";
@@ -268,6 +269,37 @@ function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
   };
 }
 
+function parsePublishingStateBody(body: unknown): SourcePublishingStateBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion", "status", "scheduledAt"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const status = input.status;
+  if (typeof status !== "string" || !status.trim()) {
+    throw new OperatorRequestError("status is required");
+  }
+  const scheduledAt = input.scheduledAt;
+  if (scheduledAt !== undefined && (typeof scheduledAt !== "string" || !scheduledAt.trim())) {
+    throw new OperatorRequestError("scheduledAt must be a non-empty string when provided");
+  }
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    status: status.trim(),
+    ...(typeof scheduledAt === "string" ? { scheduledAt: scheduledAt.trim() } : {}),
+  };
+}
+
 function parseImportBody(body: unknown): SourceContentImportBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -301,6 +333,37 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     { parseAs: "buffer" },
     (_request, body, done) => done(null, body),
   );
+
+  app.post("/v1/connections/:connectionId/publishing-state", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parsePublishingStateBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-publishing-state.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        status: body.status,
+        scheduledAt: body.scheduledAt ?? null,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setPublishingState(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          status: value.status,
+          scheduledAt: value.scheduledAt ?? null,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
 
   app.get("/v1/connections/:connectionId/authors", async (request) => {
     await authorize(options, request, "source-content:read");
