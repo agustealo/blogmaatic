@@ -667,6 +667,105 @@ test("source content service searches and maps WordPress Media Library images", 
       modifiedGmt: "2026-10-18T12:00:00",
     });
     assert.deepEqual(await content.getMedia("wp-1", "77"), page.items[0]);
+
+    api.media.set(88, {
+      id: 88,
+      slug: "release-notes",
+      source_url: "http://example.test/uploads/release-notes.pdf",
+      media_type: "file",
+      mime_type: "application/pdf",
+      alt_text: "",
+      title: { raw: "Release notes" },
+    });
+    await assert.rejects(
+      content.getMedia("wp-1", "88"),
+      /is not an image/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress reuses attached Media Library ids without re-uploading remote images", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.media.set(77, {
+      id: 77,
+      slug: "library-hero",
+      source_url: `http://127.0.0.1:${port}/uploads/library-hero.jpg`,
+      mime_type: "image/jpeg",
+      alt_text: "Library hero",
+      title: { raw: "Library Hero" },
+      media_details: { width: 1600, height: 900 },
+    });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const item = {
+      id: "publication-media-library",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      slug: "media-library-reuse",
+      status: "approved",
+      current: {
+        id: "revision-media-library",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Media Library Reuse",
+          language: "en",
+          blocks: [{ id: "image", kind: "image", data: { assetId: "wordpress-media-77" } }],
+          assets: [{
+            id: "wordpress-media-77",
+            kind: "image",
+            source: api.media.get(77).source_url,
+            mediaType: "image/jpeg",
+            alt: "Library hero",
+            attributes: {
+              featured: true,
+              wordpressMediaId: 77,
+              sourceExtensionId: "blogmaatic.wordpress-rest",
+              sourceConnectionId: "wp-1",
+              sourceRemoteId: "77",
+            },
+          }],
+          tags: [],
+          attributes: {},
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
+    };
+
+    const projection = await publisher.compile({ publication: item, route: route() });
+    assert.equal(projection.payload.assets[0].wordpressMediaId, 77);
+    const delivered = await publisher.deliver({ idempotencyKey: "reuse-media-77", projection });
+
+    assert.equal(api.mediaUploads.length, 0);
+    assert.deepEqual(delivered.evidence.mediaIds, [77]);
+    const saved = api.posts.get(Number(delivered.remote.id));
+    assert.equal(saved.featured_media, 77);
+    assert.match(saved.content.raw, /library-hero\.jpg/);
   } finally {
     api.server.close();
   }

@@ -20,6 +20,13 @@ function parseAssets(value: JsonValue | undefined): readonly CompiledWordPressAs
     const alt = typeof entry.alt === "string" ? entry.alt : undefined;
     const fingerprint = typeof entry.fingerprint === "string" ? entry.fingerprint : undefined;
     const localPath = typeof entry.localPath === "string" ? entry.localPath : undefined;
+    const wordpressMediaId = entry.wordpressMediaId === undefined ? undefined : entry.wordpressMediaId;
+    if (
+      wordpressMediaId !== undefined &&
+      (typeof wordpressMediaId !== "number" || !Number.isSafeInteger(wordpressMediaId) || wordpressMediaId < 1)
+    ) {
+      throw new Error("WordPress projection asset wordpressMediaId must be a positive integer");
+    }
     const transform = entry.transform === undefined ? undefined : parseImageTransformPlan(entry.transform);
     return {
       assetId,
@@ -28,6 +35,7 @@ function parseAssets(value: JsonValue | undefined): readonly CompiledWordPressAs
       ...(alt ? { alt } : {}),
       ...(fingerprint ? { fingerprint } : {}),
       ...(localPath ? { localPath } : {}),
+      ...(wordpressMediaId === undefined ? {} : { wordpressMediaId }),
       ...(transform ? { transform } : {}),
     };
   });
