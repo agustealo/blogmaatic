@@ -8,6 +8,7 @@ import type {
   SourceAssetAttachBody,
   SourceAssetQuery,
   SourceContentImportBody,
+  SourceTaxonomyQuery,
   SourceContentQuery,
 } from "./types.js";
 import { OperatorRequestError, requirePathString } from "./validation.js";
@@ -119,6 +120,26 @@ function parseAssetQuery(request: FastifyRequest): SourceAssetQuery {
   };
 }
 
+function parseTaxonomyQuery(request: FastifyRequest): SourceTaxonomyQuery {
+  const input = query(request);
+  const allowed = new Set(["kind", "search", "page", "limit"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+  const kind = optionalString(input, "kind");
+  if (kind !== "category" && kind !== "tag") {
+    throw new OperatorRequestError("kind must be category or tag");
+  }
+  const search = optionalString(input, "search");
+  const page = optionalInteger(input, "page", 1, 1000000);
+  const limit = optionalInteger(input, "limit", 1, 100);
+  return {
+    kind,
+    ...(search ? { search } : {}),
+    ...(page === undefined ? {} : { page }),
+    ...(limit === undefined ? {} : { limit }),
+  };
+}
+
 function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -172,6 +193,12 @@ async function authorize(
 
 export function registerSourceContentRoutes(app: FastifyInstance, options: OperatorApiOptions): void {
   const clock = options.clock ?? { now: () => new Date().toISOString() };
+
+  app.get("/v1/connections/:connectionId/taxonomy", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    return domainCall(() => manager(options).listTaxonomy(connectionId, parseTaxonomyQuery(request)));
+  });
 
   app.get("/v1/connections/:connectionId/assets", async (request) => {
     await authorize(options, request, "source-content:read");
