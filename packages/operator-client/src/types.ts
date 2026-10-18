@@ -60,6 +60,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceRevisionRestoreBody,
+  SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourceTaxonomyKind,
