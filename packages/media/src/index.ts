@@ -244,23 +244,18 @@ function plannedDimensions(
   };
 }
 
-export function planImageTransform(input: {
-  readonly bytes: Uint8Array;
-  readonly spec?: ImageTransformSpec;
-}): ImageTransformPlan {
-  const source = inspectImageBytes(input.bytes);
-  const sourceFingerprint = imageFingerprint(input.bytes);
-  const spec = normalizeImageTransformSpec(input.spec);
-  const dimensions = plannedDimensions(source, spec);
-  const mediaType = outputMediaType(source.mediaType, spec.format);
-  const renderRequired =
-    dimensions.width !== source.width ||
-    dimensions.height !== source.height ||
-    mediaType !== source.mediaType ||
-    spec.quality !== 85 ||
-    (spec.maxBytes !== undefined && source.byteLength > spec.maxBytes);
-
-  const transformSemantic: JsonValue = {
+function transformSemantic(
+  source: ImageMetadata,
+  sourceFingerprint: string,
+  spec: NormalizedImageTransformSpec,
+  output: {
+    readonly mediaType: ImageMetadata["mediaType"];
+    readonly width: number;
+    readonly height: number;
+    readonly maxBytes?: number;
+  },
+): JsonValue {
+  return {
     implementationVersion: MEDIA_TRANSFORM_IMPLEMENTATION,
     sourceFingerprint,
     source: {
@@ -280,13 +275,39 @@ export function planImageTransform(input: {
       withoutEnlargement: spec.withoutEnlargement,
     },
     output: {
-      mediaType,
-      width: dimensions.width,
-      height: dimensions.height,
-      maxBytes: spec.maxBytes ?? null,
+      mediaType: output.mediaType,
+      width: output.width,
+      height: output.height,
+      maxBytes: output.maxBytes ?? null,
     },
   };
-  const transformationFingerprint = sha256(stable(transformSemantic));
+}
+
+export function planImageTransform(input: {
+  readonly bytes: Uint8Array;
+  readonly spec?: ImageTransformSpec;
+}): ImageTransformPlan {
+  const source = inspectImageBytes(input.bytes);
+  const sourceFingerprint = imageFingerprint(input.bytes);
+  const spec = normalizeImageTransformSpec(input.spec);
+  const dimensions = plannedDimensions(source, spec);
+  const mediaType = outputMediaType(source.mediaType, spec.format);
+  const renderRequired =
+    dimensions.width !== source.width ||
+    dimensions.height !== source.height ||
+    mediaType !== source.mediaType ||
+    spec.quality !== 85 ||
+    (spec.maxBytes !== undefined && source.byteLength > spec.maxBytes);
+
+  const output = {
+    mediaType,
+    width: dimensions.width,
+    height: dimensions.height,
+    ...(spec.maxBytes === undefined ? {} : { maxBytes: spec.maxBytes }),
+  } as const;
+  const transformationFingerprint = sha256(stable(
+    transformSemantic(source, sourceFingerprint, spec, output),
+  ));
 
   return {
     schemaVersion: 1,
@@ -294,12 +315,7 @@ export function planImageTransform(input: {
     source,
     sourceFingerprint,
     spec,
-    output: {
-      mediaType,
-      width: dimensions.width,
-      height: dimensions.height,
-      ...(spec.maxBytes === undefined ? {} : { maxBytes: spec.maxBytes }),
-    },
+    output,
     renderRequired,
     transformationFingerprint,
     derivedAssetId: `derived_${transformationFingerprint.slice(0, 24)}`,
@@ -448,16 +464,48 @@ export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
     throw new Error("Image transform plan byte ceiling is inconsistent");
   }
 
+  const parsedSource: ImageMetadata = {
+    mediaType: sourceMediaType as ImageMetadata["mediaType"],
+    width: sourceWidth,
+    height: sourceHeight,
+    byteLength: sourceByteLength,
+  };
+  const expectedDimensions = plannedDimensions(parsedSource, normalized);
+  const expectedMediaType = outputMediaType(parsedSource.mediaType, normalized.format);
+  if (
+    outputWidth !== expectedDimensions.width ||
+    outputHeight !== expectedDimensions.height ||
+    outputMediaType !== expectedMediaType
+  ) {
+    throw new Error("Image transform plan output is inconsistent with source metadata and spec");
+  }
+
+  const sourceFingerprint = requiredPlanString(record, "sourceFingerprint");
+  const expectedFingerprint = sha256(stable(transformSemantic(
+    parsedSource,
+    sourceFingerprint,
+    normalized,
+    {
+      mediaType: expectedMediaType,
+      width: expectedDimensions.width,
+      height: expectedDimensions.height,
+      ...(outputMaxBytes === undefined ? {} : { maxBytes: outputMaxBytes }),
+    },
+  )));
+  const transformationFingerprint = requiredPlanString(record, "transformationFingerprint");
+  const derivedAssetId = requiredPlanString(record, "derivedAssetId");
+  if (transformationFingerprint !== expectedFingerprint) {
+    throw new Error("Image transform plan fingerprint is inconsistent");
+  }
+  if (derivedAssetId !== `derived_${expectedFingerprint.slice(0, 24)}`) {
+    throw new Error("Image transform plan derived asset id is inconsistent");
+  }
+
   return {
     schemaVersion: 1,
     implementationVersion: MEDIA_TRANSFORM_IMPLEMENTATION,
-    source: {
-      mediaType: sourceMediaType as ImageMetadata["mediaType"],
-      width: sourceWidth,
-      height: sourceHeight,
-      byteLength: sourceByteLength,
-    },
-    sourceFingerprint: requiredPlanString(record, "sourceFingerprint"),
+    source: parsedSource,
+    sourceFingerprint,
     spec: normalized,
     output: {
       mediaType: outputMediaType as ImageMetadata["mediaType"],
@@ -466,8 +514,8 @@ export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
       ...(outputMaxBytes === undefined ? {} : { maxBytes: outputMaxBytes }),
     },
     renderRequired: record.renderRequired,
-    transformationFingerprint: requiredPlanString(record, "transformationFingerprint"),
-    derivedAssetId: requiredPlanString(record, "derivedAssetId"),
+    transformationFingerprint,
+    derivedAssetId,
   };
 }
 
