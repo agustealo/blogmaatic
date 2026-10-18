@@ -167,3 +167,142 @@ test("WordPress import creates one canonical publication and recovers it on retr
   assert.equal(projectionWrites.length, 2);
   assert.equal(historyWrites.length, 1);
 });
+
+
+test("WordPress source assets browse safely and attach idempotently to matching source publication", async () => {
+  const media = {
+    id: 77,
+    sourceUrl: "https://example.test/uploads/library-image.jpg",
+    slug: "library-image",
+    mediaType: "image/jpeg",
+    title: "Library image",
+    alt: "Editorial hero",
+    width: 1600,
+    height: 900,
+    modifiedGmt: "2026-10-18T12:00:00",
+  };
+  let attachCalls = 0;
+  let current = {
+    publication: {
+      id: "publication-wp",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Imported",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {},
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-18T10:00:00.000Z",
+    updatedAt: "2026-10-18T10:00:00.000Z",
+  };
+
+  const publications = {
+    async get(id) {
+      return id === "publication-wp" ? current : undefined;
+    },
+    async attachAsset(publicationId, expectedVersion, asset, featured) {
+      attachCalls += 1;
+      assert.equal(publicationId, "publication-wp");
+      assert.equal(expectedVersion, current.version);
+      assert.equal(asset.id, "wordpress-media-77");
+      assert.equal(asset.source, media.sourceUrl);
+      assert.equal(asset.mediaType, "image/jpeg");
+      assert.equal(asset.alt, "Editorial hero");
+      assert.equal(asset.attributes.wordpressMediaId, 77);
+      assert.equal(asset.attributes.sourceConnectionId, "wp-main");
+      assert.equal(asset.attributes.sourceRemoteId, "77");
+      assert.equal(featured, true);
+      current = {
+        ...current,
+        version: current.version + 1,
+        publication: {
+          ...current.publication,
+          current: {
+            ...current.publication.current,
+            id: "revision-2",
+            ordinal: 2,
+            content: {
+              ...current.publication.current.content,
+              assets: [{ ...asset, attributes: { ...asset.attributes, featured: true } }],
+            },
+          },
+        },
+      };
+      return current;
+    },
+  };
+
+  const manager = new WordPressSourceManager({
+    content: {
+      async listMedia(connectionId, query) {
+        assert.equal(connectionId, "wp-main");
+        assert.deepEqual(query, { search: "hero", page: 2, perPage: 12 });
+        return { items: [media], page: 2, perPage: 12, hasMore: true };
+      },
+      async getMedia(connectionId, remoteId) {
+        assert.equal(connectionId, "wp-main");
+        assert.equal(remoteId, "77");
+        return media;
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications,
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const page = await manager.listAssets("wp-main", { search: "hero", page: 2, limit: 12 });
+  assert.equal(page.page, 2);
+  assert.equal(page.limit, 12);
+  assert.equal(page.hasMore, true);
+  assert.deepEqual(page.items[0], {
+    connectionId: "wp-main",
+    extensionId: "blogmaatic.wordpress-rest",
+    remoteId: "77",
+    sourceUrl: media.sourceUrl,
+    kind: "image",
+    mediaType: "image/jpeg",
+    title: "Library image",
+    alt: "Editorial hero",
+    width: 1600,
+    height: 900,
+    modifiedAt: "2026-10-18T12:00:00",
+    metadata: { wordpressMediaId: 77, slug: "library-image" },
+  });
+
+  const attached = await manager.attachAsset("wp-main", "77", {
+    publicationId: "publication-wp",
+    expectedVersion: 4,
+    featured: true,
+  });
+  assert.equal(attached.publication.version, 5);
+  assert.equal(attached.publication.publication.current.content.assets[0].attributes.featured, true);
+  assert.equal(attachCalls, 1);
+
+  await assert.rejects(
+    () => manager.attachAsset("wp-other", "77", {
+      publicationId: "publication-wp",
+      expectedVersion: 5,
+    }),
+    /does not match the publication source/,
+  );
+  assert.equal(attachCalls, 1);
+});
