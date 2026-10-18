@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { join } from "node:path";
 
-import sharp from "sharp";
+import sharp, { type Sharp } from "sharp";
 
 import type { ImageTransformPlan } from "./index.js";
 
@@ -71,8 +71,8 @@ function coverGeometry(plan: ImageTransformPlan): {
   };
 }
 
-function pipelineForGeometry(bytes: Uint8Array, plan: ImageTransformPlan): sharp.Sharp {
-  let pipeline = sharp(bytes, { failOn: "error" });
+function pipelineForGeometry(bytes: Uint8Array, plan: ImageTransformPlan): Sharp {
+  let pipeline = sharp(Buffer.from(bytes), { failOn: "error" });
   const cover = coverGeometry(plan);
   if (cover) {
     if (cover.resizedWidth !== plan.source.width || cover.resizedHeight !== plan.source.height) {
@@ -135,7 +135,7 @@ async function verifyRendered(
   plan: ImageTransformPlan,
   effectiveQuality?: number,
 ): Promise<RenderedImage> {
-  const metadata = await sharp(bytes, { failOn: "error" }).metadata();
+  const metadata = await sharp(Buffer.from(bytes), { failOn: "error" }).metadata();
   if (
     metadata.width !== plan.output.width ||
     metadata.height !== plan.output.height
@@ -263,6 +263,10 @@ export async function renderImageTransformCached(input: {
   const existing = await cachedResult(outputPath, metadataPath, input.plan);
   if (existing) return existing;
 
+  await Promise.all([
+    rm(outputPath, { force: true }),
+    rm(metadataPath, { force: true }),
+  ]);
   const sourceBytes = await readFile(input.sourcePath);
   const rendered = await renderImageTransform({ bytes: sourceBytes, plan: input.plan });
   const token = randomUUID();
