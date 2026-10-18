@@ -525,3 +525,14 @@ a.data-table__row:hover { background: var(--surface-2); }
   .projection-preview-media__item > span:nth-child(2) { justify-items: start; text-align: left; }
   .projection-preview-media__item details { grid-column: auto; }
 }
+
+
+/* Content library search */
+.content-library-toolbar { align-items: end; flex-wrap: wrap; }
+.content-library-search { flex: 1 1 320px; min-width: min(100%, 280px); }
+.content-library-search input { width: 100%; }
+
+@media (max-width: 640px) {
+  .content-library-toolbar > .field,
+  .content-library-toolbar > .button { width: 100%; }
+}
