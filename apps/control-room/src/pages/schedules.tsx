@@ -1,5 +1,5 @@
-import { useCallback, useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router";
 
 import type {
   AutomationSchedule,
@@ -42,17 +42,19 @@ function CreateSchedulePanel({
   loading,
   onCreated,
   onCancel,
+  initialPublicationId,
 }: {
   readonly groups: readonly PublicationGroupRegistryEntry[];
   readonly publications: readonly PublicationWorkspaceEntry[];
   readonly loading: boolean;
   readonly onCreated: (schedule: AutomationSchedule) => void;
   readonly onCancel: () => void;
+  readonly initialPublicationId?: string;
 }) {
   const { session } = useConnection();
   const [name, setName] = useState("Scheduled publication");
   const [groupId, setGroupId] = useState(groups[0]?.group.id ?? "");
-  const [publicationId, setPublicationId] = useState(publications[0]?.publication.id ?? "");
+  const [publicationId, setPublicationId] = useState(initialPublicationId ?? publications[0]?.publication.id ?? "");
   const [timezone, setTimezone] = useState(localTimezone);
   const [localDate, setLocalDate] = useState(futureLocalDate);
   const [localTime, setLocalTime] = useState("09:00");
@@ -249,6 +251,10 @@ function CreateSchedulePanel({
 
 export function SchedulesPage() {
   const { session } = useConnection();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedPublicationId = searchParams.get("publication")?.trim() ?? "";
+  const requestCreate = searchParams.get("create") === "1";
+  const handledDeepLink = useRef(false);
   const [enabled, setEnabled] = useState<"" | "true" | "false">("");
   const [createOpen, setCreateOpen] = useState(false);
   const [supportLoading, setSupportLoading] = useState(false);
@@ -302,6 +308,16 @@ export function SchedulesPage() {
     }
   }, [session]);
 
+  useEffect(() => {
+    if (!requestCreate || handledDeepLink.current) return;
+    handledDeepLink.current = true;
+    void openCreate().finally(() => {
+      const next = new URLSearchParams(searchParams);
+      next.delete("create");
+      setSearchParams(next, { replace: true });
+    });
+  }, [openCreate, requestCreate, searchParams, setSearchParams]);
+
   const toggleSchedule = useCallback(async (schedule: AutomationSchedule) => {
     if (!session) return;
     const nextEnabled = !schedule.enabled;
@@ -348,6 +364,7 @@ export function SchedulesPage() {
           loading={supportLoading}
           onCreated={created}
           onCancel={() => setCreateOpen(false)}
+          {...(requestedPublicationId ? { initialPublicationId: requestedPublicationId } : {})}
         />
       ) : null}
       <div className="toolbar">
