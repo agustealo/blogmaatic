@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 
 import type {
-  AutomationPage,
+  ConnectionsResponse,
   OperatorOperationsPage,
+  PublicationWorkspacePage,
   RunPage,
   SchedulePage,
 } from "@blogmaatic/operator-client";
@@ -16,7 +17,8 @@ interface DashboardData {
   readonly operations: OperatorOperationsPage;
   readonly runs: RunPage;
   readonly schedules: SchedulePage;
-  readonly automations: AutomationPage;
+  readonly publications: PublicationWorkspacePage;
+  readonly connections: ConnectionsResponse;
 }
 
 export function OverviewPage() {
@@ -31,13 +33,14 @@ export function OverviewPage() {
     setLoading(true);
     setError(null);
     try {
-      const [operations, runs, schedules, automations] = await Promise.all([
+      const [operations, runs, schedules, publications, connections] = await Promise.all([
         session.client.listOperations({ limit: 12 }),
         session.client.listRuns({ limit: 12 }),
         session.client.listSchedules({ enabled: true, limit: 12 }),
-        session.client.listAutomations({ limit: 12 }),
+        session.client.listPublications({ limit: 12 }),
+        session.client.listConnections(),
       ]);
-      setData({ operations, runs, schedules, automations });
+      setData({ operations, runs, schedules, publications, connections });
       setRefreshedAt(new Date().toISOString());
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error("Overview request failed"));
@@ -51,9 +54,9 @@ export function OverviewPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Control Room"
-        title="Overview"
-        description="A live operational view over the canonical control plane and durable runtime."
+        eyebrow="Publishing home"
+        title="Home"
+        description="See what you're working on, what publishes next, where your content is connected, and anything that needs your attention."
         actions={<button className="button button--quiet" type="button" onClick={() => void load()} disabled={loading}>Refresh</button>}
       />
       <ErrorBanner error={error} />
@@ -61,51 +64,79 @@ export function OverviewPage() {
       {data ? (
         <>
           <div className="metric-grid">
-            <Metric label="Needs attention" value={pageCount(data.operations)} note="open operations" />
-            <Metric label="Recent runs" value={pageCount(data.runs)} note="latest execution records" />
-            <Metric label="Enabled schedules" value={pageCount(data.schedules)} note="visible schedules" />
-            <Metric label="Automations" value={pageCount(data.automations)} note="active heads" />
+            <Metric label="Content" value={pageCount(data.publications)} note="recent workspace items" />
+            <Metric label="Destinations" value={String(data.connections.items.filter((item) => item.status === "active").length)} note="connected and enabled" />
+            <Metric label="Scheduled" value={pageCount(data.schedules)} note="upcoming publication plans" />
+            <Metric label="Needs attention" value={pageCount(data.operations)} note="issues or decisions to review" />
           </div>
+          <div className="home-actions">
+            <Link className="home-action-card home-action-card--primary" to="/publications">
+              <span>Content</span>
+              <strong>Create or continue a publication</strong>
+              <small>Write, import, revise, approve and publish from one workspace.</small>
+            </Link>
+            <Link className="home-action-card" to="/schedules">
+              <span>Calendar</span>
+              <strong>Plan what publishes next</strong>
+              <small>Review upcoming publication schedules and timing.</small>
+            </Link>
+            <Link className="home-action-card" to="/connections">
+              <span>Destinations</span>
+              <strong>Manage where content goes</strong>
+              <small>WordPress, Jekyll and your other connected publishing channels.</small>
+            </Link>
+          </div>
+
           <div className="overview-grid">
-            <Panel title="Needs attention" meta={<Link to="/operations">View all</Link>}>
-              <div className="operation-stack">
-                {data.operations.items.slice(0, 5).map((operation) => <OperationCard key={operation.id} operation={operation} compact />)}
-                {data.operations.items.length === 0 ? <EmptyState title="Clear queue">No current operation requires attention.</EmptyState> : null}
-              </div>
-            </Panel>
-            <Panel title="Recent runs" meta={<Link to="/runs">View all</Link>}>
+            <Panel title="Recent content" meta={<Link to="/publications">Open Content</Link>}>
               <div className="compact-list">
-                {data.runs.items.slice(0, 6).map((run) => (
-                  <Link className="compact-row" key={run.runId} to={`/runs/${encodeURIComponent(run.runId)}`}>
-                    <span><strong>{run.request.definition.name}</strong><small>{run.request.publication.current.content.title}</small></span>
-                    <span className="compact-row__end"><StatusPill value={run.runtimePhase ?? run.dispatchState} /><small>{formatInstant(run.updatedAt)}</small></span>
+                {data.publications.items.slice(0, 6).map((entry) => (
+                  <Link className="compact-row" key={entry.publication.id} to={`/publications/${encodeURIComponent(entry.publication.id)}`}>
+                    <span>
+                      <strong>{entry.publication.current.content.title}</strong>
+                      <small>Revision {entry.publication.current.ordinal} · updated {formatInstant(entry.updatedAt)}</small>
+                    </span>
+                    <StatusPill value={entry.publication.status} />
                   </Link>
                 ))}
-                {data.runs.items.length === 0 ? <EmptyState title="No runs yet">Execution history will appear here after a real trigger is accepted.</EmptyState> : null}
+                {data.publications.items.length === 0 ? (
+                  <EmptyState title="Create your first publication">Your content library starts here. Create a draft or import an existing WordPress post.</EmptyState>
+                ) : null}
               </div>
             </Panel>
-            <Panel title="Enabled schedules" meta={<Link to="/schedules">View all</Link>}>
+
+            <Panel title="Needs attention" meta={<Link to="/activity">Open Activity</Link>}>
+              <div className="operation-stack">
+                {data.operations.items.slice(0, 5).map((operation) => <OperationCard key={operation.id} operation={operation} compact />)}
+                {data.operations.items.length === 0 ? <EmptyState title="You're clear">Nothing currently needs your attention.</EmptyState> : null}
+              </div>
+            </Panel>
+
+            <Panel title="Publishing next" meta={<Link to="/schedules">Open Calendar</Link>}>
               <div className="compact-list">
                 {data.schedules.items.slice(0, 5).map((schedule) => (
                   <div className="compact-row" key={schedule.id}>
-                    <span><strong>{schedule.id}</strong><small>{schedule.automationId} v{schedule.automationVersion}</small></span>
+                    <span><strong>{schedule.localDate} · {schedule.localTime}</strong><small>{schedule.timezone} · {schedule.automationId}</small></span>
                     <span className="compact-row__end"><small>Next</small><strong>{formatInstant(schedule.nextFireAt)}</strong></span>
                   </div>
                 ))}
+                {data.schedules.items.length === 0 ? <EmptyState title="Nothing scheduled">Schedule an approved publication when you're ready to plan ahead.</EmptyState> : null}
               </div>
             </Panel>
-            <Panel title="Automation heads" meta={<Link to="/automations">Manage</Link>}>
+
+            <Panel title="Recent publishing" meta={<Link to="/activity">View Activity</Link>}>
               <div className="compact-list">
-                {data.automations.items.slice(0, 5).map((entry) => (
-                  <Link className="compact-row" key={entry.definition.id} to={`/automations/${encodeURIComponent(entry.definition.id)}`}>
-                    <span><strong>{entry.definition.name}</strong><small>{entry.definition.id} · v{entry.definition.version}</small></span>
-                    <StatusPill value={entry.enabled ? "enabled" : "disabled"} />
+                {data.runs.items.slice(0, 6).map((run) => (
+                  <Link className="compact-row" key={run.runId} to={`/runs/${encodeURIComponent(run.runId)}`}>
+                    <span><strong>{run.request.publication.current.content.title}</strong><small>{run.request.definition.name}</small></span>
+                    <span className="compact-row__end"><StatusPill value={run.runtimePhase ?? run.dispatchState} /><small>{formatInstant(run.updatedAt)}</small></span>
                   </Link>
                 ))}
+                {data.runs.items.length === 0 ? <EmptyState title="No publishing activity yet">Your publication history will appear here after the first delivery.</EmptyState> : null}
               </div>
             </Panel>
           </div>
-          <p className="refresh-stamp">{refreshedAt ? `Last refreshed ${formatInstant(refreshedAt)}` : ""} · A “+” count means more records exist beyond the first page.</p>
+          <p className="refresh-stamp">{refreshedAt ? `Last refreshed ${formatInstant(refreshedAt)}` : ""} · Open Activity for detailed publishing evidence and system history.</p>
         </>
       ) : null}
     </>
