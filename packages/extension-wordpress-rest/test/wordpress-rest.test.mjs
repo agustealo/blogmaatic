@@ -200,6 +200,8 @@ function makeServer() {
   return {
     server,
     posts,
+    tags,
+    categories,
     media,
     mediaUploads,
     get counts() {
