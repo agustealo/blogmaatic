@@ -301,10 +301,15 @@ export function PublicationGroupsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Publishing topology"
+        eyebrow="Destination routing"
         title="Publishing routes"
-        description="Manage the durable sets of destinations Blogmaatic publishes to together. These are the same canonical groups used by Automations, connection guards, and run snapshots."
-        actions={<button className="button button--primary" type="button" onClick={startCreate} disabled={supportLoading || policySetIds.length === 0}>New Publication Group</button>}
+        description="Choose which connected destinations publish together. Blogmaatic keeps every routing version so existing runs never change underneath you."
+        actions={(
+          <div className="topbar__actions">
+            <Link className="button button--quiet" to="/connections">Back to Destinations</Link>
+            <button className="button button--primary" type="button" onClick={startCreate} disabled={supportLoading || policySetIds.length === 0}>New route group</button>
+          </div>
+        )}
       />
       <ErrorBanner error={actionError ?? collection.error} />
       <div className="toolbar">
@@ -355,7 +360,7 @@ export function PublicationGroupsPage() {
               })}
               {collection.items.length === 0 ? (
                 <div className="publication-group-empty">
-                  <EmptyState title="No Publication Groups yet">Create one here instead of reaching for the Operator API. A group is the reusable routing unit Automations publish through.</EmptyState>
+                  <EmptyState title="No publishing routes yet">Create a reusable group of destinations that Blogmaatic can publish to together.</EmptyState>
                   <button className="button button--primary" type="button" onClick={startCreate} disabled={supportLoading || policySetIds.length === 0}>Create Publication Group</button>
                 </div>
               ) : null}
