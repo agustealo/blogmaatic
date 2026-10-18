@@ -50,7 +50,18 @@ export async function publishMedia(
   const slug = mediaSlug(publicationId, asset);
   const existing = await findMedia(client, slug);
   if (existing) {
-    return { assetId: asset.assetId, mediaId: existing.id, sourceUrl: existing.source_url };
+    return {
+      assetId: asset.assetId,
+      mediaId: existing.id,
+      sourceUrl: existing.source_url,
+      ...(asset.transform ? {
+        transformationFingerprint: asset.transform.transformationFingerprint,
+        derivedAssetId: asset.transform.derivedAssetId,
+        mediaType: asset.transform.output.mediaType,
+        width: asset.transform.output.width,
+        height: asset.transform.output.height,
+      } : {}),
+    };
   }
 
   let bytes: Uint8Array;
