@@ -38,6 +38,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceRevisionRestoreBody,
+  SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourceTaxonomyPage,
@@ -491,6 +493,49 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
 
   async revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]> {
     return (await this.#content.revisions(connectionId, remoteId)).map(sourceRevision);
+  }
+
+  async restoreRevision(
+    connectionId: string,
+    remoteId: string,
+    remoteRevisionId: string,
+    body: SourceRevisionRestoreBody,
+  ): Promise<SourceRevisionRestoreResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId ||
+      current.publication.provenance.remoteId !== remoteId
+    ) {
+      throw new Error("Source revision does not match the publication source identity");
+    }
+
+    const revision = await this.#content.getRevision(connectionId, remoteId, remoteRevisionId);
+    const publication = await this.#publications.restoreSourceRevision(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        remoteId,
+        remoteRevisionId: String(revision.id),
+        title: revision.title,
+        ...(plainText(revision.excerpt) ? { summary: plainText(revision.excerpt) } : {}),
+        contentHtml: revision.contentHtml,
+        ...(revision.modifiedGmt ? { sourceModifiedAt: revision.modifiedGmt } : {}),
+        ...(revision.author === undefined ? {} : { sourceAuthorId: revision.author }),
+      },
+    );
+    return {
+      publication,
+      revision: sourceRevision(revision),
+    };
   }
 
   async import(
