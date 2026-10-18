@@ -87,12 +87,16 @@ function imageTransformSpec(route: PublicationRoute): ImageTransformSpec {
   if (format !== undefined && !["preserve", "jpeg", "png", "webp"].includes(format)) {
     throw new Error("Facebook imageTransform.format must be preserve, jpeg, png, or webp");
   }
+  const width = getNumber(media, "width");
+  const height = getNumber(media, "height");
+  const quality = getNumber(media, "quality");
+  const maxBytes = getNumber(media, "maxBytes");
   const focalX = getNumber(media, "focalX");
   const focalY = getNumber(media, "focalY");
   const withoutEnlargement = getBoolean(media, "withoutEnlargement");
   return {
-    ...(getNumber(media, "width") === undefined ? {} : { width: getNumber(media, "width") }),
-    ...(getNumber(media, "height") === undefined ? {} : { height: getNumber(media, "height") }),
+    ...(width === undefined ? {} : { width }),
+    ...(height === undefined ? {} : { height }),
     ...(fit === undefined ? {} : { fit: fit as "contain" | "cover" }),
     ...(
       focalX === undefined && focalY === undefined
@@ -100,8 +104,8 @@ function imageTransformSpec(route: PublicationRoute): ImageTransformSpec {
         : { focalPoint: { x: focalX ?? 0.5, y: focalY ?? 0.5 } }
     ),
     ...(format === undefined ? {} : { format: format as "preserve" | "jpeg" | "png" | "webp" }),
-    ...(getNumber(media, "quality") === undefined ? {} : { quality: getNumber(media, "quality") }),
-    maxBytes: getNumber(media, "maxBytes") ?? 10 * 1024 * 1024,
+    ...(quality === undefined ? {} : { quality }),
+    maxBytes: maxBytes ?? 10 * 1024 * 1024,
     ...(withoutEnlargement === undefined ? {} : { withoutEnlargement }),
   };
 }
