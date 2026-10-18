@@ -56,6 +56,7 @@ import type {
   SourceAssetAttachResult,
   SourceAssetPage,
   SourceAssetQuery,
+  SourceAssetUploadInput,
   SourceContentImportBody,
   SourceContentImportResult,
   SourceContentPage,
@@ -155,6 +156,8 @@ export class OperatorClient {
     options: {
       readonly method?: "GET" | "POST" | "PATCH" | "DELETE";
       readonly body?: unknown;
+      readonly rawBody?: Uint8Array;
+      readonly contentType?: string;
       readonly authenticated?: boolean;
       readonly idempotencyKey?: string;
     } = {},
@@ -164,7 +167,14 @@ export class OperatorClient {
     if (options.authenticated !== false && !this.#token && this.#sessionProof) {
       headers.set("x-blogmaatic-session-proof", this.#sessionProof);
     }
+    if (options.body !== undefined && options.rawBody !== undefined) {
+      throw new Error("Operator request cannot contain both JSON and raw bodies");
+    }
     if (options.body !== undefined) headers.set("content-type", "application/json");
+    if (options.rawBody !== undefined) {
+      if (!options.contentType?.trim()) throw new Error("Raw Operator request requires contentType");
+      headers.set("content-type", options.contentType.trim());
+    }
     if (options.idempotencyKey !== undefined) {
       const idempotencyKey = options.idempotencyKey.trim();
       if (!idempotencyKey) throw new Error("Idempotency key must be non-empty");
@@ -176,7 +186,11 @@ export class OperatorClient {
       credentials: this.#token ? "omit" : "same-origin",
       redirect: "error",
       referrerPolicy: "no-referrer",
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      ...(options.body !== undefined
+        ? { body: JSON.stringify(options.body) }
+        : options.rawBody !== undefined
+          ? { body: new Uint8Array(options.rawBody).buffer }
+          : {}),
     });
     if (!response.ok) {
       let body: OperatorErrorBody = {};
@@ -249,6 +263,28 @@ export class OperatorClient {
       `/v1/connections/${encodeURIComponent(connectionId)}/assets`,
       query,
     ));
+  }
+
+  uploadSourceAsset(
+    connectionId: string,
+    input: SourceAssetUploadInput,
+  ): Promise<SourceAssetAttachResult> {
+    const query = {
+      publicationId: input.publicationId,
+      expectedVersion: input.expectedVersion,
+      filename: input.filename,
+      ...(input.featured === undefined ? {} : { featured: input.featured }),
+      ...(input.alt === undefined ? {} : { alt: input.alt }),
+      ...(input.title === undefined ? {} : { title: input.title }),
+    };
+    return this.#request<SourceAssetAttachResult>(
+      pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/assets/upload`, query),
+      {
+        method: "POST",
+        rawBody: input.bytes,
+        contentType: input.mediaType,
+      },
+    );
   }
 
   attachSourceAsset(
