@@ -264,6 +264,55 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     };
   }
 
+  async setPublishingState(
+    connectionId: string,
+    body: SourcePublishingStateBody,
+  ): Promise<SourcePublishingStateResult> {
+    const supported = new Set(["publish", "draft", "pending", "private", "future"]);
+    if (!supported.has(body.status)) {
+      throw new Error(`Unsupported WordPress publishing status: ${body.status}`);
+    }
+    let scheduledAt: string | undefined;
+    if (body.status === "future") {
+      if (!body.scheduledAt) throw new Error("WordPress future publishing state requires scheduledAt");
+      const parsed = new Date(body.scheduledAt);
+      if (Number.isNaN(parsed.getTime())) throw new Error("WordPress scheduledAt must be a valid instant");
+      scheduledAt = parsed.toISOString();
+    } else if (body.scheduledAt !== undefined) {
+      throw new Error("WordPress scheduledAt is only allowed when status is future");
+    }
+
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source publishing state connection does not match the publication source");
+    }
+
+    const publication = await this.#publications.setSourcePublishingState(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        status: body.status,
+        ...(scheduledAt ? { scheduledAt } : {}),
+      },
+    );
+    return {
+      publication,
+      status: body.status,
+      ...(scheduledAt ? { scheduledAt } : {}),
+    };
+  }
+
   async listAuthors(connectionId: string, query: SourceAuthorQuery = {}): Promise<SourceAuthorPage> {
     const page = await this.#content.listAuthors(connectionId, {
       ...(query.search ? { search: query.search } : {}),
@@ -625,6 +674,14 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
                 remoteId: String(snapshot.post.author),
               },
             }),
+            sourcePublishing: {
+              extensionId: WORDPRESS_REST_EXTENSION_ID,
+              connectionId,
+              status: snapshot.post.status,
+              ...(snapshot.post.status === "future" && snapshot.post.dateGmt
+                ? { scheduledAt: wordpressGmtInstant(snapshot.post.dateGmt) }
+                : {}),
+            },
             wordpress: {
               connectionId,
               remoteId: String(snapshot.post.id),
