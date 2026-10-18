@@ -11,6 +11,8 @@ import type {
   PublicationWorkspaceEntry,
   PublicationWorkspaceUpdateBody,
   SourceAssetRecord,
+  SourceTaxonomyKind,
+  SourceTaxonomyRecord,
   WorkspacePublicationStatus,
 } from "@blogmaatic/operator-client";
 
@@ -140,6 +142,14 @@ function listFromInput(value: string): readonly string[] {
   return [...new Set(value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean))];
 }
 
+function addListValue(value: string, next: string): string {
+  const items = listFromInput(value);
+  if (items.some((item) => item.localeCompare(next, undefined, { sensitivity: "accent" }) === 0)) {
+    return items.join(", ");
+  }
+  return [...items, next].join(", ");
+}
+
 function destinationLabel(extensionId: string): string {
   const leaf = extensionId.split(".").at(-1) ?? extensionId;
   return leaf
@@ -162,6 +172,114 @@ function statusTone(status: string): "good" | "warn" | "bad" | "neutral" {
   if (status === "ready") return "warn";
   if (status === "archived") return "neutral";
   return "neutral";
+}
+
+function SourceTaxonomyPanel({
+  connectionId,
+  onSelect,
+}: {
+  readonly connectionId: string;
+  readonly onSelect: (kind: SourceTaxonomyKind, name: string) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [kind, setKind] = useState<SourceTaxonomyKind>("category");
+  const [search, setSearch] = useState("");
+  const [items, setItems] = useState<readonly SourceTaxonomyRecord[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  const load = useCallback(async (nextPage = 1, append = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await client.listSourceTaxonomy(connectionId, {
+        kind,
+        page: nextPage,
+        limit: 40,
+        ...(search.trim() ? { search: search.trim() } : {}),
+      });
+      setItems((current) => append ? [...current, ...result.items] : result.items);
+      setPage(result.page);
+      setHasMore(result.hasMore);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress taxonomy could not be loaded"));
+    } finally {
+      setLoading(false);
+    }
+  }, [client, connectionId, kind, search]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    setItems([]);
+    void client.listSourceTaxonomy(connectionId, { kind, page: 1, limit: 40 })
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setPage(result.page);
+        setHasMore(result.hasMore);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress taxonomy could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connectionId, kind]);
+
+  return (
+    <Panel title="WordPress taxonomy" meta="Add existing categories and tags" className="source-taxonomy-panel">
+      <ErrorBanner error={error} />
+      <div className="source-taxonomy-toolbar">
+        <div className="segmented-control" role="group" aria-label="Taxonomy type">
+          <button className={kind === "category" ? "is-active" : ""} type="button" onClick={() => setKind("category")}>Categories</button>
+          <button className={kind === "tag" ? "is-active" : ""} type="button" onClick={() => setKind("tag")}>Tags</button>
+        </div>
+        <label className="field">
+          <span>Search {kind === "category" ? "categories" : "tags"}</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void load(1, false);
+              }
+            }}
+            placeholder={kind === "category" ? "Search WordPress categories" : "Search WordPress tags"}
+          />
+        </label>
+        <button className="button button--quiet" type="button" onClick={() => void load(1, false)} disabled={loading}>Search</button>
+      </div>
+      {loading && items.length === 0 ? <LoadingBlock /> : (
+        <div className="source-taxonomy-list">
+          {items.map((item) => (
+            <button
+              className="source-taxonomy-item"
+              type="button"
+              key={`${item.kind}:${item.remoteId}`}
+              onClick={() => onSelect(item.kind, item.name)}
+            >
+              <span><strong>{item.name}</strong><small>/{item.slug}{item.count === undefined ? "" : ` · ${item.count} item${item.count === 1 ? "" : "s"}`}</small></span>
+              <span>Add</span>
+            </button>
+          ))}
+          {items.length === 0 ? <EmptyState title="No taxonomy found">No WordPress {kind === "category" ? "categories" : "tags"} match this search.</EmptyState> : null}
+        </div>
+      )}
+      {hasMore ? (
+        <div className="collection-footer">
+          <button className="button button--quiet" type="button" onClick={() => void load(page + 1, true)} disabled={loading}>Load more</button>
+        </div>
+      ) : null}
+    </Panel>
+  );
 }
 
 function SourceAssetLibraryPanel({
@@ -960,7 +1078,20 @@ export function PublicationsPage() {
         <div className="publication-studio-support">
           {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
           typeof activeEntry.publication.provenance.connectionId === "string" ? (
-            <SourceAssetLibraryPanel
+            <>
+              <SourceTaxonomyPanel
+                connectionId={activeEntry.publication.provenance.connectionId}
+                onSelect={(kind, name) => {
+                  setPendingPublish(false);
+                  setEditor((current) => current ? {
+                    ...current,
+                    ...(kind === "category"
+                      ? { categories: addListValue(current.categories, name) }
+                      : { tags: addListValue(current.tags, name) }),
+                  } : current);
+                }}
+              />
+              <SourceAssetLibraryPanel
               entry={activeEntry}
               connectionId={activeEntry.publication.provenance.connectionId}
               onAttached={(next) => {
@@ -970,6 +1101,7 @@ export function PublicationsPage() {
                 setChangeNonce((value) => value + 1);
               }}
             />
+            </>
           ) : null}
           <PublishingSummaryPanel entry={activeEntry} nonce={changeNonce} />
           <ProjectionPreviewPanel entry={activeEntry} nonce={changeNonce} />
