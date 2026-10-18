@@ -13,6 +13,7 @@ import type {
   SourceContentImportBody,
   SourceRevisionRestoreBody,
   SourcePublishingStateBody,
+  SourceTaxonomyCreateBody,
   SourceTaxonomyQuery,
   SourceContentQuery,
 } from "./types.js";
@@ -158,6 +159,48 @@ function parseAssetQuery(request: FastifyRequest): SourceAssetQuery {
     ...(search ? { search } : {}),
     ...(page === undefined ? {} : { page }),
     ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseTaxonomyCreateBody(body: unknown): SourceTaxonomyCreateBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["kind", "name", "slug", "description"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+
+  const kind = input.kind;
+  if (kind !== "category" && kind !== "tag") {
+    throw new OperatorRequestError("kind must be category or tag");
+  }
+  const name = input.name;
+  if (typeof name !== "string" || !name.trim()) {
+    throw new OperatorRequestError("name is required");
+  }
+  if (name.trim().length > 200) {
+    throw new OperatorRequestError("name must not exceed 200 characters");
+  }
+  const slug = input.slug;
+  if (slug !== undefined && (typeof slug !== "string" || !slug.trim())) {
+    throw new OperatorRequestError("slug must be a non-empty string when provided");
+  }
+  if (typeof slug === "string" && slug.trim().length > 200) {
+    throw new OperatorRequestError("slug must not exceed 200 characters");
+  }
+  const description = input.description;
+  if (description !== undefined && typeof description !== "string") {
+    throw new OperatorRequestError("description must be a string when provided");
+  }
+  if (typeof description === "string" && description.length > 2000) {
+    throw new OperatorRequestError("description must not exceed 2000 characters");
+  }
+  return {
+    kind,
+    name: name.trim(),
+    ...(typeof slug === "string" ? { slug: slug.trim() } : {}),
+    ...(typeof description === "string" ? { description: description.trim() } : {}),
   };
 }
 
@@ -418,6 +461,36 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           revisionId: value.publication.publication.current.id,
           version: value.publication.version,
           authorRemoteId: value.author.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.post("/v1/connections/:connectionId/taxonomy", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseTaxonomyCreateBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-taxonomy.create",
+      resource: { type: "source-taxonomy", id: `${connectionId}:${body.kind}:${body.slug ?? body.name}` },
+      evidence: {
+        connectionId,
+        kind: body.kind,
+        name: body.name,
+        requestedSlug: body.slug ?? null,
+        descriptionPresent: Boolean(body.description),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).createTaxonomy(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          remoteId: value.remoteId,
+          name: value.name,
+          slug: value.slug,
         },
       }),
     });
