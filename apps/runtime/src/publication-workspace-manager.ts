@@ -306,6 +306,61 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, input.expectedVersion, now);
   }
 
+  async assignSourceAuthor(
+    publicationId: string,
+    expectedVersion: number,
+    author: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly remoteId: string;
+      readonly displayName: string;
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== author.extensionId ||
+      current.publication.provenance.connectionId !== author.connectionId
+    ) {
+      throw new Error("Source author connection does not match the publication source");
+    }
+    const remoteId = author.remoteId.trim();
+    if (!remoteId) throw new Error("Source author remote id is required");
+    const displayName = author.displayName.trim();
+    if (!displayName) throw new Error("Source author display name is required");
+
+    const oldContent = current.publication.current.content;
+    const existing = oldContent.attributes.sourceAuthor;
+    const nextAuthor: JsonValue = {
+      extensionId: author.extensionId,
+      connectionId: author.connectionId,
+      remoteId,
+      displayName,
+    };
+    if (JSON.stringify(existing) === JSON.stringify(nextAuthor)) return current;
+
+    const now = this.#now();
+    const publication: Publication = {
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...oldContent,
+          attributes: {
+            ...oldContent.attributes,
+            sourceAuthor: nextAuthor,
+          },
+        },
+      },
+    };
+    return this.#store.update(publication, expectedVersion, now);
+  }
+
   async attachAsset(
     publicationId: string,
     expectedVersion: number,
