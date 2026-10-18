@@ -177,7 +177,13 @@ function makeServer() {
       if (request.method === "POST" && path === `/${name}`) {
         const existing = [...collection.values()].find((term) => term.slug === body.slug);
         if (existing) return json(response, 400, { code: "term_exists", message: "Exists", data: { status: 400, term_id: existing.id } });
-        const term = { id: nextTerm++, name: body.name, slug: body.slug };
+        const term = {
+          id: nextTerm++,
+          name: body.name,
+          slug: body.slug,
+          ...(body.description ? { description: body.description } : {}),
+          count: 0,
+        };
         collection.set(term.id, term);
         return json(response, 201, term);
       }
@@ -776,6 +782,62 @@ test("source content service fetches one WordPress native revision in edit conte
       excerpt: "<p>Revision excerpt</p>",
       contentHtml: "<h2>Revision 9055</h2><p>Recovered body.</p>",
     });
+  } finally {
+    api.server.close();
+  }
+});
+
+test("source content service deliberately creates taxonomy and recovers existing slug idempotently", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+
+    const created = await content.createTerm("wp-1", "category", {
+      name: "Deep Publishing",
+      description: "Editorial automation",
+    });
+    assert.equal(created.name, "Deep Publishing");
+    assert.equal(created.slug, "deep-publishing");
+    assert.equal(created.description, "Editorial automation");
+
+    const same = await content.createTerm("wp-1", "category", {
+      name: "Different display request",
+      slug: "deep-publishing",
+    });
+    assert.equal(same.id, created.id);
+    assert.equal(api.categories.size, 1);
+
+    api.tags.set(88, {
+      id: 88,
+      name: "Existing Tag",
+      slug: "existing-tag",
+      description: "",
+      count: 2,
+    });
+    const recovered = await content.createTerm("wp-1", "tag", {
+      name: "Existing Tag",
+      slug: "existing-tag",
+    });
+    assert.equal(recovered.id, 88);
+    assert.equal(api.tags.size, 1);
   } finally {
     api.server.close();
   }
