@@ -145,6 +145,11 @@ test("WordPress import creates one canonical publication and recovers it on retr
   assert.equal(first.publication.publication.current.content.attributes.categories[0], "Publishing");
   assert.equal(first.publication.publication.current.content.blocks[0].kind, "embed");
   assert.equal(first.publication.publication.current.content.assets[0].attributes.wordpressMediaId, 12);
+  assert.deepEqual(first.publication.publication.current.content.attributes.sourceAuthor, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "7",
+  });
   assert.equal(first.remote.managed, true);
   assert.equal(adoptCount, 1);
   assert.equal(projectionWrites.length, 1);
@@ -579,4 +584,144 @@ test("WordPress source image upload compensates remote media when canonical atta
     /changed from version 4 to 5/,
   );
   assert.deepEqual(deleted, [["wp-main", "91"]]);
+});
+
+
+test("WordPress source authors browse safely and assign through canonical source ownership", async () => {
+  const author = {
+    id: 7,
+    name: "Editor Seven",
+    slug: "editor-seven",
+    link: "https://example.test/author/editor-seven",
+    avatarUrl: "https://example.test/avatar/7.png",
+  };
+  let authorReads = 0;
+  let assignment;
+  const current = {
+    publication: {
+      id: "publication-wp",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Imported",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {},
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-18T10:00:00.000Z",
+    updatedAt: "2026-10-18T10:00:00.000Z",
+  };
+
+  const manager = new WordPressSourceManager({
+    content: {
+      async listAuthors(connectionId, query) {
+        assert.equal(connectionId, "wp-main");
+        assert.deepEqual(query, { search: "seven", page: 2, perPage: 12 });
+        return { items: [author], page: 2, perPage: 12, hasMore: true };
+      },
+      async getAuthor(connectionId, remoteId) {
+        authorReads += 1;
+        assert.equal(connectionId, "wp-main");
+        assert.equal(remoteId, "7");
+        return author;
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get(id) {
+        return id === "publication-wp" ? current : undefined;
+      },
+      async assignSourceAuthor(publicationId, expectedVersion, input) {
+        assert.equal(publicationId, "publication-wp");
+        assert.equal(expectedVersion, 4);
+        assignment = input;
+        return {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                attributes: { sourceAuthor: input },
+              },
+            },
+          },
+        };
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const page = await manager.listAuthors("wp-main", { search: "seven", page: 2, limit: 12 });
+  assert.deepEqual(page, {
+    items: [{
+      connectionId: "wp-main",
+      extensionId: "blogmaatic.wordpress-rest",
+      remoteId: "7",
+      displayName: "Editor Seven",
+      slug: "editor-seven",
+      link: "https://example.test/author/editor-seven",
+      avatarUrl: "https://example.test/avatar/7.png",
+      metadata: { wordpressUserId: 7 },
+    }],
+    page: 2,
+    limit: 12,
+    hasMore: true,
+  });
+  assert.equal("email" in page.items[0], false);
+
+  await assert.rejects(
+    () => manager.assignAuthor("wp-other", "7", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+    }),
+    /does not match the publication source/,
+  );
+  assert.equal(authorReads, 0);
+
+  await assert.rejects(
+    () => manager.assignAuthor("wp-main", "7", {
+      publicationId: "publication-wp",
+      expectedVersion: 3,
+    }),
+    /changed from version 3 to 4/,
+  );
+  assert.equal(authorReads, 0);
+
+  const result = await manager.assignAuthor("wp-main", "7", {
+    publicationId: "publication-wp",
+    expectedVersion: 4,
+  });
+  assert.equal(authorReads, 1);
+  assert.equal(result.publication.version, 5);
+  assert.deepEqual(assignment, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "7",
+    displayName: "Editor Seven",
+  });
+  assert.equal(result.author.remoteId, "7");
+  assert.equal(result.author.displayName, "Editor Seven");
 });
