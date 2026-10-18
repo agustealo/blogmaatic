@@ -28,6 +28,16 @@ Policy is evaluated before compilation or delivery. Slice 1 supports determinist
 
 A projection is the destination-specific compiled form of a publication revision. Every projection includes a stable fingerprint supplied by the extension. The fingerprint is the comparison boundary for verification and drift detection.
 
+### Preview
+
+Destination preview is a read-only compile operation over the exact same publisher extension contract used by delivery. Given a canonical Publication revision and an enabled Publication Group, Blogmaatic can compile every enabled route without inspecting or mutating the remote provider.
+
+The preview boundary is provider-neutral. Each route returns its destination identity, source revision, projection fingerprint, a sanitized compiled payload, and a compact UI summary. One route may fail compilation without suppressing the previews for other destinations. This makes fidelity loss, scheduling decisions, provider modes, generated paths, and other projection differences visible before delivery.
+
+Preview evidence is not remote acceptance evidence. Only delivery followed by provider inspection can produce a verified receipt.
+
+Sanitization removes credential-shaped fields and local source filesystem paths before payloads cross the Operator API boundary.
+
 ### Delivery
 
 Delivery is reconcile-first. Before mutating a destination, the kernel inspects the remote projection. A synchronized projection is a no-op, a missing projection requires `article.create`, and a drifted projection requires `article.update` and carries the existing remote identity into delivery. This keeps duplicate prevention in the control plane instead of hoping every provider offers native idempotency.
@@ -64,6 +74,7 @@ Extensions own:
 - API/file/Git delivery
 - remote object inspection
 - provider-specific fingerprints and evidence
+- destination-specific projection payloads used by both preview and delivery
 
 Core must never branch on provider names.
 

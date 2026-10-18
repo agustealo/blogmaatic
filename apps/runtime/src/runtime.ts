@@ -52,6 +52,7 @@ import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
 import { productVersion as installedProductVersion } from "./product-version.js";
 import { PublicationGroupManager } from "./publication-group-manager.js";
+import { PublicationPreviewManager } from "./publication-preview-manager.js";
 import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 import { ScheduleManager } from "./schedule-manager.js";
 import { SchedulerLoop } from "./scheduler.js";
@@ -247,6 +248,11 @@ export async function startRuntime(options: {
     const controlPlane = new AutomationControlPlane({ store: controlPlaneStore, launcher: runtime });
     const publications = new PublicationWorkspaceManager({ store: publicationWorkspaceStore, publicationGroups, controlPlane });
     const schedules = new ScheduleManager({ store: controlPlaneStore });
+    const previews = new PublicationPreviewManager({
+      publications,
+      publicationGroups,
+      extensions,
+    });
     const sourceContent = new WordPressSourceManager({
       content: wordpressContent,
       publisher: wordpressPublisher,
@@ -263,6 +269,7 @@ export async function startRuntime(options: {
       sourceContent,
       publicationGroups,
       publications,
+      previews,
       distributions: projectionState,
       schedules,
       authorizer: new StaticBearerAuthorizer([{
