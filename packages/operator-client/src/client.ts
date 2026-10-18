@@ -52,6 +52,10 @@ import type {
   SchedulePage,
   ScheduleRegistrationBody,
   SchedulerDispatchInput,
+  SourceAuthorAssignBody,
+  SourceAuthorAssignResult,
+  SourceAuthorPage,
+  SourceAuthorQuery,
   SourceAssetAttachBody,
   SourceAssetAttachResult,
   SourceAssetPage,
@@ -243,6 +247,27 @@ export class OperatorClient {
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
+  }
+
+  listSourceAuthors(
+    connectionId: string,
+    query: SourceAuthorQuery = {},
+  ): Promise<SourceAuthorPage> {
+    return this.#request<SourceAuthorPage>(pathWithQuery(
+      `/v1/connections/${encodeURIComponent(connectionId)}/authors`,
+      query,
+    ));
+  }
+
+  assignSourceAuthor(
+    connectionId: string,
+    remoteId: string,
+    input: SourceAuthorAssignBody,
+  ): Promise<SourceAuthorAssignResult> {
+    return this.#request<SourceAuthorAssignResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/authors/${encodeURIComponent(remoteId)}/assign`,
+      { method: "POST", body: input },
+    );
   }
 
   listSourceTaxonomy(
