@@ -22,6 +22,7 @@
   "references": [
     { "path": "../core" },
     { "path": "../extension-sdk" },
+    { "path": "../media" },
     { "path": "../secrets" }
   ]
 }
