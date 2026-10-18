@@ -308,6 +308,124 @@ export function planImageTransform(input: {
 
 export { renderImageTransform, renderImageTransformCached } from "./renderer.js";
 
+function unknownRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : undefined;
+}
+
+function requiredPlanString(record: Readonly<Record<string, unknown>>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || !value) throw new Error(`Image transform plan requires string ${key}`);
+  return value;
+}
+
+function requiredPlanNumber(record: Readonly<Record<string, unknown>>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Image transform plan requires number ${key}`);
+  }
+  return value;
+}
+
+export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
+  const record = unknownRecord(value);
+  if (!record) throw new Error("Image transform plan must be an object");
+  if (record.schemaVersion !== 1) throw new Error("Unsupported image transform plan schemaVersion");
+  if (record.implementationVersion !== MEDIA_TRANSFORM_IMPLEMENTATION) {
+    throw new Error(
+      `Unsupported image transform implementation: ${String(record.implementationVersion ?? "missing")}`,
+    );
+  }
+  const source = unknownRecord(record.source);
+  const spec = unknownRecord(record.spec);
+  const output = unknownRecord(record.output);
+  if (!source || !spec || !output) throw new Error("Image transform plan is incomplete");
+
+  const sourceMediaType = requiredPlanString(source, "mediaType");
+  const outputMediaType = requiredPlanString(output, "mediaType");
+  if (!["image/jpeg", "image/png", "image/webp"].includes(sourceMediaType)) {
+    throw new Error(`Unsupported image transform source media type: ${sourceMediaType}`);
+  }
+  if (!["image/jpeg", "image/png", "image/webp"].includes(outputMediaType)) {
+    throw new Error(`Unsupported image transform output media type: ${outputMediaType}`);
+  }
+
+  const fit = requiredPlanString(spec, "fit");
+  const format = requiredPlanString(spec, "format");
+  if (fit !== "contain" && fit !== "cover") throw new Error(`Unsupported image transform fit: ${fit}`);
+  if (!["preserve", "jpeg", "png", "webp"].includes(format)) {
+    throw new Error(`Unsupported image transform format: ${format}`);
+  }
+  const focal = unknownRecord(spec.focalPoint);
+  if (!focal) throw new Error("Image transform plan requires focalPoint");
+
+  const sourceWidth = requiredPlanNumber(source, "width");
+  const sourceHeight = requiredPlanNumber(source, "height");
+  const sourceByteLength = requiredPlanNumber(source, "byteLength");
+  const outputWidth = requiredPlanNumber(output, "width");
+  const outputHeight = requiredPlanNumber(output, "height");
+  const quality = requiredPlanNumber(spec, "quality");
+  const focalX = requiredPlanNumber(focal, "x");
+  const focalY = requiredPlanNumber(focal, "y");
+  const specWidth = typeof spec.width === "number" ? spec.width : undefined;
+  const specHeight = typeof spec.height === "number" ? spec.height : undefined;
+  const specMaxBytes = typeof spec.maxBytes === "number" ? spec.maxBytes : undefined;
+  const outputMaxBytes = typeof output.maxBytes === "number" ? output.maxBytes : undefined;
+  if (typeof spec.withoutEnlargement !== "boolean") {
+    throw new Error("Image transform plan requires boolean withoutEnlargement");
+  }
+  if (typeof record.renderRequired !== "boolean") {
+    throw new Error("Image transform plan requires boolean renderRequired");
+  }
+
+  const normalized = normalizeImageTransformSpec({
+    ...(specWidth === undefined ? {} : { width: specWidth }),
+    ...(specHeight === undefined ? {} : { height: specHeight }),
+    fit,
+    focalPoint: { x: focalX, y: focalY },
+    format: format as ImageOutputFormat,
+    quality,
+    ...(specMaxBytes === undefined ? {} : { maxBytes: specMaxBytes }),
+    withoutEnlargement: spec.withoutEnlargement,
+  });
+
+  if (
+    sourceWidth <= 0 ||
+    sourceHeight <= 0 ||
+    sourceByteLength <= 0 ||
+    outputWidth <= 0 ||
+    outputHeight <= 0
+  ) {
+    throw new Error("Image transform plan dimensions and byte length must be positive");
+  }
+  if (outputMaxBytes !== normalized.maxBytes) {
+    throw new Error("Image transform plan byte ceiling is inconsistent");
+  }
+
+  return {
+    schemaVersion: 1,
+    implementationVersion: MEDIA_TRANSFORM_IMPLEMENTATION,
+    source: {
+      mediaType: sourceMediaType as ImageMetadata["mediaType"],
+      width: sourceWidth,
+      height: sourceHeight,
+      byteLength: sourceByteLength,
+    },
+    sourceFingerprint: requiredPlanString(record, "sourceFingerprint"),
+    spec: normalized,
+    output: {
+      mediaType: outputMediaType as ImageMetadata["mediaType"],
+      width: outputWidth,
+      height: outputHeight,
+      ...(outputMaxBytes === undefined ? {} : { maxBytes: outputMaxBytes }),
+    },
+    renderRequired: record.renderRequired,
+    transformationFingerprint: requiredPlanString(record, "transformationFingerprint"),
+    derivedAssetId: requiredPlanString(record, "derivedAssetId"),
+  };
+}
+
 export function assertImagePlanRenderableWithoutTransformer(plan: ImageTransformPlan): void {
   if (plan.renderRequired) {
     throw new Error(
