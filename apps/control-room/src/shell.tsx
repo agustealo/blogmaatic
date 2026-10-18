@@ -4,16 +4,12 @@ import { NavLink, Outlet } from "react-router";
 import { useConnection } from "./connection";
 
 const nav = [
-  ["/", "Overview"],
-  ["/publications", "Publications"],
-  ["/connections", "Connections"],
-  ["/publication-groups", "Publication Groups"],
+  ["/", "Home"],
+  ["/publications", "Content"],
+  ["/schedules", "Calendar"],
+  ["/connections", "Destinations"],
   ["/automations", "Automations"],
-  ["/schedules", "Schedules"],
-  ["/operations", "Operations"],
-  ["/approvals", "Approvals"],
-  ["/runs", "Runs"],
-  ["/audit", "Audit"],
+  ["/activity", "Activity"],
 ] as const;
 
 type Theme = "light" | "dark";
@@ -57,7 +53,7 @@ export function AppShell() {
       <div className="workspace">
         <header className="topbar">
           <div>
-            <span className="topbar__product">Publishing workspace</span>
+            <span className="topbar__product">Create once. Publish everywhere.</span>
           </div>
           <div className="topbar__actions">
             <button className="icon-button" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">

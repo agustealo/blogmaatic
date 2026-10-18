@@ -5,6 +5,7 @@ import { ConnectScreen, useConnection } from "./connection";
 import { AppShell } from "./shell";
 import { ApprovalsPage } from "./pages/approvals";
 import { AuditPage } from "./pages/audit";
+import { ActivityPage } from "./pages/activity";
 import { AutomationsPage } from "./pages/automations";
 import { ConnectionsPage } from "./pages/connections";
 import { OperationsPage } from "./pages/operations";
@@ -33,6 +34,7 @@ export function App() {
         <Route path="publications/:publicationId" element={gated(<PublicationsPage />)} />
         <Route path="publication-groups" element={gated(<PublicationGroupsPage />)} />
         <Route path="publication-groups/:groupId" element={gated(<PublicationGroupsPage />)} />
+        <Route path="activity" element={gated(<ActivityPage />)} />
         <Route path="operations" element={gated(<OperationsPage />)} />
         <Route path="approvals" element={gated(<ApprovalsPage />)} />
         <Route path="runs" element={gated(<RunsPage />)} />

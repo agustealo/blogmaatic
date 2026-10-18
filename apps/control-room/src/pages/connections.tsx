@@ -619,13 +619,14 @@ export function ConnectionsPage() {
   return (
     <>
       <PageHeader
-        eyebrow={setupMode ? "First run · Destination" : "Destinations"}
-        title="Connections"
-        description="Connect real publishing destinations. Blogmaatic shows which enabled Publication Groups depend on each connection before you change or remove it. Credentials remain write-only and are stored in the operating system vault."
+        eyebrow={setupMode ? "First run · Destination" : "Publishing destinations"}
+        title="Destinations"
+        description="Connect the places where Blogmaatic publishes. Test destination health, import source content, and manage routing without exposing stored credentials."
         actions={(
           <div className="topbar__actions">
             {setupMode ? <button className="button button--quiet" type="button" onClick={() => navigate("/setup")}>Back to setup</button> : null}
-            <button className="button button--primary" type="button" onClick={() => startCreate()} disabled={types.length === 0}>New connection</button>
+            <Link className="button button--quiet" to="/publication-groups">Publishing routes</Link>
+            <button className="button button--primary" type="button" onClick={() => startCreate()} disabled={types.length === 0}>Add destination</button>
           </div>
         )}
       />
@@ -635,7 +636,7 @@ export function ConnectionsPage() {
         <Panel><EmptyState title="No publisher contracts are registered">The runtime has no connection-capable publisher extensions available.</EmptyState></Panel>
       ) : (
         <div className={`connection-manager ${editor ? "connection-manager--editing" : ""}`.trim()}>
-          <Panel title="Publishing destinations" meta={`${connections.length} configured`} className="connection-list-panel">
+          <Panel title="Connected destinations" meta={`${connections.length} configured`} className="connection-list-panel">
             {connections.length === 0 ? (
               <EmptyState title="No destinations yet">Create a destination to connect Blogmaatic to Jekyll, WordPress, LinkedIn, Facebook Pages, or another installed publisher.</EmptyState>
             ) : (

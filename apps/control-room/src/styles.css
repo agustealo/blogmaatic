@@ -320,3 +320,52 @@ a.data-table__row:hover { background: var(--surface-2); }
   .wordpress-content-toolbar { grid-template-columns: 1fr; }
   .wordpress-content-row__headline { flex-direction: column; }
 }
+
+
+/* Consumer information architecture */
+.home-actions { display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+.home-action-card { min-height: 138px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); display: grid; align-content: space-between; gap: 8px; box-shadow: var(--shadow); transition: transform .12s ease, border-color .12s ease, background .12s ease; }
+.home-action-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--surface-2); }
+.home-action-card--primary { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.home-action-card > span, .activity-summary-card > span { color: var(--accent); font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
+.home-action-card strong { font-size: 1.08rem; line-height: 1.25; }
+.home-action-card small { color: var(--muted); font-size: .78rem; line-height: 1.5; }
+
+.activity-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.activity-summary-card { min-height: 122px; padding: 17px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); display: grid; align-content: space-between; gap: 5px; }
+.activity-summary-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--surface-2); }
+.activity-summary-card strong { font-size: 1.75rem; letter-spacing: -.035em; }
+.activity-summary-card small { color: var(--muted); font-size: .76rem; line-height: 1.4; }
+.activity-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 18px; }
+.activity-grid__wide { grid-column: 1 / -1; }
+.activity-approval-list, .activity-run-list { display: grid; }
+.activity-approval, .activity-run-row { min-height: 70px; padding: 13px 17px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.activity-approval:last-child, .activity-run-row:last-child { border-bottom: 0; }
+.activity-approval > div:first-child, .activity-run-row > span { min-width: 0; display: grid; gap: 4px; }
+.activity-approval strong, .activity-run-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-approval small, .activity-run-row small { color: var(--muted); font-size: .75rem; }
+.activity-approval__actions { display: flex; align-items: center; gap: 8px; }
+.activity-run-row:hover { background: var(--surface-2); }
+.activity-run-row > span:last-child { justify-items: end; text-align: right; }
+.activity-advanced { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 11px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: .8rem; }
+.activity-advanced a { color: var(--text); font-weight: 750; }
+
+@media (max-width: 1100px) {
+  .home-actions { grid-template-columns: 1fr; }
+  .activity-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .activity-grid { grid-template-columns: 1fr; }
+  .activity-grid__wide { grid-column: auto; }
+}
+
+@media (max-width: 780px) {
+  .mobile-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; gap: 5px; padding: 8px 10px; position: sticky; top: 66px; z-index: 9; }
+  .mobile-nav a { text-align: center; white-space: normal; }
+  .activity-summary { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 480px) {
+  .mobile-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .activity-summary { grid-template-columns: 1fr; }
+  .activity-approval, .activity-run-row { align-items: flex-start; flex-direction: column; }
+  .activity-run-row > span:last-child { justify-items: start; text-align: left; }
+}
