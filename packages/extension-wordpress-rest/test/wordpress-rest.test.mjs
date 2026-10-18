@@ -19,6 +19,7 @@ function makeServer() {
     [1, { id: 1, name: "Editor", slug: "editor", link: "http://example.test/author/editor", avatar_urls: { "96": "http://example.test/avatar/editor.png" } }],
   ]);
   const mediaUploads = [];
+  const termCreateRaces = new Set();
   let nextPost = 10;
   let nextTerm = 20;
   let nextMedia = 30;
@@ -177,6 +178,17 @@ function makeServer() {
       if (request.method === "POST" && path === `/${name}`) {
         const existing = [...collection.values()].find((term) => term.slug === body.slug);
         if (existing) return json(response, 400, { code: "term_exists", message: "Exists", data: { status: 400, term_id: existing.id } });
+        if (termCreateRaces.delete(`${name}:${body.slug}`)) {
+          const raced = {
+            id: nextTerm++,
+            name: body.name,
+            slug: body.slug,
+            ...(body.description ? { description: body.description } : {}),
+            count: 0,
+          };
+          collection.set(raced.id, raced);
+          return json(response, 400, { code: "term_exists", message: "Exists", data: { status: 400, term_id: raced.id } });
+        }
         const term = {
           id: nextTerm++,
           name: body.name,
@@ -264,6 +276,7 @@ function makeServer() {
     media,
     users,
     mediaUploads,
+    termCreateRaces,
     get counts() {
       return { postCreates, postUpdates };
     },
@@ -825,6 +838,17 @@ test("source content service deliberately creates taxonomy and recovers existing
     assert.equal(same.id, created.id);
     assert.equal(api.categories.size, 1);
 
+    api.termCreateRaces.add("tags:race-tag");
+    const raced = await content.createTerm("wp-1", "tag", {
+      name: "Race Tag",
+      slug: "race-tag",
+      description: "Created concurrently",
+    });
+    assert.equal(raced.slug, "race-tag");
+    assert.equal(raced.description, "Created concurrently");
+    assert.equal(api.tags.size, 1);
+
+    api.tags.clear();
     api.tags.set(88, {
       id: 88,
       name: "Existing Tag",
