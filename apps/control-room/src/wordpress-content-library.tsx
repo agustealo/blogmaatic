@@ -80,13 +80,29 @@ export function WordPressContentLibrary({
   }, [client, connection.id, search]);
 
   useEffect(() => {
+    let active = true;
     setItems([]);
     setPage(1);
     setHasMore(false);
     setRevisions({});
     setPendingDelete(null);
-    void load();
-  }, [connection.id, load]);
+    setLoading(true);
+    setError(null);
+    void client.listSourceContent(connection.id, { page: 1, limit: 30 })
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setPage(result.page);
+        setHasMore(result.hasMore);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress content could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connection.id]);
 
   const replaceItem = useCallback((next: SourceContentRecord) => {
     setItems((current) => current.map((item) => item.remoteId === next.remoteId ? next : item));
