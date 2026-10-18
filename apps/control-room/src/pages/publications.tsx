@@ -334,9 +334,9 @@ export function PublicationsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Content workspace"
-        title="Publications"
-        description="Create, revise, approve, and publish real content through Blogmaatic's durable automation engine. Publication IDs and revisions are server-owned; publishing dispatches the canonical approval event into enabled Automations."
+        eyebrow="Your publishing workspace"
+        title="Content"
+        description="Create, import, revise, approve, and publish from one place. Blogmaatic keeps every revision and tracks where each version was sent."
         actions={<button className="button button--primary" type="button" onClick={startCreate} disabled={busy !== null}>New Publication</button>}
       />
       <ErrorBanner error={actionError ?? collection.error} />
@@ -360,7 +360,7 @@ export function PublicationsPage() {
       </div>
 
       <div className={`publication-workspace ${editor ? "publication-workspace--editing" : ""}`.trim()}>
-        <Panel title="Publication library" meta={`${collection.items.length}${collection.nextCursor ? "+" : ""} shown`} className="publication-list-panel">
+        <Panel title="Content library" meta={`${collection.items.length}${collection.nextCursor ? "+" : ""} shown`} className="publication-list-panel">
           {collection.loading ? <LoadingBlock /> : (
             <div className="publication-list">
               {collection.items.map((entry) => (
@@ -374,7 +374,7 @@ export function PublicationsPage() {
               ))}
               {collection.items.length === 0 ? (
                 <div className="publication-empty">
-                  <EmptyState title="No publications yet">Create the first article here, then approve and publish it through your configured Publication Group and Automation.</EmptyState>
+                  <EmptyState title="No content yet">Create your first article here, or import an existing post from a connected WordPress destination.</EmptyState>
                   <button className="button button--primary" type="button" onClick={startCreate}>Create Publication</button>
                 </div>
               ) : null}
