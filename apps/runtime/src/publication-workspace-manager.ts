@@ -306,6 +306,76 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, input.expectedVersion, now);
   }
 
+  async restoreSourceRevision(
+    publicationId: string,
+    expectedVersion: number,
+    source: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly remoteId: string;
+      readonly remoteRevisionId: string;
+      readonly title: string;
+      readonly summary?: string;
+      readonly contentHtml: string;
+      readonly sourceModifiedAt?: string;
+      readonly sourceAuthorId?: number;
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== source.extensionId ||
+      current.publication.provenance.connectionId !== source.connectionId ||
+      current.publication.provenance.remoteId !== source.remoteId
+    ) {
+      throw new Error("Source revision does not match the publication source identity");
+    }
+    const remoteRevisionId = source.remoteRevisionId.trim();
+    if (!remoteRevisionId) throw new Error("Source revision id is required");
+
+    const oldContent = current.publication.current.content;
+    const title = source.title.trim() || oldContent.title;
+    const summary = source.summary?.trim();
+    const html = source.contentHtml;
+    const now = this.#now();
+    const publication: Publication = {
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...oldContent,
+          title,
+          ...(summary ? { summary } : { summary: undefined }),
+          blocks: html.trim()
+            ? [{
+              id: `source-revision-${remoteRevisionId}`,
+              kind: "embed",
+              data: { html },
+            }]
+            : [],
+          attributes: {
+            ...oldContent.attributes,
+            sourceRevisionRecovery: {
+              extensionId: source.extensionId,
+              connectionId: source.connectionId,
+              remoteId: source.remoteId,
+              remoteRevisionId,
+              recoveredAt: now,
+              ...(source.sourceModifiedAt ? { sourceModifiedAt: source.sourceModifiedAt } : {}),
+              ...(source.sourceAuthorId === undefined ? {} : { sourceAuthorId: source.sourceAuthorId }),
+            },
+          },
+        },
+      },
+    };
+    return this.#store.update(publication, expectedVersion, now);
+  }
+
   async setSourcePublishingState(
     publicationId: string,
     expectedVersion: number,
