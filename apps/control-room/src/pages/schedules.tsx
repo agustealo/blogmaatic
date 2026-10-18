@@ -308,6 +308,8 @@ export function SchedulesPage() {
   const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [actionError, setActionError] = useState<Error | null>(null);
   const [createdScheduleId, setCreatedScheduleId] = useState<string | null>(null);
+  const [calendarSchedules, setCalendarSchedules] = useState<readonly AutomationSchedule[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
   const loader = useCallback((cursor?: string) => {
     if (!session) return Promise.resolve({ items: [] });
     const query: ScheduleListQuery = {
@@ -319,9 +321,34 @@ export function SchedulesPage() {
   }, [enabled, session]);
   const collection = usePagedCollection(`schedules:${enabled}`, loader);
 
+  const loadCalendar = useCallback(async () => {
+    if (!session) return;
+    setCalendarLoading(true);
+    try {
+      const items: AutomationSchedule[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await session.client.listSchedules({
+          enabled: true,
+          limit: 200,
+          ...(cursor ? { cursor } : {}),
+        });
+        items.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor);
+      setCalendarSchedules(items);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause : new Error("Publishing calendar could not be loaded"));
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => { void loadCalendar(); }, [loadCalendar]);
+
   const calendarGroups = useMemo(() => {
     const groups = new Map<string, AutomationSchedule[]>();
-    for (const schedule of collection.items) {
+    for (const schedule of calendarSchedules) {
       if (!schedule.enabled || schedule.nextFireAt === null) continue;
       const date = nextLocalDate(schedule);
       const items = groups.get(date) ?? [];
@@ -336,7 +363,7 @@ export function SchedulesPage() {
           left.localTime.localeCompare(right.localTime) || left.id.localeCompare(right.id),
         ),
       }));
-  }, [collection.items]);
+  }, [calendarSchedules]);
 
   const openCreate = useCallback(async () => {
     if (!session) return;
@@ -392,7 +419,7 @@ export function SchedulesPage() {
         enabled: nextEnabled,
       });
       setPendingToggle(null);
-      await collection.reload();
+      await Promise.all([collection.reload(), loadCalendar()]);
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error("Schedule state could not be changed");
       setActionError(error);
@@ -400,13 +427,13 @@ export function SchedulesPage() {
     } finally {
       setBusyScheduleId(null);
     }
-  }, [collection, session]);
+  }, [collection, loadCalendar, session]);
 
   const created = useCallback((schedule: AutomationSchedule) => {
     setCreatedScheduleId(schedule.id);
     setCreateOpen(false);
-    void collection.reload();
-  }, [collection]);
+    void Promise.all([collection.reload(), loadCalendar()]);
+  }, [collection, loadCalendar]);
 
   return (
     <>
@@ -434,7 +461,7 @@ export function SchedulesPage() {
           {...(requestedPublicationId ? { initialPublicationId: requestedPublicationId } : {})}
         />
       ) : null}
-      {!createOpen && !collection.loading ? (
+      {!createOpen && !calendarLoading ? (
         <section className="editorial-calendar" aria-label="Upcoming publishing calendar">
           <div className="editorial-calendar__header">
             <div>
