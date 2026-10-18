@@ -1,0 +1,170 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { PublicationWorkspaceManager } from "../dist/publication-workspace-manager.js";
+
+function managerWith(publication) {
+  let entry = {
+    publication,
+    version: 1,
+    recordedAt: publication.createdAt,
+    updatedAt: publication.createdAt,
+  };
+  let idIndex = 0;
+  const ids = ["metadata-revision-2", "metadata-revision-3", "metadata-revision-4"];
+  const manager = new PublicationWorkspaceManager({
+    store: {
+      async get(id) {
+        return entry.publication.id === id ? entry : undefined;
+      },
+      async update(next, expectedVersion, updatedAt) {
+        assert.equal(expectedVersion, entry.version);
+        entry = {
+          publication: next,
+          version: expectedVersion + 1,
+          recordedAt: updatedAt,
+          updatedAt,
+        };
+        return entry;
+      },
+    },
+    publicationGroups: {},
+    controlPlane: {},
+    now: () => "2026-10-18T14:45:00.000Z",
+    id: () => ids[idIndex++] ?? `metadata-id-${idIndex}`,
+  });
+  return { manager, current: () => entry };
+}
+
+function importedPublication() {
+  return {
+    id: "publication-wp",
+    createdAt: "2026-10-18T14:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-wp-1",
+      ordinal: 1,
+      createdAt: "2026-10-18T14:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Imported WordPress article",
+        language: "en",
+        blocks: [],
+        assets: [
+          {
+            id: "hero",
+            kind: "image",
+            source: "https://example.test/hero.jpg",
+            alt: "Hero",
+            attributes: { wordpressMediaId: 44, featured: true, sourceNote: "keep-me" },
+          },
+          {
+            id: "alternate",
+            kind: "image",
+            source: "https://example.test/alternate.jpg",
+            attributes: { wordpressMediaId: 45 },
+          },
+          {
+            id: "document",
+            kind: "document",
+            source: "https://example.test/file.pdf",
+          },
+        ],
+        tags: ["news"],
+        attributes: {
+          categories: ["News"],
+          wordpress: {
+            connectionId: "wp-main",
+            remoteId: "55",
+            authorId: 3,
+          },
+        },
+      },
+    },
+    provenance: {
+      source: "wordpress",
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      remoteId: "55",
+    },
+  };
+}
+
+test("metadata-only category and featured-image updates create canonical revisions and preserve provider metadata", async () => {
+  const { manager } = managerWith(importedPublication());
+
+  const changed = await manager.update("publication-wp", {
+    expectedVersion: 1,
+    categories: ["Tutorials", " tutorials ", "Guides"],
+    featuredAssetId: "alternate",
+  });
+
+  assert.equal(changed.version, 2);
+  assert.equal(changed.publication.current.ordinal, 2);
+  assert.equal(changed.publication.current.id, "revision_metadata-revision-2");
+  assert.deepEqual(changed.publication.current.content.attributes.categories, ["Tutorials", "tutorials", "Guides"]);
+  assert.deepEqual(changed.publication.current.content.attributes.wordpress, {
+    connectionId: "wp-main",
+    remoteId: "55",
+    authorId: 3,
+  });
+
+  const hero = changed.publication.current.content.assets.find((asset) => asset.id === "hero");
+  const alternate = changed.publication.current.content.assets.find((asset) => asset.id === "alternate");
+  assert.deepEqual(hero.attributes, { wordpressMediaId: 44, sourceNote: "keep-me" });
+  assert.deepEqual(alternate.attributes, { wordpressMediaId: 45, featured: true });
+
+  const removed = await manager.update("publication-wp", {
+    expectedVersion: 2,
+    featuredAssetId: null,
+  });
+  assert.equal(removed.publication.current.ordinal, 3);
+  assert.deepEqual(
+    removed.publication.current.content.assets.find((asset) => asset.id === "alternate").attributes,
+    { wordpressMediaId: 45 },
+  );
+});
+
+test("featured image selection rejects missing and non-image assets without mutating the workspace", async () => {
+  const { manager, current } = managerWith(importedPublication());
+
+  await assert.rejects(
+    () => manager.update("publication-wp", { expectedVersion: 1, featuredAssetId: "missing" }),
+    /Featured asset does not exist/,
+  );
+  assert.equal(current().version, 1);
+
+  await assert.rejects(
+    () => manager.update("publication-wp", { expectedVersion: 1, featuredAssetId: "document" }),
+    /Featured asset must be an image/,
+  );
+  assert.equal(current().version, 1);
+});
+
+test("workspace-native create stores normalized canonical categories", async () => {
+  let created;
+  const manager = new PublicationWorkspaceManager({
+    store: {
+      async create(publication, recordedAt) {
+        created = { publication, version: 1, recordedAt, updatedAt: recordedAt };
+        return created;
+      },
+    },
+    publicationGroups: {},
+    controlPlane: {},
+    now: () => "2026-10-18T14:45:00.000Z",
+    id: (() => {
+      const ids = ["publication-id", "revision-id"];
+      let index = 0;
+      return () => ids[index++] ?? `id-${index}`;
+    })(),
+  });
+
+  const result = await manager.create({
+    title: "Category proof",
+    categories: ["Publishing", " publishing ", "Guides"],
+  });
+
+  assert.equal(result.publication.current.ordinal, 1);
+  assert.deepEqual(result.publication.current.content.attributes.categories, ["Publishing", "publishing", "Guides"]);
+});
