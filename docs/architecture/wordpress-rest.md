@@ -42,7 +42,7 @@ It intentionally does not claim `canonical.publish` because WordPress core does 
 
 Publication IR is rendered into deterministic HTML. Text is escaped by default. Explicit `embed.html` blocks remain deliberate raw HTML supplied by the publication model.
 
-The projection fingerprint covers title, excerpt, stable slug, desired status/schedule, HTML template, taxonomy names, featured-asset selection, and managed-asset byte fingerprints.
+The projection fingerprint covers title, excerpt, stable slug, desired status/schedule, HTML template, taxonomy names, featured-asset selection, source-bound WordPress author identity, and managed-asset byte fingerprints.
 
 Local assets must resolve inside an allowlisted `assetSourceRoots` entry. Local paths are never written into WordPress content.
 
@@ -55,6 +55,23 @@ The media slug includes publication id, asset id, and a prefix of the asset-cont
 HTTP(S) publication assets remain external URLs and are not downloaded by Blogmaatic, avoiding an implicit server-side URL fetch surface.
 
 A featured asset must resolve to a managed WordPress media item because WordPress `featured_media` requires an attachment id.
+
+## Author ownership
+
+WordPress author selection is exposed through the same provider-neutral source boundary as source content, taxonomy, and media. Control Room never calls `/wp/v2/users` directly.
+
+Author lookup uses authenticated edit context and returns only the safe fields Blogmaatic needs for editorial selection: remote id, display name, slug, optional public author link, and optional avatar URL. Email addresses are intentionally not surfaced.
+
+The canonical Publication stores the selected author under `PublicationIR.attributes.sourceAuthor` with:
+
+- extension id
+- connection id
+- remote author id
+- display name when resolved through the author picker
+
+Imported WordPress posts preserve their existing numeric author id from the first canonical revision. Author assignment creates a new immutable Publication revision.
+
+A source author is applied only when its extension and connection match the WordPress destination being compiled. This prevents numeric user ids from one WordPress site from leaking into another site. The resolved author id participates in the projection fingerprint, WordPress request body, verified remote-state hash, and drift inspection.
 
 ## Taxonomy
 
@@ -114,6 +131,7 @@ The verified remote-state hash includes:
 - category ids
 - tag ids
 - featured media id
+- post author id
 
 An out-of-band edit therefore becomes drift even if the post id and ownership marker remain present.
 

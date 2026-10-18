@@ -78,6 +78,26 @@ function tagNames(publication: Publication, route: PublicationRoute): readonly s
   return [...new Set([...publication.current.content.tags, ...extra].map((value) => value.trim()).filter(Boolean))].sort();
 }
 
+function sourceAuthorId(publication: Publication, route: PublicationRoute): number | undefined {
+  const sourceAuthor = publication.current.content.attributes.sourceAuthor;
+  if (!isRecord(sourceAuthor)) return undefined;
+  if (
+    sourceAuthor.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    sourceAuthor.connectionId !== route.destination.connectionId
+  ) {
+    return undefined;
+  }
+  const remoteId = sourceAuthor.remoteId;
+  if (typeof remoteId !== "string" || !/^\d+$/.test(remoteId)) {
+    throw new Error("Canonical WordPress source author remoteId must be a positive integer string");
+  }
+  const parsed = Number(remoteId);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error("Canonical WordPress source author remoteId must be a positive integer string");
+  }
+  return parsed;
+}
+
 function featuredAssetId(publication: Publication, route: PublicationRoute): string | undefined {
   const explicit = getString(variant(route), "featuredAssetId");
   if (explicit) return explicit;
@@ -100,6 +120,7 @@ function semanticPayload(
     tags: [...payload.tags].sort(),
     categories: [...payload.categories].sort(),
     featuredAssetId: payload.featuredAssetId ?? null,
+    authorId: payload.authorId ?? null,
     assets: parsedAssets.map((asset) => ({
       assetId: asset.assetId,
       source: asset.localPath ? "managed-local" : asset.source,
@@ -131,6 +152,7 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       categories: [...(post.categories ?? [])].sort((left, right) => left - right),
       tags: [...(post.tags ?? [])].sort((left, right) => left - right),
       featuredMedia: post.featured_media ?? 0,
+      author: post.author ?? null,
     }),
   );
 }
@@ -244,6 +266,7 @@ function postRequestBody(
     categories,
     tags,
     featured_media: featuredMedia,
+    ...(payload.authorId === undefined ? {} : { author: payload.authorId }),
     ...(payload.status === "future" && payload.scheduledAt
       ? { date_gmt: payload.scheduledAt.replace(/\.\d{3}Z$/, "") }
       : {}),
@@ -342,6 +365,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       : imageTransformSpecFromJson(variant(route).imageTransform);
     const assets = await compileAssets(publication, settings, imageTransform);
     const featured = featuredAssetId(publication, route);
+    const authorId = sourceAuthorId(publication, route);
     const payload: WordPressProjectionPayload = {
       title: publication.current.content.title,
       excerpt: publication.current.content.summary ?? "",
@@ -362,6 +386,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       })),
       ...(scheduledAt ? { scheduledAt } : {}),
       ...(featured ? { featuredAssetId: featured } : {}),
+      ...(authorId === undefined ? {} : { authorId }),
     };
     const fingerprint = projectionFingerprint(semanticPayload(payload, assets));
     return {

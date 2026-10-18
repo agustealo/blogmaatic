@@ -202,6 +202,40 @@ export interface SourceContentImportResult {
   readonly remote: SourceContentRecord;
 }
 
+export interface SourceAuthorQuery {
+  readonly search?: string;
+  readonly page?: number;
+  readonly limit?: number;
+}
+
+export interface SourceAuthorRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly remoteId: string;
+  readonly displayName: string;
+  readonly slug: string;
+  readonly link?: string;
+  readonly avatarUrl?: string;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceAuthorPage {
+  readonly items: readonly SourceAuthorRecord[];
+  readonly page: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
+export interface SourceAuthorAssignBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+}
+
+export interface SourceAuthorAssignResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly author: SourceAuthorRecord;
+}
+
 export interface SourceAssetQuery {
   readonly search?: string;
   readonly page?: number;
@@ -284,6 +318,8 @@ export interface OperatorSourceContentManager {
   list(connectionId: string, query?: SourceContentQuery): Promise<SourceContentPage>;
   get(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
+  listAuthors(connectionId: string, query?: SourceAuthorQuery): Promise<SourceAuthorPage>;
+  assignAuthor(connectionId: string, remoteId: string, body: SourceAuthorAssignBody): Promise<SourceAuthorAssignResult>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;

@@ -53,6 +53,13 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
   }
   const scheduledAt = typeof projection.payload.scheduledAt === "string" ? projection.payload.scheduledAt : undefined;
   const featuredAssetId = typeof projection.payload.featuredAssetId === "string" ? projection.payload.featuredAssetId : undefined;
+  const authorIdRaw = projection.payload.authorId;
+  if (
+    authorIdRaw !== undefined &&
+    (typeof authorIdRaw !== "number" || !Number.isSafeInteger(authorIdRaw) || authorIdRaw < 1)
+  ) {
+    throw new Error("WordPress projection authorId must be a positive integer");
+  }
   const assetsParsed = parseAssets(projection.payload.assets);
   return {
     title: requiredString(projection.payload, "title"),
@@ -67,6 +74,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
       : [],
     ...(scheduledAt ? { scheduledAt } : {}),
     ...(featuredAssetId ? { featuredAssetId } : {}),
+    ...(authorIdRaw === undefined ? {} : { authorId: authorIdRaw }),
     assetsParsed,
   };
 }

@@ -11,6 +11,7 @@ import type {
   PublicationWorkspaceEntry,
   PublicationWorkspaceUpdateBody,
   SourceAssetRecord,
+  SourceAuthorRecord,
   SourceTaxonomyKind,
   SourceTaxonomyRecord,
   WorkspacePublicationStatus,
@@ -172,6 +173,150 @@ function statusTone(status: string): "good" | "warn" | "bad" | "neutral" {
   if (status === "ready") return "warn";
   if (status === "archived") return "neutral";
   return "neutral";
+}
+
+function canonicalSourceAuthor(entry: PublicationWorkspaceEntry): {
+  readonly remoteId?: string;
+  readonly displayName?: string;
+} {
+  const value = entry.publication.current.content.attributes.sourceAuthor;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Readonly<Record<string, unknown>>;
+  return {
+    ...(typeof record.remoteId === "string" ? { remoteId: record.remoteId } : {}),
+    ...(typeof record.displayName === "string" ? { displayName: record.displayName } : {}),
+  };
+}
+
+function SourceAuthorPanel({
+  entry,
+  connectionId,
+  onAssigned,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly onAssigned: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [search, setSearch] = useState("");
+  const [items, setItems] = useState<readonly SourceAuthorRecord[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const currentAuthor = canonicalSourceAuthor(entry);
+
+  const load = useCallback(async (nextPage = 1, append = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await client.listSourceAuthors(connectionId, {
+        page: nextPage,
+        limit: 30,
+        ...(search.trim() ? { search: search.trim() } : {}),
+      });
+      setItems((current) => append ? [...current, ...result.items] : result.items);
+      setPage(result.page);
+      setHasMore(result.hasMore);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress authors could not be loaded"));
+    } finally {
+      setLoading(false);
+    }
+  }, [client, connectionId, search]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void client.listSourceAuthors(connectionId, { page: 1, limit: 30 })
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setPage(result.page);
+        setHasMore(result.hasMore);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress authors could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connectionId]);
+
+  const assign = useCallback(async (author: SourceAuthorRecord) => {
+    setBusy(author.remoteId);
+    setError(null);
+    try {
+      const result = await client.assignSourceAuthor(connectionId, author.remoteId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+      });
+      onAssigned(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress author could not be assigned"));
+    } finally {
+      setBusy(null);
+    }
+  }, [client, connectionId, entry.publication.id, entry.version, onAssigned]);
+
+  return (
+    <Panel title="WordPress author" meta="Canonical post ownership" className="source-author-panel">
+      <ErrorBanner error={error} />
+      <div className="source-author-current">
+        <small>Current author</small>
+        <strong>{currentAuthor.displayName ?? (currentAuthor.remoteId ? `WordPress user #${currentAuthor.remoteId}` : "Not explicitly assigned")}</strong>
+      </div>
+      <div className="source-author-toolbar">
+        <label className="field">
+          <span>Search authors</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void load(1, false);
+              }
+            }}
+            placeholder="Search WordPress authors"
+          />
+        </label>
+        <button className="button button--quiet" type="button" onClick={() => void load(1, false)} disabled={loading}>Search</button>
+      </div>
+      {loading && items.length === 0 ? <LoadingBlock /> : (
+        <div className="source-author-list">
+          {items.map((author) => {
+            const current = author.remoteId === currentAuthor.remoteId;
+            return (
+              <div className="source-author-row" key={author.remoteId}>
+                <span className="source-author-row__identity">
+                  {author.avatarUrl ? <img src={author.avatarUrl} alt="" loading="lazy" /> : <span className="source-author-row__avatar">{author.displayName.slice(0, 1).toUpperCase()}</span>}
+                  <span><strong>{author.displayName}</strong><small>@{author.slug}</small></span>
+                </span>
+                <span className="source-author-row__actions">
+                  {current ? <StatusPill value="current" tone="good" /> : null}
+                  <button className="button button--quiet" type="button" onClick={() => void assign(author)} disabled={busy !== null || current}>
+                    {busy === author.remoteId ? "Assigning…" : current ? "Assigned" : "Use author"}
+                  </button>
+                </span>
+              </div>
+            );
+          })}
+          {items.length === 0 ? <EmptyState title="No authors found">No WordPress authors match this search.</EmptyState> : null}
+        </div>
+      )}
+      {hasMore ? (
+        <div className="collection-footer">
+          <button className="button button--quiet" type="button" onClick={() => void load(page + 1, true)} disabled={loading}>Load more</button>
+        </div>
+      ) : null}
+    </Panel>
+  );
 }
 
 function SourceTaxonomyPanel({
@@ -1173,6 +1318,16 @@ export function PublicationsPage() {
           {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
           typeof activeEntry.publication.provenance.connectionId === "string" ? (
             <>
+              <SourceAuthorPanel
+                entry={activeEntry}
+                connectionId={activeEntry.publication.provenance.connectionId}
+                onAssigned={(next) => {
+                  setActiveEntry(next);
+                  setEditor(editorForEntry(next));
+                  setPendingPublish(false);
+                  setChangeNonce((value) => value + 1);
+                }}
+              />
               <SourceTaxonomyPanel
                 connectionId={activeEntry.publication.provenance.connectionId}
                 onSelect={(kind, name) => {
