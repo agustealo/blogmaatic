@@ -23,6 +23,7 @@ import {
 import { useConnection } from "../connection";
 import { formatInstant } from "../format";
 import { usePagedCollection } from "../hooks";
+import { WordPressImportWorkspace } from "../wordpress-content-library";
 
 type EditorMode = "create" | "edit";
 
@@ -335,6 +336,7 @@ export function PublicationsPage() {
   const { session } = useConnection();
   const client = session!.client;
   const [statusFilter, setStatusFilter] = useState<"" | WorkspacePublicationStatus>("");
+  const [importOpen, setImportOpen] = useState(false);
   const [editor, setEditor] = useState<PublicationEditor | null>(null);
   const [activeEntry, setActiveEntry] = useState<PublicationWorkspaceEntry | null>(null);
   const [busy, setBusy] = useState<"save" | "publish" | null>(null);
@@ -470,9 +472,18 @@ export function PublicationsPage() {
         eyebrow="Your publishing workspace"
         title="Content"
         description="Create, import, revise, approve, and publish from one place. Blogmaatic keeps every revision and tracks where each version was sent."
-        actions={<button className="button button--primary" type="button" onClick={startCreate} disabled={busy !== null}>New Publication</button>}
+        actions={(
+          <div className="topbar__actions">
+            <button className="button button--quiet" type="button" onClick={() => setImportOpen((current) => !current)} disabled={busy !== null}>
+              {importOpen ? "Close import" : "Import from WordPress"}
+            </button>
+            <button className="button button--primary" type="button" onClick={startCreate} disabled={busy !== null}>New Publication</button>
+          </div>
+        )}
       />
       <ErrorBanner error={actionError ?? collection.error} />
+
+      {importOpen ? <WordPressImportWorkspace onClose={() => setImportOpen(false)} /> : null}
 
       {dispatchResult ? (
         <div className={dispatchResult.runs.length ? "success-banner" : "warning-banner"} role="status">
