@@ -302,7 +302,7 @@ export function PublicationGroupsPage() {
     <>
       <PageHeader
         eyebrow="Publishing topology"
-        title="Publication Groups"
+        title="Publishing routes"
         description="Manage the durable sets of destinations Blogmaatic publishes to together. These are the same canonical groups used by Automations, connection guards, and run snapshots."
         actions={<button className="button button--primary" type="button" onClick={startCreate} disabled={supportLoading || policySetIds.length === 0}>New Publication Group</button>}
       />
