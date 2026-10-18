@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import type { Publication } from "@blogmaatic/core";
+import { planImageTransform, type ImageTransformSpec } from "@blogmaatic/media";
 
 import { sha256 } from "./fingerprint.js";
 import { approvedLocalPath } from "./path-safety.js";
@@ -9,6 +10,7 @@ import type { CompiledWordPressAsset, WordPressSettings } from "./types.js";
 export async function compileAssets(
   publication: Publication,
   settings: WordPressSettings,
+  transformSpec?: ImageTransformSpec,
 ): Promise<readonly CompiledWordPressAsset[]> {
   const compiled: CompiledWordPressAsset[] = [];
   for (const asset of publication.current.content.assets) {
@@ -30,12 +32,21 @@ export async function compileAssets(
     }
     const localPath = await approvedLocalPath(asset.source, settings.assetSourceRoots);
     const bytes = await readFile(localPath);
+    let transform;
+    if (asset.kind === "image" && transformSpec) {
+      transform = planImageTransform({ bytes, spec: transformSpec });
+      if (asset.mediaType && asset.mediaType !== transform.source.mediaType) {
+        throw new Error(
+          `WordPress image mediaType ${asset.mediaType} does not match detected bytes ${transform.source.mediaType}`,
+        );
+      }
+    }
     compiled.push({
       assetId: asset.id,
       source: asset.source,
       localPath,
-      fingerprint: sha256(bytes),
-      ...(asset.mediaType ? { mediaType: asset.mediaType } : {}),
+      fingerprint: transform?.transformationFingerprint ?? sha256(bytes),
+      ...(transform ? { mediaType: transform.output.mediaType, transform } : asset.mediaType ? { mediaType: asset.mediaType } : {}),
       ...(asset.alt ? { alt: asset.alt } : {}),
     });
   }
