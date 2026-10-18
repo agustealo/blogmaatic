@@ -318,9 +318,9 @@ export function AutomationsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Automation registry"
+        eyebrow="Publishing workflows"
         title="Automations"
-        description="Compose manual and event publishing workflows through the canonical immutable Automation registry. Conditions and ordered publish, approval, and delay steps are executed by the same runtime contract shown here."
+        description="Choose what should happen automatically when content is approved, scheduled, or run manually. Blogmaatic keeps version history behind the scenes."
         actions={<button className="button button--primary" type="button" onClick={() => void openCreate()} disabled={busy !== null}>New Automation</button>}
       />
       <ErrorBanner error={actionError ?? collection.error} />
@@ -363,7 +363,7 @@ export function AutomationsPage() {
               })}
               {collection.items.length === 0 ? (
                 <div className="automation-create-empty">
-                  <EmptyState title="No automations yet">Create the first publishing workflow here. Blogmaatic stores it in the same immutable registry used by event routing, manual runs, approvals, and durable execution.</EmptyState>
+                  <EmptyState title="No automations yet">Create a workflow for repeatable publishing, approvals, delays, or manual runs.</EmptyState>
                   <button className="button button--primary" type="button" onClick={() => void openCreate()}>Create Automation</button>
                 </div>
               ) : null}
