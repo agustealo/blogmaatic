@@ -209,3 +209,53 @@ test("canonical asset attachment is idempotent and can feature an existing attac
   );
   assert.equal(current().version, 3);
 });
+
+
+test("canonical source author assignment is immutable, idempotent, and source-bound", async () => {
+  const publication = importedPublication();
+  const { manager, current } = managerWith(publication);
+
+  const assigned = await manager.assignSourceAuthor("publication-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "7",
+    displayName: "Editor Seven",
+  });
+  assert.equal(assigned.version, 2);
+  assert.equal(assigned.publication.current.ordinal, 2);
+  assert.equal(assigned.publication.current.id, "revision_metadata-revision-2");
+  assert.deepEqual(assigned.publication.current.content.attributes.sourceAuthor, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "7",
+    displayName: "Editor Seven",
+  });
+  assert.deepEqual(
+    assigned.publication.current.content.attributes.wordpress,
+    publication.current.content.attributes.wordpress,
+  );
+  assert.deepEqual(
+    assigned.publication.current.content.assets,
+    publication.current.content.assets,
+  );
+
+  const retry = await manager.assignSourceAuthor("publication-wp", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "7",
+    displayName: "Editor Seven",
+  });
+  assert.equal(retry.version, 2);
+  assert.equal(retry.publication.current.id, "revision_metadata-revision-2");
+
+  await assert.rejects(
+    () => manager.assignSourceAuthor("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-other",
+      remoteId: "8",
+      displayName: "Wrong Site",
+    }),
+    /does not match the publication source/,
+  );
+  assert.equal(current().version, 2);
+});
