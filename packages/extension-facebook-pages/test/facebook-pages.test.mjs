@@ -284,6 +284,19 @@ test("local image projection renders the deterministic destination media plan be
 
     const delivered = await extension.deliver({ idempotencyKey: "media-transform", projection: first });
     assert.equal(delivered.evidence.imageCount, 1);
+    assert.equal(delivered.evidence.mediaTransforms.length, 1);
+    assert.equal(
+      delivered.evidence.mediaTransforms[0].transformationFingerprint,
+      asset.transform.transformationFingerprint,
+    );
+    assert.equal(
+      delivered.evidence.mediaTransforms[0].derivedAssetId,
+      asset.transform.derivedAssetId,
+    );
+    assert.equal(delivered.evidence.mediaTransforms[0].mediaType, "image/jpeg");
+    assert.equal(delivered.evidence.mediaTransforms[0].width, 12);
+    assert.equal(delivered.evidence.mediaTransforms[0].height, 6);
+    assert.match(delivered.evidence.mediaTransforms[0].outputFingerprint, /^[0-9a-f]{64}$/);
     assert.equal(api.posts.size, 1);
     const post = api.posts.get(delivered.remote.id);
     assert.equal(post.attachments.data[0].subattachments.data.length, 1);
