@@ -414,3 +414,9 @@ a.data-table__row:hover { background: var(--surface-2); }
   .publication-destination-summary__row { align-items: flex-start; flex-direction: column; }
   .publication-destination-summary__row > span:last-child { justify-items: start; }
 }
+
+.publication-schedule-lock { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.publication-schedule-lock small { font-size: .74rem; }
+@media (max-width: 560px) {
+  .publication-schedule-lock { align-items: flex-start; flex-direction: column; }
+}
