@@ -36,6 +36,7 @@ import type {
   PublicationGroupUpdateBody,
   PublicationGroupVersionListQuery,
   PublicationGroupVersionPage,
+  PublicationProjectionPreview,
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
   PublicationWorkspaceDispatchResult,
@@ -330,6 +331,13 @@ export class OperatorClient {
 
   getPublication(publicationId: string): Promise<PublicationWorkspaceEntry> {
     return this.#request<PublicationWorkspaceEntry>(`/v1/publications/${encodeURIComponent(publicationId)}`);
+  }
+
+  previewPublication(publicationId: string, groupId: string): Promise<PublicationProjectionPreview> {
+    return this.#request<PublicationProjectionPreview>(pathWithQuery(
+      `/v1/publications/${encodeURIComponent(publicationId)}/preview`,
+      { groupId },
+    ));
   }
 
   listPublicationDistributions(
