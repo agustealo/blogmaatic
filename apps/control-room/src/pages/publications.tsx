@@ -4,6 +4,8 @@ import { Link, useNavigate, useParams } from "react-router";
 import type {
   OperatorClientError,
   OperatorDistributionHistoryPage,
+  PublicationGroupRegistryEntry,
+  PublicationProjectionPreview,
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchResult,
   PublicationWorkspaceEntry,
@@ -21,7 +23,7 @@ import {
   StatusPill,
 } from "../components";
 import { useConnection } from "../connection";
-import { formatInstant } from "../format";
+import { formatInstant, safeJson } from "../format";
 import { usePagedCollection } from "../hooks";
 import { WordPressImportWorkspace } from "../wordpress-content-library";
 
@@ -270,6 +272,137 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
           <div><dt>Workspace version</dt><dd>v{entry.version}</dd></div>
         </dl>
       </details>
+    </Panel>
+  );
+}
+
+function ProjectionPreviewPanel({ entry, nonce }: { readonly entry: PublicationWorkspaceEntry; readonly nonce: number }) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [groups, setGroups] = useState<readonly PublicationGroupRegistryEntry[]>([]);
+  const [groupId, setGroupId] = useState("");
+  const [preview, setPreview] = useState<PublicationProjectionPreview | null>(null);
+  const [loadingGroups, setLoadingGroups] = useState(true);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingGroups(true);
+    setError(null);
+    void (async () => {
+      try {
+        const items: PublicationGroupRegistryEntry[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await client.listPublicationGroups({ enabled: true, limit: 100, ...(cursor ? { cursor } : {}) });
+          items.push(...page.items.filter((candidate) => candidate.group.routes.some((route) => route.enabled)));
+          cursor = page.nextCursor;
+        } while (cursor);
+        if (!active) return;
+        setGroups(items);
+        setGroupId((current) => current && items.some((item) => item.group.id === current) ? current : items[0]?.group.id ?? "");
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause : new Error("Publishing routes could not be loaded"));
+      } finally {
+        if (active) setLoadingGroups(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [client]);
+
+  const loadPreview = useCallback(async (selectedGroupId: string) => {
+    if (!selectedGroupId) {
+      setPreview(null);
+      return;
+    }
+    setLoadingPreview(true);
+    setError(null);
+    try {
+      setPreview(await client.previewPublication(entry.publication.id, selectedGroupId));
+    } catch (cause) {
+      setPreview(null);
+      setError(cause instanceof Error ? cause : new Error("Destination preview could not be compiled"));
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, [client, entry.publication.id]);
+
+  useEffect(() => {
+    if (!groupId) {
+      setPreview(null);
+      return;
+    }
+    void loadPreview(groupId);
+  }, [entry.publication.current.id, groupId, loadPreview, nonce]);
+
+  return (
+    <Panel title="Destination preview" meta="Compiled with the real publishing adapters" className="projection-preview-panel">
+      <ErrorBanner error={error} />
+      <div className="projection-preview-toolbar">
+        <label className="field">
+          <span>Preview publishing route</span>
+          <select value={groupId} onChange={(event) => setGroupId(event.target.value)} disabled={loadingGroups || groups.length === 0}>
+            {groups.length === 0 ? <option value="">No enabled routes</option> : null}
+            {groups.map((group) => <option key={group.group.id} value={group.group.id}>{group.group.name}</option>)}
+          </select>
+        </label>
+        <button className="button button--quiet" type="button" onClick={() => void loadPreview(groupId)} disabled={!groupId || loadingPreview}>
+          {loadingPreview ? "Compiling…" : "Refresh preview"}
+        </button>
+      </div>
+      <div className="projection-preview-note">
+        <strong>Truthful local preview.</strong>
+        <span>This is the exact payload Blogmaatic currently compiles for each destination. It does not mean the remote platform has accepted it yet.</span>
+      </div>
+      {loadingGroups || loadingPreview ? <LoadingBlock /> : null}
+      {!loadingGroups && groups.length === 0 ? (
+        <EmptyState title="No enabled publishing route">Create or enable a Publishing route to preview destination-specific output.</EmptyState>
+      ) : null}
+      {preview && !loadingPreview ? (
+        <div className="projection-preview-grid">
+          {preview.items.map((item) => (
+            <article className={item.status === "ready" ? "projection-preview-card" : "projection-preview-card projection-preview-card--error"} key={item.routeId}>
+              <div className="projection-preview-card__header">
+                <span>
+                  <strong>{item.destination.extensionName}</strong>
+                  <small>{item.destination.connectionName} · {item.destination.channel}</small>
+                </span>
+                <StatusPill value={item.status === "ready" ? "compiled" : "cannot compile"} tone={item.status === "ready" ? "good" : "bad"} />
+              </div>
+              {item.status === "error" ? (
+                <div className="projection-preview-error">{item.error}</div>
+              ) : (
+                <>
+                  <div className="projection-preview-facts">
+                    {item.summary.mode ? <span><small>Mode</small><strong>{item.summary.mode}</strong></span> : null}
+                    {item.summary.status ? <span><small>Status</small><strong>{item.summary.status}</strong></span> : null}
+                    {item.summary.path ? <span><small>Path</small><strong>{item.summary.path}</strong></span> : null}
+                    {item.summary.mediaCount !== undefined ? <span><small>Media</small><strong>{item.summary.mediaCount}</strong></span> : null}
+                    {item.summary.fidelity ? (
+                      <span><small>Fidelity</small><strong>{item.summary.fidelity.score}%{item.summary.fidelity.exact ? " exact" : ""}</strong></span>
+                    ) : null}
+                  </div>
+                  {item.summary.title ? <h3>{item.summary.title}</h3> : null}
+                  {item.summary.text ? <pre className="projection-preview-text">{item.summary.text}</pre> : null}
+                  {item.summary.publicUrl ? <p className="projection-preview-link">Link: {item.summary.publicUrl}</p> : null}
+                  {item.summary.scheduledAt ? <p className="projection-preview-link">Scheduled: {formatInstant(item.summary.scheduledAt)}</p> : null}
+                  {item.summary.fidelity?.issues ? (
+                    <details className="projection-preview-details">
+                      <summary>Fidelity notes</summary>
+                      <pre>{safeJson(item.summary.fidelity.issues)}</pre>
+                    </details>
+                  ) : null}
+                  <details className="projection-preview-details">
+                    <summary>Compiled payload</summary>
+                    <pre>{safeJson(item.payload)}</pre>
+                  </details>
+                </>
+              )}
+            </article>
+          ))}
+        </div>
+      ) : null}
     </Panel>
   );
 }
@@ -579,6 +712,7 @@ export function PublicationsPage() {
       {editor?.mode === "edit" && editor.publicationId && activeEntry ? (
         <div className="publication-studio-support">
           <PublishingSummaryPanel entry={activeEntry} nonce={changeNonce} />
+          <ProjectionPreviewPanel entry={activeEntry} nonce={changeNonce} />
           <VersionsPanel publicationId={editor.publicationId} nonce={changeNonce} />
           <DistributionHistoryPanel publicationId={editor.publicationId} currentRevisionId={activeEntry.publication.current.id} nonce={changeNonce} />
         </div>
