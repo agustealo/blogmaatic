@@ -52,6 +52,10 @@ import type {
   SchedulePage,
   ScheduleRegistrationBody,
   SchedulerDispatchInput,
+  SourceAssetAttachBody,
+  SourceAssetAttachResult,
+  SourceAssetPage,
+  SourceAssetQuery,
   SourceContentImportBody,
   SourceContentImportResult,
   SourceContentPage,
@@ -223,6 +227,27 @@ export class OperatorClient {
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
+  }
+
+  listSourceAssets(
+    connectionId: string,
+    query: SourceAssetQuery = {},
+  ): Promise<SourceAssetPage> {
+    return this.#request<SourceAssetPage>(pathWithQuery(
+      `/v1/connections/${encodeURIComponent(connectionId)}/assets`,
+      query,
+    ));
+  }
+
+  attachSourceAsset(
+    connectionId: string,
+    remoteId: string,
+    input: SourceAssetAttachBody,
+  ): Promise<SourceAssetAttachResult> {
+    return this.#request<SourceAssetAttachResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/assets/${encodeURIComponent(remoteId)}/attach`,
+      { method: "POST", body: input },
+    );
   }
 
   listSourceContent(

@@ -13,7 +13,10 @@ import {
 import { WORDPRESS_REST_EXTENSION_ID, parseSettings } from "./settings.js";
 import type {
   WordPressImportSnapshot,
+  WordPressMediaPage,
+  WordPressMediaQuery,
   WordPressMediaRecord,
+  WordPressMediaView,
   WordPressPostPage,
   WordPressPostQuery,
   WordPressPostRecord,
@@ -78,6 +81,20 @@ function postView(post: WordPressPostRecord): WordPressPostView {
       ? { featuredMediaId: post.featured_media }
       : {}),
     ownership: ownership(post),
+  };
+}
+
+function mediaView(media: WordPressMediaRecord): WordPressMediaView {
+  return {
+    id: media.id,
+    sourceUrl: media.source_url,
+    slug: media.slug,
+    ...(media.mime_type ? { mediaType: media.mime_type } : {}),
+    alt: media.alt_text ?? "",
+    title: rawValue(media.title),
+    ...(typeof media.media_details?.width === "number" ? { width: media.media_details.width } : {}),
+    ...(typeof media.media_details?.height === "number" ? { height: media.media_details.height } : {}),
+    ...(media.modified_gmt ? { modifiedGmt: media.modified_gmt } : {}),
   };
 }
 
@@ -179,6 +196,36 @@ export class WordPressContentService {
       tagNames,
       ...(featuredMedia ? { featuredMedia } : {}),
     };
+  }
+
+  async listMedia(connectionId: string, query: WordPressMediaQuery = {}): Promise<WordPressMediaPage> {
+    const { client } = this.#client(connectionId);
+    const page = requirePage(query.page);
+    const perPage = requirePerPage(query.perPage);
+    const params = new URLSearchParams({
+      context: "edit",
+      media_type: "image",
+      page: String(page),
+      per_page: String(perPage),
+      orderby: "modified",
+      order: "desc",
+    });
+    if (query.search?.trim()) params.set("search", query.search.trim());
+    const records = await client.requestJson<readonly WordPressMediaRecord[]>(
+      `/media?${params.toString()}`,
+    );
+    return {
+      items: records.map(mediaView),
+      page,
+      perPage,
+      hasMore: records.length === perPage,
+    };
+  }
+
+  async getMedia(connectionId: string, remoteId: string): Promise<WordPressMediaView> {
+    const { client } = this.#client(connectionId);
+    const id = requireRemoteId(remoteId);
+    return mediaView(await client.requestJson<WordPressMediaRecord>(`/media/${id}?context=edit`));
   }
 
   async revisions(connectionId: string, remoteId: string): Promise<readonly WordPressRevisionView[]> {

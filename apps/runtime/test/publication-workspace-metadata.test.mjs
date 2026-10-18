@@ -168,3 +168,44 @@ test("workspace-native create stores normalized canonical categories", async () 
   assert.equal(result.publication.current.ordinal, 1);
   assert.deepEqual(result.publication.current.content.attributes.categories, ["Publishing", "publishing", "Guides"]);
 });
+
+
+test("canonical asset attachment is idempotent and can feature an existing attachment without duplication", async () => {
+  const publication = importedPublication();
+  publication.current.content.assets = [];
+  const { manager, current } = managerWith(publication);
+  const asset = {
+    id: "wordpress-media-77",
+    kind: "image",
+    source: "https://example.test/uploads/library.jpg",
+    mediaType: "image/jpeg",
+    alt: "Library",
+    attributes: {
+      wordpressMediaId: 77,
+      sourceConnectionId: "wp-main",
+      sourceRemoteId: "77",
+    },
+  };
+
+  const attached = await manager.attachAsset("publication-wp", 1, asset, false);
+  assert.equal(attached.version, 2);
+  assert.equal(attached.publication.current.ordinal, 2);
+  assert.equal(attached.publication.current.content.assets.length, 1);
+
+  const retry = await manager.attachAsset("publication-wp", 2, asset, false);
+  assert.equal(retry.version, 2);
+  assert.equal(retry.publication.current.content.assets.length, 1);
+
+  const featured = await manager.attachAsset("publication-wp", 2, asset, true);
+  assert.equal(featured.version, 3);
+  assert.equal(featured.publication.current.ordinal, 3);
+  assert.equal(featured.publication.current.content.assets.length, 1);
+  assert.equal(featured.publication.current.content.assets[0].attributes.featured, true);
+  assert.equal(featured.publication.current.content.assets[0].attributes.wordpressMediaId, 77);
+
+  await assert.rejects(
+    () => manager.attachAsset("publication-wp", 3, { ...asset, source: "https://example.test/other.jpg" }, false),
+    /already belongs to a different asset/,
+  );
+  assert.equal(current().version, 3);
+});

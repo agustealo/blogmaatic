@@ -306,6 +306,48 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, input.expectedVersion, now);
   }
 
+  async attachAsset(
+    publicationId: string,
+    expectedVersion: number,
+    asset: PublicationAsset,
+    featured = false,
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    const assetId = asset.id.trim();
+    const source = asset.source.trim();
+    if (!assetId) throw new Error("Publication asset id is required");
+    if (!source) throw new Error("Publication asset source is required");
+
+    const oldContent = current.publication.current.content;
+    const existing = oldContent.assets.find((candidate) => candidate.id === assetId);
+    if (existing && (existing.kind !== asset.kind || existing.source !== source)) {
+      throw new Error(`Publication asset id already belongs to a different asset: ${assetId}`);
+    }
+    const needsFeatureChange = featured && existing?.attributes?.featured !== true;
+    if (existing && !needsFeatureChange) return current;
+
+    const attached = existing ? oldContent.assets : [...oldContent.assets, { ...asset, id: assetId, source }];
+    const assets = featured ? withFeaturedAsset(attached, assetId) : attached;
+    const now = this.#now();
+    const publication: Publication = {
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...oldContent,
+          assets,
+        },
+      },
+    };
+    return this.#store.update(publication, expectedVersion, now);
+  }
+
   async approveAndDispatch(publicationId: string, expectedVersion: number): Promise<PublicationWorkspaceDispatchResult> {
     let entry = await this.#store.get(publicationId);
     if (!entry) throw new Error(`Publication is not registered: ${publicationId}`);

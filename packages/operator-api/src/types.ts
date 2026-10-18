@@ -202,10 +202,51 @@ export interface SourceContentImportResult {
   readonly remote: SourceContentRecord;
 }
 
+export interface SourceAssetQuery {
+  readonly search?: string;
+  readonly page?: number;
+  readonly limit?: number;
+}
+
+export interface SourceAssetRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly remoteId: string;
+  readonly sourceUrl: string;
+  readonly kind: "image";
+  readonly mediaType?: string;
+  readonly title?: string;
+  readonly alt?: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly modifiedAt?: string;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceAssetPage {
+  readonly items: readonly SourceAssetRecord[];
+  readonly page: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
+export interface SourceAssetAttachBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly featured?: boolean;
+}
+
+export interface SourceAssetAttachResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly asset: SourceAssetRecord;
+}
+
 export interface OperatorSourceContentManager {
   list(connectionId: string, query?: SourceContentQuery): Promise<SourceContentPage>;
   get(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
+  listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
+  attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   restore(connectionId: string, remoteId: string): Promise<SourceContentRecord>;

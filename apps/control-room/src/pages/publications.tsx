@@ -10,6 +10,7 @@ import type {
   PublicationWorkspaceDispatchResult,
   PublicationWorkspaceEntry,
   PublicationWorkspaceUpdateBody,
+  SourceAssetRecord,
   WorkspacePublicationStatus,
 } from "@blogmaatic/operator-client";
 
@@ -161,6 +162,155 @@ function statusTone(status: string): "good" | "warn" | "bad" | "neutral" {
   if (status === "ready") return "warn";
   if (status === "archived") return "neutral";
   return "neutral";
+}
+
+function SourceAssetLibraryPanel({
+  entry,
+  connectionId,
+  onAttached,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly onAttached: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [search, setSearch] = useState("");
+  const [items, setItems] = useState<readonly SourceAssetRecord[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+
+  const load = useCallback(async (nextPage = 1, append = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await client.listSourceAssets(connectionId, {
+        page: nextPage,
+        limit: 24,
+        ...(search.trim() ? { search: search.trim() } : {}),
+      });
+      setItems((current) => append ? [...current, ...result.items] : result.items);
+      setPage(result.page);
+      setHasMore(result.hasMore);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Media Library could not be loaded"));
+    } finally {
+      setLoading(false);
+    }
+  }, [client, connectionId, search]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void client.listSourceAssets(connectionId, { page: 1, limit: 24 })
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setPage(result.page);
+        setHasMore(result.hasMore);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("Media Library could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connectionId]);
+
+  const attach = useCallback(async (asset: SourceAssetRecord, featured: boolean) => {
+    const key = `${featured ? "featured" : "attach"}:${asset.remoteId}`;
+    setBusy(key);
+    setError(null);
+    try {
+      const result = await client.attachSourceAsset(connectionId, asset.remoteId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        featured,
+      });
+      onAttached(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Media Library image could not be attached"));
+    } finally {
+      setBusy(null);
+    }
+  }, [client, connectionId, entry.publication.id, entry.version, onAttached]);
+
+  const attachedIds = useMemo(() => new Set(
+    entry.publication.current.content.assets.flatMap((asset) => {
+      const remoteId = asset.attributes?.sourceRemoteId;
+      const sourceConnectionId = asset.attributes?.sourceConnectionId;
+      if (typeof remoteId === "string" && sourceConnectionId === connectionId) return [remoteId];
+      const wordpressMediaId = asset.attributes?.wordpressMediaId;
+      return typeof wordpressMediaId === "number" && Number.isSafeInteger(wordpressMediaId)
+        ? [String(wordpressMediaId)]
+        : [];
+    }),
+  ), [connectionId, entry.publication.current.content.assets]);
+
+  return (
+    <Panel title="Media Library" meta="Attach existing WordPress images" className="source-asset-panel">
+      <ErrorBanner error={error} />
+      <div className="source-asset-toolbar">
+        <label className="field">
+          <span>Search media</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void load(1, false);
+              }
+            }}
+            placeholder="Search WordPress images"
+          />
+        </label>
+        <button className="button button--quiet" type="button" onClick={() => void load(1, false)} disabled={loading}>Search</button>
+      </div>
+      {loading && items.length === 0 ? <LoadingBlock /> : (
+        <div className="source-asset-grid">
+          {items.map((asset) => {
+            const attached = attachedIds.has(asset.remoteId);
+            return (
+              <article className="source-asset-card" key={asset.remoteId}>
+                <div className="source-asset-card__preview">
+                  <img src={asset.sourceUrl} alt={asset.alt ?? asset.title ?? ""} loading="lazy" />
+                </div>
+                <div className="source-asset-card__body">
+                  <strong>{asset.title || asset.alt || `WordPress media #${asset.remoteId}`}</strong>
+                  <small>
+                    {asset.width && asset.height ? `${asset.width}×${asset.height}` : "Image"}
+                    {asset.mediaType ? ` · ${asset.mediaType}` : ""}
+                  </small>
+                  {attached ? <StatusPill value="attached" tone="good" /> : null}
+                </div>
+                <div className="source-asset-card__actions">
+                  <button className="button button--quiet" type="button" onClick={() => void attach(asset, false)} disabled={busy !== null || attached}>
+                    {busy === `attach:${asset.remoteId}` ? "Attaching…" : attached ? "Attached" : "Attach"}
+                  </button>
+                  <button className="button button--primary" type="button" onClick={() => void attach(asset, true)} disabled={busy !== null}>
+                    {busy === `featured:${asset.remoteId}` ? "Setting…" : "Use as featured"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          {items.length === 0 ? <EmptyState title="No images found">This WordPress Media Library returned no images for the current search.</EmptyState> : null}
+        </div>
+      )}
+      {hasMore ? (
+        <div className="collection-footer">
+          <button className="button button--quiet" type="button" onClick={() => void load(page + 1, true)} disabled={loading}>Load more</button>
+        </div>
+      ) : null}
+    </Panel>
+  );
 }
 
 function VersionsPanel({ publicationId, nonce }: { readonly publicationId: string; readonly nonce: number }) {
@@ -808,6 +958,19 @@ export function PublicationsPage() {
 
       {editor?.mode === "edit" && editor.publicationId && activeEntry ? (
         <div className="publication-studio-support">
+          {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
+          typeof activeEntry.publication.provenance.connectionId === "string" ? (
+            <SourceAssetLibraryPanel
+              entry={activeEntry}
+              connectionId={activeEntry.publication.provenance.connectionId}
+              onAttached={(next) => {
+                setActiveEntry(next);
+                setEditor(editorForEntry(next));
+                setPendingPublish(false);
+                setChangeNonce((value) => value + 1);
+              }}
+            />
+          ) : null}
           <PublishingSummaryPanel entry={activeEntry} nonce={changeNonce} />
           <ProjectionPreviewPanel entry={activeEntry} nonce={changeNonce} />
           <VersionsPanel publicationId={editor.publicationId} nonce={changeNonce} />

@@ -14,11 +14,17 @@ import {
   WORDPRESS_REST_EXTENSION_ID,
   WordPressContentService,
   WordPressRestPublisher,
+  type WordPressMediaView,
   type WordPressPostView,
   type WordPressRevisionView,
 } from "@blogmaatic/extension-wordpress-rest";
 import type {
   OperatorSourceContentManager,
+  SourceAssetAttachBody,
+  SourceAssetAttachResult,
+  SourceAssetPage,
+  SourceAssetQuery,
+  SourceAssetRecord,
   SourceContentImportBody,
   SourceContentImportResult,
   SourceContentPage,
@@ -64,6 +70,26 @@ function sourceRecord(connectionId: string, post: WordPressPostView): SourceCont
     ...(post.ownership.publicationId ? { publicationId: post.ownership.publicationId } : {}),
     ...(post.ownership.routeId ? { routeId: post.ownership.routeId } : {}),
     metadata,
+  };
+}
+
+function sourceAssetRecord(connectionId: string, media: WordPressMediaView): SourceAssetRecord {
+  return {
+    connectionId,
+    extensionId: WORDPRESS_REST_EXTENSION_ID,
+    remoteId: String(media.id),
+    sourceUrl: media.sourceUrl,
+    kind: "image",
+    ...(media.mediaType ? { mediaType: media.mediaType } : {}),
+    ...(media.title ? { title: media.title } : {}),
+    ...(media.alt ? { alt: media.alt } : {}),
+    ...(media.width === undefined ? {} : { width: media.width }),
+    ...(media.height === undefined ? {} : { height: media.height }),
+    ...(media.modifiedGmt ? { modifiedAt: media.modifiedGmt } : {}),
+    metadata: {
+      wordpressMediaId: media.id,
+      slug: media.slug,
+    },
   };
 }
 
@@ -180,6 +206,60 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
+    };
+  }
+
+  async listAssets(connectionId: string, query: SourceAssetQuery = {}): Promise<SourceAssetPage> {
+    const page = await this.#content.listMedia(connectionId, {
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.page === undefined ? {} : { page: query.page }),
+      ...(query.limit === undefined ? {} : { perPage: query.limit }),
+    });
+    return {
+      items: page.items.map((media) => sourceAssetRecord(connectionId, media)),
+      page: page.page,
+      limit: page.perPage,
+      hasMore: page.hasMore,
+    };
+  }
+
+  async attachAsset(
+    connectionId: string,
+    remoteId: string,
+    body: SourceAssetAttachBody,
+  ): Promise<SourceAssetAttachResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source asset connection does not match the publication source");
+    }
+
+    const media = await this.#content.getMedia(connectionId, remoteId);
+    const asset: PublicationAsset = {
+      id: `wordpress-media-${media.id}`,
+      kind: "image",
+      source: media.sourceUrl,
+      ...(media.mediaType ? { mediaType: media.mediaType } : {}),
+      ...(media.alt ? { alt: media.alt } : {}),
+      attributes: {
+        wordpressMediaId: media.id,
+        sourceExtensionId: WORDPRESS_REST_EXTENSION_ID,
+        sourceConnectionId: connectionId,
+        sourceRemoteId: String(media.id),
+      },
+    };
+    const publication = await this.#publications.attachAsset(
+      body.publicationId,
+      body.expectedVersion,
+      asset,
+      body.featured ?? false,
+    );
+    return {
+      publication,
+      asset: sourceAssetRecord(connectionId, media),
     };
   }
 
