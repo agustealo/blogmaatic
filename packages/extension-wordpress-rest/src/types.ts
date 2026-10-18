@@ -56,6 +56,39 @@ export interface WordPressMediaRecord {
   readonly id: number;
   readonly source_url: string;
   readonly slug: string;
+  readonly mime_type?: string;
+  readonly alt_text?: string;
+  readonly modified_gmt?: string;
+  readonly title?: { readonly raw?: string; readonly rendered?: string };
+  readonly media_details?: {
+    readonly width?: number;
+    readonly height?: number;
+  };
+}
+
+export interface WordPressMediaQuery {
+  readonly search?: string;
+  readonly page?: number;
+  readonly perPage?: number;
+}
+
+export interface WordPressMediaView {
+  readonly id: number;
+  readonly sourceUrl: string;
+  readonly slug: string;
+  readonly mediaType?: string;
+  readonly alt: string;
+  readonly title: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly modifiedGmt?: string;
+}
+
+export interface WordPressMediaPage {
+  readonly items: readonly WordPressMediaView[];
+  readonly page: number;
+  readonly perPage: number;
+  readonly hasMore: boolean;
 }
 
 export interface WordPressTermRecord {
