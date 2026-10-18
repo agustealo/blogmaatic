@@ -62,6 +62,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceTaxonomyPage,
+  SourceTaxonomyQuery,
   SchedulerDispatchResponse,
 } from "./types.js";
 
@@ -227,6 +229,16 @@ export class OperatorClient {
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
+  }
+
+  listSourceTaxonomy(
+    connectionId: string,
+    query: SourceTaxonomyQuery,
+  ): Promise<SourceTaxonomyPage> {
+    return this.#request<SourceTaxonomyPage>(pathWithQuery(
+      `/v1/connections/${encodeURIComponent(connectionId)}/taxonomy`,
+      query,
+    ));
   }
 
   listSourceAssets(
