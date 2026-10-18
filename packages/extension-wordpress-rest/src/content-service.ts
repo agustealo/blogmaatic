@@ -12,6 +12,7 @@ import {
   stripMarker,
 } from "./fingerprint.js";
 import { WORDPRESS_REST_EXTENSION_ID, parseSettings } from "./settings.js";
+import { findOrCreateTerm } from "./taxonomy.js";
 import type {
   WordPressImportSnapshot,
   WordPressMediaPage,
@@ -250,6 +251,20 @@ export class WordPressContentService {
     const { client } = this.#client(connectionId);
     const id = requireRemoteId(remoteId);
     return userView(await client.requestJson<WordPressUserRecord>(`/users/${id}?context=edit`));
+  }
+
+  async createTerm(
+    connectionId: string,
+    kind: "category" | "tag",
+    input: {
+      readonly name: string;
+      readonly slug?: string;
+      readonly description?: string;
+    },
+  ): Promise<WordPressTermRecord> {
+    const { client } = this.#client(connectionId);
+    const endpoint = kind === "category" ? "categories" : "tags";
+    return findOrCreateTerm(client, endpoint, input);
   }
 
   async listTerms(
