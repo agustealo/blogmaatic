@@ -66,6 +66,16 @@ function makeServer() {
   return { server, posts, requests };
 }
 
+function localPng(width, height) {
+  const bytes = Buffer.alloc(24);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes, 0);
+  bytes.writeUInt32BE(13, 8);
+  Buffer.from("IHDR").copy(bytes, 12);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+}
+
 function publication(source = "https://cdn.example.test/hero.png") {
   return {
     id: "pub-facebook",
@@ -196,5 +206,72 @@ test("local image sources are confined to configured roots", async () => {
     api.server.close();
     await rm(allowed, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+
+test("local image projection records deterministic destination media plan and refuses unrendered transforms", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  const allowed = await mkdtemp(join(tmpdir(), "blogmaatic-fb-media-"));
+  const image = join(allowed, "hero.png");
+  await writeFile(image, localPng(1600, 900));
+  try {
+    const extension = publisher(api.server.address().port, [allowed]);
+    const transformRoute = route({
+      imageTransform: {
+        width: 1200,
+        height: 630,
+        fit: "cover",
+        format: "jpeg",
+        quality: 82,
+        maxBytes: 5000000,
+        focalX: 0.4,
+        focalY: 0.6,
+      },
+    });
+    const first = await extension.compile({ publication: publication(image), route: transformRoute });
+    const second = await extension.compile({ publication: publication(image), route: transformRoute });
+
+    assert.equal(first.fingerprint, second.fingerprint);
+    const asset = first.payload.images[0];
+    assert.equal(asset.mediaType, "image/png");
+    assert.equal(asset.transform.source.width, 1600);
+    assert.equal(asset.transform.source.height, 900);
+    assert.equal(asset.transform.output.width, 1200);
+    assert.equal(asset.transform.output.height, 630);
+    assert.equal(asset.transform.output.mediaType, "image/jpeg");
+    assert.equal(asset.transform.spec.fit, "cover");
+    assert.equal(asset.transform.renderRequired, true);
+    assert.match(asset.transform.transformationFingerprint, /^[0-9a-f]{64}$/);
+
+    await assert.rejects(
+      extension.deliver({ idempotencyKey: "media-transform", projection: first }),
+      /requires a media renderer/,
+    );
+    assert.equal(api.posts.size, 0);
+  } finally {
+    api.server.close();
+    await rm(allowed, { recursive: true, force: true });
+  }
+});
+
+test("local image byte type must match declared media type", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  const allowed = await mkdtemp(join(tmpdir(), "blogmaatic-fb-media-type-"));
+  const image = join(allowed, "hero.png");
+  await writeFile(image, localPng(1200, 630));
+  try {
+    const extension = publisher(api.server.address().port, [allowed]);
+    const mismatch = publication(image);
+    mismatch.current.content.assets[0].mediaType = "image/jpeg";
+    await assert.rejects(
+      extension.compile({ publication: mismatch, route: route() }),
+      /does not match detected bytes/,
+    );
+  } finally {
+    api.server.close();
+    await rm(allowed, { recursive: true, force: true });
   }
 });

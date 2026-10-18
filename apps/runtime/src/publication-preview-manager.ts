@@ -51,8 +51,32 @@ function previewSummary(payload: JsonValue): ProjectionPreviewSummary {
   const record = jsonRecord(payload);
   if (!record) return {};
   const text = SUMMARY_TEXT_KEYS.map((key) => stringValue(record, key)).find(Boolean);
-  const images = Array.isArray(record.images) ? record.images.length : 0;
-  const assets = Array.isArray(record.assets) ? record.assets.length : 0;
+  const imageItems = Array.isArray(record.images) ? record.images : [];
+  const assetItems = Array.isArray(record.assets) ? record.assets : [];
+  const images = imageItems.length;
+  const assets = assetItems.length;
+  const media = [...imageItems, ...assetItems].flatMap((item) => {
+    const asset = jsonRecord(item);
+    if (!asset) return [];
+    const transform = jsonRecord(asset.transform ?? null);
+    if (!transform) return [];
+    const source = jsonRecord(transform.source ?? null);
+    const output = jsonRecord(transform.output ?? null);
+    const spec = jsonRecord(transform.spec ?? null);
+    return [{
+      ...(stringValue(asset, "assetId") ? { assetId: stringValue(asset, "assetId")! } : {}),
+      ...(source && numberValue(source, "width") !== undefined ? { sourceWidth: numberValue(source, "width")! } : {}),
+      ...(source && numberValue(source, "height") !== undefined ? { sourceHeight: numberValue(source, "height")! } : {}),
+      ...(source && stringValue(source, "mediaType") ? { sourceMediaType: stringValue(source, "mediaType")! } : {}),
+      ...(output && numberValue(output, "width") !== undefined ? { outputWidth: numberValue(output, "width")! } : {}),
+      ...(output && numberValue(output, "height") !== undefined ? { outputHeight: numberValue(output, "height")! } : {}),
+      ...(output && stringValue(output, "mediaType") ? { outputMediaType: stringValue(output, "mediaType")! } : {}),
+      ...(spec && stringValue(spec, "fit") ? { fit: stringValue(spec, "fit")! } : {}),
+      ...(booleanValue(transform, "renderRequired") === undefined ? {} : { renderRequired: booleanValue(transform, "renderRequired")! }),
+      ...(stringValue(transform, "transformationFingerprint") ? { transformationFingerprint: stringValue(transform, "transformationFingerprint")! } : {}),
+      ...(stringValue(transform, "derivedAssetId") ? { derivedAssetId: stringValue(transform, "derivedAssetId")! } : {}),
+    }];
+  });
   const fidelity = jsonRecord(record.fidelity ?? null);
   const score = fidelity ? numberValue(fidelity, "score") : undefined;
   const exact = fidelity ? booleanValue(fidelity, "exact") : undefined;
@@ -68,6 +92,7 @@ function previewSummary(payload: JsonValue): ProjectionPreviewSummary {
     ...(stringValue(record, "link") ? { publicUrl: stringValue(record, "link")! } : {}),
     ...(stringValue(record, "scheduledAt") ? { scheduledAt: stringValue(record, "scheduledAt")! } : {}),
     ...(images + assets > 0 ? { mediaCount: images + assets } : {}),
+    ...(media.length > 0 ? { media } : {}),
     ...(score === undefined ? {} : {
       fidelity: {
         score,

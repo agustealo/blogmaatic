@@ -64,6 +64,18 @@ Remote-state verification covers title, excerpt, slug, status, schedule, body, c
 
 Managed media uses content-derived stable slugs. Repeated delivery reuses identical uploaded media, while changed local bytes create a new media identity rather than silently pointing at stale content.
 
+## Destination media planning
+
+`@blogmaatic/media` defines the provider-neutral image transform plan used by publisher projections. Canonical Publication assets remain immutable; a route may instead describe the derived media it requires.
+
+The initial plan contract supports width, height, contain/cover fit, normalized focal point, output format, quality, byte ceiling, and no-enlarge behavior. Local PNG, JPEG, and WebP sources are inspected from their actual bytes to determine dimensions and media type rather than trusting filenames or declared metadata.
+
+Every plan carries the source fingerprint, normalized specification, planned output dimensions/media type, an implementation version, a deterministic transformation fingerprint, and a stable derived asset id. Identical source bytes plus identical normalized requirements therefore produce the same derived identity across retries.
+
+Planning and rendering are deliberately separate authorities. A projection may expose a transform plan before a renderer is available, but delivery must fail closed if the requested output differs from the available source bytes. It is forbidden to label an original image as a transformed destination asset merely because a plan exists.
+
+The first consumer is Facebook Pages. Its route variant may include `imageTransform`, and the resulting media plan participates in the projection fingerprint and Destination Preview. A future renderer adapter can materialize those stable derived identities without changing the publication, route, or projection contracts.
+
 ## Social projection proof
 
 `@blogmaatic/variants` separates adaptation from provider transport. A destination declares a capability profile, and the variant engine turns rich Publication IR into a constrained social representation plus a fidelity report. Unsupported, flattened, truncated, or dropped content is explicit rather than invisible.
