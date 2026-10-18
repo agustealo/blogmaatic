@@ -150,6 +150,11 @@ test("WordPress import creates one canonical publication and recovers it on retr
     connectionId: "wp-main",
     remoteId: "7",
   });
+  assert.deepEqual(first.publication.publication.current.content.attributes.sourcePublishing, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    status: "publish",
+  });
   assert.equal(first.remote.managed, true);
   assert.equal(adoptCount, 1);
   assert.equal(projectionWrites.length, 1);
@@ -724,4 +729,106 @@ test("WordPress source authors browse safely and assign through canonical source
   });
   assert.equal(result.author.remoteId, "7");
   assert.equal(result.author.displayName, "Editor Seven");
+});
+
+
+test("WordPress publishing state validates native status and schedule before canonical mutation", async () => {
+  let mutations = 0;
+  const current = {
+    publication: {
+      id: "publication-wp",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: { schemaVersion: 1, title: "Imported", language: "en", blocks: [], assets: [], tags: [], attributes: {} },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-18T10:00:00.000Z",
+    updatedAt: "2026-10-18T10:00:00.000Z",
+  };
+  const manager = new WordPressSourceManager({
+    content: {},
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get() { return current; },
+      async setSourcePublishingState(publicationId, expectedVersion, state) {
+        mutations += 1;
+        assert.equal(publicationId, "publication-wp");
+        assert.equal(expectedVersion, 4);
+        return {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                attributes: { sourcePublishing: state },
+              },
+            },
+          },
+        };
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.setPublishingState("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      status: "future",
+    }),
+    /requires scheduledAt/,
+  );
+  await assert.rejects(
+    () => manager.setPublishingState("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      status: "draft",
+      scheduledAt: "2026-11-01T18:30:00.000Z",
+    }),
+    /only allowed when status is future/,
+  );
+  await assert.rejects(
+    () => manager.setPublishingState("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      status: "trash",
+    }),
+    /Unsupported WordPress publishing status/,
+  );
+  assert.equal(mutations, 0);
+
+  const result = await manager.setPublishingState("wp-main", {
+    publicationId: "publication-wp",
+    expectedVersion: 4,
+    status: "future",
+    scheduledAt: "2026-11-01T14:30:00-04:00",
+  });
+  assert.equal(result.publication.version, 5);
+  assert.equal(result.status, "future");
+  assert.equal(result.scheduledAt, "2026-11-01T18:30:00.000Z");
+  assert.deepEqual(result.publication.publication.current.content.attributes.sourcePublishing, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    status: "future",
+    scheduledAt: "2026-11-01T18:30:00.000Z",
+  });
+  assert.equal(mutations, 1);
 });
