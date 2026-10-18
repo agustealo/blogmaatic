@@ -192,6 +192,16 @@ export interface SourceContentRevision {
   readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 
+export interface SourceRevisionRestoreBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+}
+
+export interface SourceRevisionRestoreResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly revision: SourceContentRevision;
+}
+
 export interface SourceContentImportBody {
   readonly groupId: string;
   readonly routeId: string;
@@ -331,6 +341,12 @@ export interface OperatorSourceContentManager {
   list(connectionId: string, query?: SourceContentQuery): Promise<SourceContentPage>;
   get(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
+  restoreRevision(
+    connectionId: string,
+    remoteId: string,
+    remoteRevisionId: string,
+    body: SourceRevisionRestoreBody,
+  ): Promise<SourceRevisionRestoreResult>;
   listAuthors(connectionId: string, query?: SourceAuthorQuery): Promise<SourceAuthorPage>;
   assignAuthor(connectionId: string, remoteId: string, body: SourceAuthorAssignBody): Promise<SourceAuthorAssignResult>;
   setPublishingState(connectionId: string, body: SourcePublishingStateBody): Promise<SourcePublishingStateResult>;
