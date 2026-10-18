@@ -495,10 +495,9 @@ export function PublicationsPage() {
             <div className="publication-list">
               {collection.items.map((entry) => (
                 <button className="publication-row" type="button" key={entry.publication.id} onClick={() => startEdit(entry)}>
-                  <span className="publication-row__identity"><strong>{entry.publication.current.content.title}</strong><small>{entry.publication.id}</small></span>
+                  <span className="publication-row__identity"><strong>{entry.publication.current.content.title}</strong><small>{provenanceSource(entry)}</small></span>
                   <span><small>Status</small><StatusPill value={entry.publication.status} tone={statusTone(entry.publication.status)} /></span>
                   <span><small>Revision</small><strong>r{entry.publication.current.ordinal}</strong></span>
-                  <span><small>Workspace</small><strong>v{entry.version}</strong></span>
                   <span><small>Updated</small><strong>{formatInstant(entry.updatedAt)}</strong></span>
                 </button>
               ))}
