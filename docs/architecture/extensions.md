@@ -72,9 +72,11 @@ The initial plan contract supports width, height, contain/cover fit, normalized 
 
 Every plan carries the source fingerprint, normalized specification, planned output dimensions/media type, an implementation version, a deterministic transformation fingerprint, and a stable derived asset id. Identical source bytes plus identical normalized requirements therefore produce the same derived identity across retries.
 
-Planning and rendering are deliberately separate authorities. A projection may expose a transform plan before a renderer is available, but delivery must fail closed if the requested output differs from the available source bytes. It is forbidden to label an original image as a transformed destination asset merely because a plan exists.
+Planning and rendering are deliberately separate authorities. Projection compilation produces the deterministic plan; `@blogmaatic/media` then renders changed bytes through the pinned Sharp 0.35.5 adapter when delivery needs them. The renderer verifies the final dimensions, format and byte ceiling against the plan before the provider sees the asset.
 
-The first consumer is Facebook Pages. Its route variant may include `imageTransform`, and the resulting media plan participates in the projection fingerprint and Destination Preview. A future renderer adapter can materialize those stable derived identities without changing the publication, route, or projection contracts.
+Rendered outputs are cached by the deterministic derived asset identity in a local media cache. Each cache record binds transformation fingerprint, source fingerprint, output fingerprint, final media type, dimensions, byte length and effective quality. Cache entries are verified before reuse, so retries can reuse identical derived bytes without trusting stale or corrupted artifacts.
+
+The first consumer is Facebook Pages. Its route variant may include `imageTransform`, and the resulting media plan participates in the projection fingerprint and Destination Preview. Facebook delivery materializes the derived bytes before upload and records the transformation fingerprint, derived asset id, output fingerprint, final dimensions/media type and cache-reuse state in delivery evidence.
 
 ## Social projection proof
 
