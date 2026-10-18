@@ -175,12 +175,24 @@ async function fetchPost(
   return client.getJson<FacebookPostRecord>(remoteId, { fields: postFields() });
 }
 
+interface UploadedFacebookImage {
+  readonly id: string;
+  readonly assetId: string;
+  readonly transformationFingerprint?: string;
+  readonly derivedAssetId?: string;
+  readonly outputFingerprint?: string;
+  readonly mediaType?: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly cacheHit?: boolean;
+}
+
 async function uploadImage(
   client: FacebookGraphClient,
   settings: FacebookSettings,
   asset: FacebookAssetSpec,
   scheduled: boolean,
-): Promise<string> {
+): Promise<UploadedFacebookImage> {
   const common: Record<string, string> = { published: "false" };
   if (scheduled) common.temporary = "true";
   if (asset.localPath) {
@@ -189,13 +201,29 @@ async function uploadImage(
     for (const [key, value] of Object.entries(common)) form.set(key, value);
     form.set("source", local.blob, local.fileName);
     const uploaded = await client.postMultipart<{ readonly id: string }>(`${settings.pageId}/photos`, form);
-    return uploaded.id;
+    return {
+      id: uploaded.id,
+      assetId: asset.assetId,
+      ...(asset.transform ? {
+        transformationFingerprint: asset.transform.transformationFingerprint,
+        derivedAssetId: asset.transform.derivedAssetId,
+        width: asset.transform.output.width,
+        height: asset.transform.output.height,
+      } : {}),
+      outputFingerprint: local.outputFingerprint,
+      mediaType: local.mediaType,
+      cacheHit: local.cacheHit,
+    };
   }
   const uploaded = await client.postForm<{ readonly id: string }>(`${settings.pageId}/photos`, {
     ...common,
     url: asset.source,
   });
-  return uploaded.id;
+  return {
+    id: uploaded.id,
+    assetId: asset.assetId,
+    ...(asset.mediaType ? { mediaType: asset.mediaType } : {}),
+  };
 }
 
 export class FacebookPagesPublisher implements ManagedPublisherExtension {
@@ -386,12 +414,13 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
     const settings = parseSettings(connection);
     const client = new FacebookGraphClient(connection, settings, this.#secrets);
     const isScheduled = Boolean(payload.scheduledAt);
-    const photoIds: string[] = [];
+    const uploadedImages: UploadedFacebookImage[] = [];
     if (payload.mode === "image") {
       for (const asset of payload.images) {
-        photoIds.push(await uploadImage(client, settings, asset, isScheduled));
+        uploadedImages.push(await uploadImage(client, settings, asset, isScheduled));
       }
     }
+    const photoIds = uploadedImages.map((image) => image.id);
     const params: Record<string, string> = { message: payload.message };
     if (payload.mode === "link" && payload.link) params.link = payload.link;
     photoIds.forEach((id, index) => {
@@ -416,6 +445,16 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
         scheduled: isScheduled,
         fidelityScore: payload.fidelity.score,
         fidelityIssues: payload.fidelity.issues as unknown as JsonValue,
+        mediaTransforms: uploadedImages.map((image) => ({
+          assetId: image.assetId,
+          ...(image.transformationFingerprint ? { transformationFingerprint: image.transformationFingerprint } : {}),
+          ...(image.derivedAssetId ? { derivedAssetId: image.derivedAssetId } : {}),
+          ...(image.outputFingerprint ? { outputFingerprint: image.outputFingerprint } : {}),
+          ...(image.mediaType ? { mediaType: image.mediaType } : {}),
+          ...(image.width === undefined ? {} : { width: image.width }),
+          ...(image.height === undefined ? {} : { height: image.height }),
+          ...(image.cacheHit === undefined ? {} : { cacheHit: image.cacheHit }),
+        })) as unknown as JsonValue,
       },
     };
   }
