@@ -53,6 +53,30 @@ function stringList(input: Record<string, unknown>, key: "tags" | "categories"):
   return value as readonly string[];
 }
 
+function sourceAuthor(input: Record<string, unknown>) {
+  const value = input.sourceAuthor;
+  if (value === undefined || value === null) return value;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new OperatorRequestError("sourceAuthor must be an object or null");
+  }
+  const record = value as Record<string, unknown>;
+  const unknown = Object.keys(record).find((key) => !["extensionId", "connectionId", "remoteId", "name"].includes(key));
+  if (unknown) throw new OperatorRequestError(`sourceAuthor contains unknown field: ${unknown}`);
+  const required = (key: string) => {
+    const candidate = record[key];
+    if (typeof candidate !== "string" || !candidate.trim()) {
+      throw new OperatorRequestError(`sourceAuthor.${key} must be a non-empty string`);
+    }
+    return candidate.trim();
+  };
+  return {
+    extensionId: required("extensionId"),
+    connectionId: required("connectionId"),
+    remoteId: required("remoteId"),
+    name: required("name"),
+  };
+}
+
 function featuredAssetId(input: Record<string, unknown>): string | null | undefined {
   const value = input.featuredAssetId;
   if (value === undefined || value === null) return value;
@@ -131,7 +155,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
 
 export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationWorkspaceUpdateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "featuredAssetId", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "featuredAssetId", "sourceAuthor", "slug", "canonicalUrl", "status"], "request body");
   const title = optionalString(input, "title");
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -143,6 +167,7 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
   const parsedTags = stringList(input, "tags");
   const parsedCategories = stringList(input, "categories");
   const parsedFeaturedAssetId = featuredAssetId(input);
+  const parsedSourceAuthor = sourceAuthor(input);
   const slug = optionalString(input, "slug");
   const canonicalUrl = optionalString(input, "canonicalUrl");
   const parsedStatus = status(input);
@@ -156,6 +181,7 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
     ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
     ...(parsedFeaturedAssetId === undefined ? {} : { featuredAssetId: parsedFeaturedAssetId }),
+    ...(parsedSourceAuthor === undefined ? {} : { sourceAuthor: parsedSourceAuthor }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),
