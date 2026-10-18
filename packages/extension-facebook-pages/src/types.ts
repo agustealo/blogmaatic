@@ -1,3 +1,4 @@
+import type { ImageTransformPlan } from "@blogmaatic/media";
 import type { FidelityReport } from "@blogmaatic/variants";
 
 export type FacebookProjectionMode = "text" | "link" | "image";
@@ -18,6 +19,7 @@ export interface FacebookAssetSpec {
   readonly alt?: string;
   readonly fingerprint?: string;
   readonly localPath?: string;
+  readonly transform?: ImageTransformPlan;
 }
 
 export interface FacebookProjectionPayload {
