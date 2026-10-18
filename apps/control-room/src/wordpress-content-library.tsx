@@ -18,11 +18,13 @@ export function WordPressContentLibrary({
   references,
   title = "WordPress content",
   meta = "Live source library",
+  onImported,
 }: {
   readonly connection: OperatorConnectionView;
   readonly references: readonly PublicationGroupRegistryEntry[];
   readonly title?: string;
   readonly meta?: string;
+  readonly onImported?: () => void;
 }) {
   const { session } = useConnection();
   const client = session!.client;
@@ -104,13 +106,14 @@ export function WordPressContentLibrary({
         routeId: selected.routeId,
       });
       replaceItem(result.remote);
+      onImported?.();
       navigate(`/publications/${encodeURIComponent(result.publication.publication.id)}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error("WordPress post could not be imported"));
     } finally {
       setBusy(null);
     }
-  }, [client, connection.id, importRoute, navigate, replaceItem, routes]);
+  }, [client, connection.id, importRoute, navigate, onImported, replaceItem, routes]);
 
   const loadRevisions = useCallback(async (item: SourceContentRecord) => {
     setBusy(`revisions:${item.remoteId}`);
@@ -358,6 +361,7 @@ export function WordPressImportWorkspace({ onClose }: { readonly onClose: () => 
               references={references}
               title="WordPress posts"
               meta={selected.displayName}
+              onImported={onClose}
             />
           ) : null}
         </>
