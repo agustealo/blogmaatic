@@ -374,7 +374,7 @@ export function imageTransformSpecFromJson(
     ...defaults,
     ...(width === undefined ? {} : { width }),
     ...(height === undefined ? {} : { height }),
-    ...(fit === undefined ? {} : { fit }),
+    ...(fit === undefined ? {} : { fit: fit as ImageFit }),
     ...(
       focalX === undefined && focalY === undefined
         ? {}
@@ -404,12 +404,12 @@ export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
   if (!source || !spec || !output) throw new Error("Image transform plan is incomplete");
 
   const sourceMediaType = requiredPlanString(source, "mediaType");
-  const outputMediaType = requiredPlanString(output, "mediaType");
+  const outputMediaTypeValue = requiredPlanString(output, "mediaType");
   if (!["image/jpeg", "image/png", "image/webp"].includes(sourceMediaType)) {
     throw new Error(`Unsupported image transform source media type: ${sourceMediaType}`);
   }
-  if (!["image/jpeg", "image/png", "image/webp"].includes(outputMediaType)) {
-    throw new Error(`Unsupported image transform output media type: ${outputMediaType}`);
+  if (!["image/jpeg", "image/png", "image/webp"].includes(outputMediaTypeValue)) {
+    throw new Error(`Unsupported image transform output media type: ${outputMediaTypeValue}`);
   }
 
   const fit = requiredPlanString(spec, "fit");
@@ -475,7 +475,7 @@ export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
   if (
     outputWidth !== expectedDimensions.width ||
     outputHeight !== expectedDimensions.height ||
-    outputMediaType !== expectedMediaType
+    outputMediaTypeValue !== expectedMediaType
   ) {
     throw new Error("Image transform plan output is inconsistent with source metadata and spec");
   }
@@ -508,7 +508,7 @@ export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
     sourceFingerprint,
     spec: normalized,
     output: {
-      mediaType: outputMediaType as ImageMetadata["mediaType"],
+      mediaType: outputMediaTypeValue as ImageMetadata["mediaType"],
       width: outputWidth,
       height: outputHeight,
       ...(outputMaxBytes === undefined ? {} : { maxBytes: outputMaxBytes }),
