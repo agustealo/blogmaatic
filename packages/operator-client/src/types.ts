@@ -54,6 +54,10 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceTaxonomyKind,
+  SourceTaxonomyPage,
+  SourceTaxonomyQuery,
+  SourceTaxonomyRecord,
   WorkspacePublicationStatus,
 } from "@blogmaatic/operator-api";
 
@@ -113,6 +117,10 @@ export type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceTaxonomyKind,
+  SourceTaxonomyPage,
+  SourceTaxonomyQuery,
+  SourceTaxonomyRecord,
   WorkspacePublicationStatus,
 };
 

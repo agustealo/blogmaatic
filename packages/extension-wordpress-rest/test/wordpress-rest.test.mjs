@@ -124,7 +124,19 @@ function makeServer() {
     for (const [name, collection] of [["tags", tags], ["categories", categories]]) {
       if (request.method === "GET" && path === `/${name}`) {
         const slug = url.searchParams.get("slug");
-        return json(response, 200, [...collection.values()].filter((term) => !slug || term.slug === slug));
+        const search = url.searchParams.get("search")?.toLowerCase();
+        const page = Number(url.searchParams.get("page") ?? "1");
+        const perPage = Number(url.searchParams.get("per_page") ?? "100");
+        const filtered = [...collection.values()]
+          .filter((term) => {
+            if (slug && term.slug !== slug) return false;
+            if (!search) return true;
+            return [term.name, term.slug, term.description ?? ""]
+              .some((value) => value.toLowerCase().includes(search));
+          })
+          .sort((left, right) => left.name.localeCompare(right.name));
+        const start = (page - 1) * perPage;
+        return json(response, 200, filtered.slice(start, start + perPage));
       }
       if (request.method === "POST" && path === `/${name}`) {
         const existing = [...collection.values()].find((term) => term.slug === body.slug);
@@ -188,6 +200,8 @@ function makeServer() {
   return {
     server,
     posts,
+    tags,
+    categories,
     media,
     mediaUploads,
     get counts() {
@@ -523,6 +537,86 @@ test("source content service browses, adopts, reads revisions, trashes, restores
   }
 });
 
+
+test("source content service searches and paginates WordPress categories and tags", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    api.categories.set(41, {
+      id: 41,
+      name: "Publishing",
+      slug: "publishing",
+      description: "Publishing workflows",
+      count: 8,
+    });
+    api.categories.set(42, {
+      id: 42,
+      name: "Product",
+      slug: "product",
+      description: "Product writing",
+      count: 3,
+    });
+    api.tags.set(51, {
+      id: 51,
+      name: "Automation",
+      slug: "automation",
+      description: "Automation topics",
+      count: 11,
+    });
+
+    const categories = await content.listTerms("wp-1", "category", {
+      search: "pub",
+      page: 1,
+      perPage: 1,
+    });
+    assert.deepEqual(categories, {
+      items: [{
+        id: 41,
+        name: "Publishing",
+        slug: "publishing",
+        description: "Publishing workflows",
+        count: 8,
+      }],
+      page: 1,
+      perPage: 1,
+      hasMore: true,
+    });
+
+    const tags = await content.listTerms("wp-1", "tag", {
+      search: "auto",
+      page: 1,
+      perPage: 10,
+    });
+    assert.deepEqual(tags.items, [{
+      id: 51,
+      name: "Automation",
+      slug: "automation",
+      description: "Automation topics",
+      count: 11,
+    }]);
+    assert.equal(tags.hasMore, false);
+  } finally {
+    api.server.close();
+  }
+});
 
 test("source content service searches and maps WordPress Media Library images", async () => {
   const api = makeServer();

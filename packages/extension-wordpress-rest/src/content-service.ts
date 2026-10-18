@@ -23,6 +23,8 @@ import type {
   WordPressPostView,
   WordPressRevisionRecord,
   WordPressRevisionView,
+  WordPressTermPage,
+  WordPressTermQuery,
   WordPressTermRecord,
 } from "./types.js";
 
@@ -195,6 +197,34 @@ export class WordPressContentService {
       categoryNames,
       tagNames,
       ...(featuredMedia ? { featuredMedia } : {}),
+    };
+  }
+
+  async listTerms(
+    connectionId: string,
+    kind: "category" | "tag",
+    query: WordPressTermQuery = {},
+  ): Promise<WordPressTermPage> {
+    const { client } = this.#client(connectionId);
+    const page = requirePage(query.page);
+    const perPage = requirePerPage(query.perPage);
+    const endpoint = kind === "category" ? "categories" : "tags";
+    const params = new URLSearchParams({
+      context: "edit",
+      page: String(page),
+      per_page: String(perPage),
+      orderby: "name",
+      order: "asc",
+    });
+    if (query.search?.trim()) params.set("search", query.search.trim());
+    const records = await client.requestJson<readonly WordPressTermRecord[]>(
+      `/${endpoint}?${params.toString()}`,
+    );
+    return {
+      items: records,
+      page,
+      perPage,
+      hasMore: records.length === perPage,
     };
   }
 

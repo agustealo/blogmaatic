@@ -306,3 +306,56 @@ test("WordPress source assets browse safely and attach idempotently to matching 
   );
   assert.equal(attachCalls, 1);
 });
+
+
+test("WordPress taxonomy maps through the provider-neutral source boundary", async () => {
+  const manager = new WordPressSourceManager({
+    content: {
+      async listTerms(connectionId, kind, query) {
+        assert.equal(connectionId, "wp-main");
+        assert.equal(kind, "category");
+        assert.deepEqual(query, { search: "pub", page: 2, perPage: 12 });
+        return {
+          items: [{
+            id: 41,
+            name: "Publishing",
+            slug: "publishing",
+            description: "Publishing workflows",
+            count: 8,
+          }],
+          page: 2,
+          perPage: 12,
+          hasMore: true,
+        };
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {},
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const page = await manager.listTaxonomy("wp-main", {
+    kind: "category",
+    search: "pub",
+    page: 2,
+    limit: 12,
+  });
+  assert.deepEqual(page, {
+    items: [{
+      connectionId: "wp-main",
+      extensionId: "blogmaatic.wordpress-rest",
+      kind: "category",
+      remoteId: "41",
+      name: "Publishing",
+      slug: "publishing",
+      description: "Publishing workflows",
+      count: 8,
+      metadata: { wordpressTermId: 41 },
+    }],
+    page: 2,
+    limit: 12,
+    hasMore: true,
+  });
+});

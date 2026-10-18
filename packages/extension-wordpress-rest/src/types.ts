@@ -95,6 +95,21 @@ export interface WordPressTermRecord {
   readonly id: number;
   readonly name: string;
   readonly slug: string;
+  readonly description?: string;
+  readonly count?: number;
+}
+
+export interface WordPressTermQuery {
+  readonly search?: string;
+  readonly page?: number;
+  readonly perPage?: number;
+}
+
+export interface WordPressTermPage {
+  readonly items: readonly WordPressTermRecord[];
+  readonly page: number;
+  readonly perPage: number;
+  readonly hasMore: boolean;
 }
 
 
