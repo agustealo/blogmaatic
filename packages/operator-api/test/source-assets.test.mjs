@@ -21,6 +21,8 @@ async function withApi(fn) {
   let listQuery;
   let attachInput;
   let attachCalls = 0;
+  let uploadInput;
+  let uploadCalls = 0;
   const asset = {
     connectionId: "wp-main",
     extensionId: "blogmaatic.wordpress-rest",
@@ -84,6 +86,12 @@ async function withApi(fn) {
       attachInput = body;
       return { publication, asset };
     },
+    async uploadAsset(connectionId, input) {
+      uploadCalls += 1;
+      assert.equal(connectionId, "wp-main");
+      uploadInput = input;
+      return { publication, asset };
+    },
     async list() { return { items: [], page: 1, limit: 30, hasMore: false }; },
     async get() { throw new Error("unused"); },
     async revisions() { return []; },
@@ -113,7 +121,7 @@ async function withApi(fn) {
     await fn({
       app,
       store,
-      state: () => ({ listQuery, attachInput, attachCalls }),
+      state: () => ({ listQuery, attachInput, attachCalls, uploadInput, uploadCalls }),
     });
   } finally {
     await app.close();
@@ -193,5 +201,55 @@ test("source asset attach is validated, audited, and records resulting canonical
     assert.equal(invalid.statusCode, 400);
     assert.equal(invalid.json().error.code, "INVALID_REQUEST");
     assert.equal(state().attachCalls, 1);
+  });
+});
+
+
+test("source asset binary upload validates metadata, forwards bytes, and records audit evidence", async () => {
+  await withApi(async ({ app, store, state }) => {
+    const bytes = Buffer.from([1, 2, 3, 4, 5]);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/assets/upload?publicationId=publication-wp&expectedVersion=4&featured=true&filename=hero.png&alt=Editorial%20hero&title=Hero",
+      headers: {
+        ...bearer(),
+        "content-type": "image/png",
+      },
+      payload: bytes,
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(state().uploadCalls, 1);
+    assert.equal(state().uploadInput.publicationId, "publication-wp");
+    assert.equal(state().uploadInput.expectedVersion, 4);
+    assert.equal(state().uploadInput.filename, "hero.png");
+    assert.equal(state().uploadInput.mediaType, "image/png");
+    assert.equal(state().uploadInput.featured, true);
+    assert.equal(state().uploadInput.alt, "Editorial hero");
+    assert.equal(state().uploadInput.title, "Hero");
+    assert.deepEqual(Buffer.from(state().uploadInput.bytes), bytes);
+
+    const audit = await store.listAudit({ action: "source-asset.upload", limit: 10 });
+    assert.equal(audit.items.length, 2);
+    const succeeded = audit.items.find((entry) => entry.phase === "succeeded");
+    assert.equal(succeeded.resource.id, "publication-wp");
+    assert.equal(succeeded.evidence.connectionId, "wp-main");
+    assert.equal(succeeded.evidence.filename, "hero.png");
+    assert.equal(succeeded.evidence.mediaType, "image/png");
+    assert.equal(succeeded.evidence.byteLength, bytes.length);
+    assert.equal(succeeded.evidence.assetRemoteId, "77");
+    assert.equal(succeeded.evidence.revisionId, "revision-2");
+
+    const badFilename = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/assets/upload?publicationId=publication-wp&expectedVersion=4&filename=..%2Fsecret.png",
+      headers: {
+        ...bearer(),
+        "content-type": "image/png",
+      },
+      payload: bytes,
+    });
+    assert.equal(badFilename.statusCode, 400);
+    assert.equal(badFilename.json().error.code, "INVALID_REQUEST");
+    assert.equal(state().uploadCalls, 1);
   });
 });

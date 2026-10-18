@@ -359,3 +359,224 @@ test("WordPress taxonomy maps through the provider-neutral source boundary", asy
     hasMore: true,
   });
 });
+
+
+test("WordPress source image upload validates source/version before remote side effects and attaches uploaded media canonically", async () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  let uploadCalls = 0;
+  let deleteCalls = 0;
+  let attachCalls = 0;
+  let current = {
+    publication: {
+      id: "publication-wp",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Imported",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {},
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-18T10:00:00.000Z",
+    updatedAt: "2026-10-18T10:00:00.000Z",
+  };
+  const media = {
+    id: 90,
+    sourceUrl: "https://example.test/uploads/new-hero.png",
+    slug: "new-hero",
+    mediaType: "image/png",
+    mediaKind: "image",
+    title: "New hero",
+    alt: "New hero alt",
+    width: 16,
+    height: 9,
+    modifiedGmt: "2026-10-18T14:00:00",
+  };
+
+  const manager = new WordPressSourceManager({
+    content: {
+      async uploadMedia(connectionId, input) {
+        uploadCalls += 1;
+        assert.equal(connectionId, "wp-main");
+        assert.deepEqual(input.bytes, bytes);
+        assert.equal(input.mediaType, "image/png");
+        assert.equal(input.filename, "hero.png");
+        assert.equal(input.alt, "New hero alt");
+        assert.equal(input.title, "New hero");
+        return media;
+      },
+      async deleteMediaPermanent() {
+        deleteCalls += 1;
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get(id) {
+        return id === "publication-wp" ? current : undefined;
+      },
+      async attachAsset(publicationId, expectedVersion, asset, featured) {
+        attachCalls += 1;
+        assert.equal(publicationId, "publication-wp");
+        assert.equal(expectedVersion, 4);
+        assert.equal(asset.id, "wordpress-media-90");
+        assert.equal(asset.source, media.sourceUrl);
+        assert.equal(asset.mediaType, "image/png");
+        assert.equal(asset.alt, "New hero alt");
+        assert.equal(asset.attributes.wordpressMediaId, 90);
+        assert.equal(asset.attributes.uploadedByBlogmaatic, true);
+        assert.equal(featured, true);
+        current = {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                assets: [{ ...asset, attributes: { ...asset.attributes, featured: true } }],
+              },
+            },
+          },
+        };
+        return current;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.uploadAsset("wp-other", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      filename: "hero.png",
+      mediaType: "image/png",
+      bytes,
+    }),
+    /does not match the publication source/,
+  );
+  assert.equal(uploadCalls, 0);
+
+  await assert.rejects(
+    () => manager.uploadAsset("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 3,
+      filename: "hero.png",
+      mediaType: "image/png",
+      bytes,
+    }),
+    /changed from version 3 to 4/,
+  );
+  assert.equal(uploadCalls, 0);
+
+  const result = await manager.uploadAsset("wp-main", {
+    publicationId: "publication-wp",
+    expectedVersion: 4,
+    filename: "hero.png",
+    mediaType: "image/png",
+    bytes,
+    alt: "New hero alt",
+    title: "New hero",
+    featured: true,
+  });
+  assert.equal(result.publication.version, 5);
+  assert.equal(result.asset.remoteId, "90");
+  assert.equal(uploadCalls, 1);
+  assert.equal(attachCalls, 1);
+  assert.equal(deleteCalls, 0);
+});
+
+test("WordPress source image upload compensates remote media when canonical attach loses its CAS race", async () => {
+  const deleted = [];
+  const manager = new WordPressSourceManager({
+    content: {
+      async uploadMedia() {
+        return {
+          id: 91,
+          sourceUrl: "https://example.test/uploads/race.png",
+          slug: "race",
+          mediaType: "image/png",
+          mediaKind: "image",
+          title: "",
+          alt: "",
+        };
+      },
+      async deleteMediaPermanent(connectionId, remoteId) {
+        deleted.push([connectionId, remoteId]);
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get() {
+        return {
+          publication: {
+            id: "publication-wp",
+            createdAt: "2026-10-18T10:00:00.000Z",
+            status: "draft",
+            current: {
+              id: "revision-1",
+              ordinal: 1,
+              createdAt: "2026-10-18T10:00:00.000Z",
+              content: {
+                schemaVersion: 1,
+                title: "Imported",
+                language: "en",
+                blocks: [],
+                assets: [],
+                tags: [],
+                attributes: {},
+              },
+            },
+            provenance: {
+              source: "wordpress",
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-main",
+              remoteId: "55",
+            },
+          },
+          version: 4,
+          recordedAt: "2026-10-18T10:00:00.000Z",
+          updatedAt: "2026-10-18T10:00:00.000Z",
+        };
+      },
+      async attachAsset() {
+        throw new Error("Publication publication-wp changed from version 4 to 5");
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.uploadAsset("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      filename: "race.png",
+      mediaType: "image/png",
+      bytes: new Uint8Array([1]),
+    }),
+    /changed from version 4 to 5/,
+  );
+  assert.deepEqual(deleted, [["wp-main", "91"]]);
+});

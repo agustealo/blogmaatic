@@ -299,6 +299,10 @@ function SourceAssetLibraryPanel({
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadAlt, setUploadAlt] = useState("");
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadFeatured, setUploadFeatured] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   const load = useCallback(async (nextPage = 1, append = false) => {
@@ -358,6 +362,50 @@ function SourceAssetLibraryPanel({
     }
   }, [client, connectionId, entry.publication.id, entry.version, onAttached]);
 
+  const upload = useCallback(async () => {
+    if (!uploadFile) return;
+    setBusy("upload");
+    setError(null);
+    try {
+      if (!["image/jpeg", "image/png", "image/webp"].includes(uploadFile.type)) {
+        throw new Error("Choose a JPEG, PNG, or WebP image.");
+      }
+      const result = await client.uploadSourceAsset(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        filename: uploadFile.name,
+        mediaType: uploadFile.type,
+        bytes: new Uint8Array(await uploadFile.arrayBuffer()),
+        featured: uploadFeatured,
+        ...(uploadAlt.trim() ? { alt: uploadAlt.trim() } : {}),
+        ...(uploadTitle.trim() ? { title: uploadTitle.trim() } : {}),
+      });
+      setItems((current) => [
+        result.asset,
+        ...current.filter((item) => item.remoteId !== result.asset.remoteId),
+      ]);
+      setUploadFile(null);
+      setUploadAlt("");
+      setUploadTitle("");
+      setUploadFeatured(false);
+      onAttached(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Image could not be uploaded"));
+    } finally {
+      setBusy(null);
+    }
+  }, [
+    client,
+    connectionId,
+    entry.publication.id,
+    entry.version,
+    onAttached,
+    uploadAlt,
+    uploadFeatured,
+    uploadFile,
+    uploadTitle,
+  ]);
+
   const attachedIds = useMemo(() => new Set(
     entry.publication.current.content.assets.flatMap((asset) => {
       const remoteId = asset.attributes?.sourceRemoteId;
@@ -371,8 +419,54 @@ function SourceAssetLibraryPanel({
   ), [connectionId, entry.publication.current.content.assets]);
 
   return (
-    <Panel title="Media Library" meta="Attach existing WordPress images" className="source-asset-panel">
+    <Panel title="Media Library" meta="Upload or attach WordPress images" className="source-asset-panel">
       <ErrorBanner error={error} />
+      <div className="source-asset-upload">
+        <label className="field">
+          <span>Upload image</span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+            disabled={busy !== null}
+          />
+        </label>
+        <label className="field">
+          <span>Image title</span>
+          <input
+            value={uploadTitle}
+            onChange={(event) => setUploadTitle(event.target.value)}
+            placeholder="Optional WordPress media title"
+            disabled={busy !== null}
+          />
+        </label>
+        <label className="field">
+          <span>Alt text</span>
+          <input
+            value={uploadAlt}
+            onChange={(event) => setUploadAlt(event.target.value)}
+            placeholder="Describe the image for accessibility"
+            disabled={busy !== null}
+          />
+        </label>
+        <label className="source-asset-upload__featured">
+          <input
+            type="checkbox"
+            checked={uploadFeatured}
+            onChange={(event) => setUploadFeatured(event.target.checked)}
+            disabled={busy !== null}
+          />
+          <span>Use as featured image</span>
+        </label>
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={() => void upload()}
+          disabled={busy !== null || !uploadFile}
+        >
+          {busy === "upload" ? "Uploading…" : "Upload & attach"}
+        </button>
+      </div>
       <div className="source-asset-toolbar">
         <label className="field">
           <span>Search media</span>

@@ -1,4 +1,5 @@
 import type { CompiledProjection } from "@blogmaatic/core";
+import { inspectImageBytes } from "@blogmaatic/media";
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { SecretAuthority } from "@blogmaatic/secrets";
 
@@ -251,6 +252,58 @@ export class WordPressContentService {
       perPage,
       hasMore: records.length === perPage,
     };
+  }
+
+  async uploadMedia(
+    connectionId: string,
+    input: {
+      readonly bytes: Uint8Array;
+      readonly mediaType: string;
+      readonly filename: string;
+      readonly alt?: string;
+      readonly title?: string;
+    },
+  ): Promise<WordPressMediaView> {
+    const { client } = this.#client(connectionId);
+    const inspected = inspectImageBytes(input.bytes);
+    if (!["image/jpeg", "image/png", "image/webp"].includes(inspected.mediaType)) {
+      throw new Error(`Unsupported WordPress image media type: ${inspected.mediaType}`);
+    }
+    if (input.mediaType !== inspected.mediaType) {
+      throw new Error(
+        `Uploaded image Content-Type ${input.mediaType} does not match detected bytes ${inspected.mediaType}`,
+      );
+    }
+    const rawName = input.filename.trim();
+    if (!rawName || /[\\/\u0000-\u001f\u007f]/u.test(rawName) || rawName === "." || rawName === "..") {
+      throw new Error("WordPress upload filename must be a simple file name");
+    }
+    const extension = inspected.mediaType === "image/png" ? "png" : inspected.mediaType === "image/webp" ? "webp" : "jpg";
+    const stem = rawName.replace(/\.[^.]+$/u, "").trim() || "image";
+    const filename = `${stem}.${extension}`;
+    const created = await client.requestBytes<WordPressMediaRecord>(
+      "/media",
+      input.bytes,
+      inspected.mediaType,
+      filename,
+    );
+    let current = created;
+    if (input.alt !== undefined || input.title !== undefined) {
+      current = await client.requestJson<WordPressMediaRecord>(`/media/${created.id}`, {
+        method: "POST",
+        body: JSON.stringify({
+          ...(input.alt === undefined ? {} : { alt_text: input.alt }),
+          ...(input.title === undefined ? {} : { title: input.title }),
+        }),
+      });
+    }
+    return mediaView(current);
+  }
+
+  async deleteMediaPermanent(connectionId: string, remoteId: string): Promise<void> {
+    const { client } = this.#client(connectionId);
+    const id = requireRemoteId(remoteId);
+    await client.requestJson<unknown>(`/media/${id}?force=true`, { method: "DELETE" });
   }
 
   async getMedia(connectionId: string, remoteId: string): Promise<WordPressMediaView> {

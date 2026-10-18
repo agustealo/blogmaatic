@@ -25,6 +25,7 @@ import type {
   SourceAssetPage,
   SourceAssetQuery,
   SourceAssetRecord,
+  SourceAssetUploadInput,
   SourceContentImportBody,
   SourceContentImportResult,
   SourceContentPage,
@@ -256,6 +257,72 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       limit: page.perPage,
       hasMore: page.hasMore,
     };
+  }
+
+  async uploadAsset(
+    connectionId: string,
+    input: SourceAssetUploadInput,
+  ): Promise<SourceAssetAttachResult> {
+    const current = await this.#publications.get(input.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${input.publicationId}`);
+    if (current.version !== input.expectedVersion) {
+      throw new Error(
+        `Publication ${input.publicationId} changed from version ${input.expectedVersion} to ${current.version}`,
+      );
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source asset connection does not match the publication source");
+    }
+
+    const media = await this.#content.uploadMedia(connectionId, {
+      bytes: input.bytes,
+      mediaType: input.mediaType,
+      filename: input.filename,
+      ...(input.alt === undefined ? {} : { alt: input.alt }),
+      ...(input.title === undefined ? {} : { title: input.title }),
+    });
+    const asset: PublicationAsset = {
+      id: `wordpress-media-${media.id}`,
+      kind: "image",
+      source: media.sourceUrl,
+      ...(media.mediaType ? { mediaType: media.mediaType } : {}),
+      ...(media.alt ? { alt: media.alt } : {}),
+      attributes: {
+        wordpressMediaId: media.id,
+        sourceExtensionId: WORDPRESS_REST_EXTENSION_ID,
+        sourceConnectionId: connectionId,
+        sourceRemoteId: String(media.id),
+        uploadedByBlogmaatic: true,
+      },
+    };
+
+    try {
+      const publication = await this.#publications.attachAsset(
+        input.publicationId,
+        input.expectedVersion,
+        asset,
+        input.featured ?? false,
+      );
+      return {
+        publication,
+        asset: sourceAssetRecord(connectionId, media),
+      };
+    } catch (error) {
+      try {
+        await this.#content.deleteMediaPermanent(connectionId, String(media.id));
+      } catch (cleanupError) {
+        throw new Error(
+          `Canonical source asset attachment failed and WordPress media cleanup also failed for media ${media.id}: ${
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+          }`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
   }
 
   async attachAsset(

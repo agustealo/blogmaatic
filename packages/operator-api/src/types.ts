@@ -241,6 +241,17 @@ export interface SourceAssetAttachResult {
   readonly asset: SourceAssetRecord;
 }
 
+export interface SourceAssetUploadInput {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly filename: string;
+  readonly mediaType: string;
+  readonly bytes: Uint8Array;
+  readonly featured?: boolean;
+  readonly alt?: string;
+  readonly title?: string;
+}
+
 export type SourceTaxonomyKind = "category" | "tag";
 
 export interface SourceTaxonomyQuery {
@@ -275,6 +286,7 @@ export interface OperatorSourceContentManager {
   revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
+  uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
