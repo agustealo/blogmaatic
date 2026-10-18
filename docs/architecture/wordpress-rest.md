@@ -42,7 +42,7 @@ It intentionally does not claim `canonical.publish` because WordPress core does 
 
 Publication IR is rendered into deterministic HTML. Text is escaped by default. Explicit `embed.html` blocks remain deliberate raw HTML supplied by the publication model.
 
-The projection fingerprint covers title, excerpt, stable slug, desired status/schedule, HTML template, taxonomy names, featured-asset selection, source-bound WordPress author identity, and managed-asset byte fingerprints.
+The projection fingerprint covers title, excerpt, stable slug, source-resolved desired status/schedule, HTML template, taxonomy names, featured-asset selection, source-bound WordPress author identity, and managed-asset byte fingerprints.
 
 Local assets must resolve inside an allowlisted `assetSourceRoots` entry. Local paths are never written into WordPress content.
 
@@ -72,6 +72,25 @@ The canonical Publication stores the selected author under `PublicationIR.attrib
 Imported WordPress posts preserve their existing numeric author id from the first canonical revision. Author assignment creates a new immutable Publication revision.
 
 A source author is applied only when its extension and connection match the WordPress destination being compiled. This prevents numeric user ids from one WordPress site from leaking into another site. The resolved author id participates in the projection fingerprint, WordPress request body, verified remote-state hash, and drift inspection.
+
+## Native WordPress publishing state
+
+Blogmaatic workflow status and WordPress post status are deliberately separate concepts.
+
+The canonical workspace continues to use its own lifecycle such as `idea`, `draft`, `ready`, `approved`, and `archived`. A WordPress-sourced Publication may additionally carry `PublicationIR.attributes.sourcePublishing` with source-bound WordPress state:
+
+- extension id
+- connection id
+- native status: `draft`, `pending`, `private`, `publish`, or `future`
+- `scheduledAt` only when status is `future`
+
+The source-native state wins over the route's default WordPress status only when the extension and connection match the destination being compiled. This prevents a WordPress editorial choice from leaking into another WordPress site or a different publishing hub.
+
+A `future` state requires an exact schedule instant. Non-future states reject `scheduledAt`. Control Room accepts local date/time input only as a convenience and immediately converts it to an exact ISO instant before the canonical mutation.
+
+Imported WordPress posts preserve their native status. Scheduled imports normalize WordPress `date_gmt` into an exact UTC instant from canonical revision 1.
+
+This state does not replace Blogmaatic Automation schedules. Automation determines when Blogmaatic runs; source-native state determines what WordPress status/date Blogmaatic asks WordPress to store when the matching route is compiled.
 
 ## Taxonomy
 
