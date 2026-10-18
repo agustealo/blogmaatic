@@ -12,6 +12,7 @@ import type {
   PublicationRoute,
   RemoteIdentity,
 } from "@blogmaatic/core";
+import { imageTransformSpecFromJson, renderImageTransformCached } from "@blogmaatic/media";
 import {
   ConnectionAuthority,
   type ConnectionRecord,
@@ -156,7 +157,10 @@ export class JekyllGitPublisher implements ManagedPublisherExtension {
       route.destination.connectionId,
     );
     const settings = parseSettings(connection);
-    const assets = await assetOperations(publication, settings);
+    const imageTransform = route.variant?.imageTransform === undefined
+      ? undefined
+      : imageTransformSpecFromJson(route.variant.imageTransform);
+    const assets = await assetOperations(publication, settings, imageTransform);
     const publishedAssets = new Map(
       assets.map((asset) => [asset.assetId, `/${asset.relativePath}`] as const),
     );
@@ -173,6 +177,8 @@ export class JekyllGitPublisher implements ManagedPublisherExtension {
         sourcePath: asset.sourcePath,
         relativePath: asset.relativePath,
         fingerprint: asset.fingerprint,
+        ...(asset.mediaType ? { mediaType: asset.mediaType } : {}),
+        ...(asset.transform ? { transform: asset.transform as unknown as JsonValue } : {}),
       })),
       ...(url ? { publicUrl: url } : {}),
     };
@@ -321,7 +327,21 @@ export class JekyllGitPublisher implements ManagedPublisherExtension {
     try {
       await atomicWrite(target, payload.content);
       for (const asset of assetTargets) {
-        await atomicCopy(asset.sourcePath, asset.target);
+        if (asset.transform) {
+          const rendered = await renderImageTransformCached({
+            sourcePath: asset.sourcePath,
+            plan: asset.transform,
+          });
+          if (!rendered.cachePath) {
+            throw new Error(`Rendered Jekyll asset cache path is unavailable: ${asset.assetId}`);
+          }
+          if (rendered.outputFingerprint !== asset.fingerprint) {
+            throw new Error(`Rendered Jekyll asset fingerprint changed after compilation: ${asset.assetId}`);
+          }
+          await atomicCopy(rendered.cachePath, asset.target);
+        } else {
+          await atomicCopy(asset.sourcePath, asset.target);
+        }
       }
 
       if (settings.buildVerification === "bundle") {
@@ -386,6 +406,17 @@ export class JekyllGitPublisher implements ManagedPublisherExtension {
         relativePath: payload.relativePath,
         pushed: settings.push,
         idempotencyKey: request.idempotencyKey,
+        mediaTransforms: payload.assets
+          .filter((asset) => asset.transform)
+          .map((asset) => ({
+            assetId: asset.assetId,
+            transformationFingerprint: asset.transform!.transformationFingerprint,
+            derivedAssetId: asset.transform!.derivedAssetId,
+            outputFingerprint: asset.fingerprint,
+            mediaType: asset.transform!.output.mediaType,
+            width: asset.transform!.output.width,
+            height: asset.transform!.output.height,
+          })) as unknown as JsonValue,
       },
     };
   }

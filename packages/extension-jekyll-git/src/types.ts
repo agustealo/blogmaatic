@@ -1,3 +1,5 @@
+import type { ImageTransformPlan } from "@blogmaatic/media";
+
 export interface JekyllGitSettings {
   readonly repositoryPath: string;
   readonly branch: string;
@@ -18,6 +20,8 @@ export interface AssetOperation {
   readonly sourcePath: string;
   readonly relativePath: string;
   readonly fingerprint: string;
+  readonly mediaType?: string;
+  readonly transform?: ImageTransformPlan;
 }
 
 export interface JekyllPayload {

@@ -1,4 +1,5 @@
 import type { CompiledProjection, JsonValue } from "@blogmaatic/core";
+import { parseImageTransformPlan } from "@blogmaatic/media";
 
 import { isRecord, stringArray } from "./json.js";
 import type { CompiledWordPressAsset, WordPressProjectionPayload } from "./types.js";
@@ -19,6 +20,7 @@ function parseAssets(value: JsonValue | undefined): readonly CompiledWordPressAs
     const alt = typeof entry.alt === "string" ? entry.alt : undefined;
     const fingerprint = typeof entry.fingerprint === "string" ? entry.fingerprint : undefined;
     const localPath = typeof entry.localPath === "string" ? entry.localPath : undefined;
+    const transform = entry.transform === undefined ? undefined : parseImageTransformPlan(entry.transform);
     return {
       assetId,
       source,
@@ -26,6 +28,7 @@ function parseAssets(value: JsonValue | undefined): readonly CompiledWordPressAs
       ...(alt ? { alt } : {}),
       ...(fingerprint ? { fingerprint } : {}),
       ...(localPath ? { localPath } : {}),
+      ...(transform ? { transform } : {}),
     };
   });
 }

@@ -244,23 +244,18 @@ function plannedDimensions(
   };
 }
 
-export function planImageTransform(input: {
-  readonly bytes: Uint8Array;
-  readonly spec?: ImageTransformSpec;
-}): ImageTransformPlan {
-  const source = inspectImageBytes(input.bytes);
-  const sourceFingerprint = imageFingerprint(input.bytes);
-  const spec = normalizeImageTransformSpec(input.spec);
-  const dimensions = plannedDimensions(source, spec);
-  const mediaType = outputMediaType(source.mediaType, spec.format);
-  const renderRequired =
-    dimensions.width !== source.width ||
-    dimensions.height !== source.height ||
-    mediaType !== source.mediaType ||
-    spec.quality !== 85 ||
-    (spec.maxBytes !== undefined && source.byteLength > spec.maxBytes);
-
-  const transformSemantic: JsonValue = {
+function transformSemantic(
+  source: ImageMetadata,
+  sourceFingerprint: string,
+  spec: NormalizedImageTransformSpec,
+  output: {
+    readonly mediaType: ImageMetadata["mediaType"];
+    readonly width: number;
+    readonly height: number;
+    readonly maxBytes?: number;
+  },
+): JsonValue {
+  return {
     implementationVersion: MEDIA_TRANSFORM_IMPLEMENTATION,
     sourceFingerprint,
     source: {
@@ -280,13 +275,39 @@ export function planImageTransform(input: {
       withoutEnlargement: spec.withoutEnlargement,
     },
     output: {
-      mediaType,
-      width: dimensions.width,
-      height: dimensions.height,
-      maxBytes: spec.maxBytes ?? null,
+      mediaType: output.mediaType,
+      width: output.width,
+      height: output.height,
+      maxBytes: output.maxBytes ?? null,
     },
   };
-  const transformationFingerprint = sha256(stable(transformSemantic));
+}
+
+export function planImageTransform(input: {
+  readonly bytes: Uint8Array;
+  readonly spec?: ImageTransformSpec;
+}): ImageTransformPlan {
+  const source = inspectImageBytes(input.bytes);
+  const sourceFingerprint = imageFingerprint(input.bytes);
+  const spec = normalizeImageTransformSpec(input.spec);
+  const dimensions = plannedDimensions(source, spec);
+  const mediaType = outputMediaType(source.mediaType, spec.format);
+  const renderRequired =
+    dimensions.width !== source.width ||
+    dimensions.height !== source.height ||
+    mediaType !== source.mediaType ||
+    spec.quality !== 85 ||
+    (spec.maxBytes !== undefined && source.byteLength > spec.maxBytes);
+
+  const output = {
+    mediaType,
+    width: dimensions.width,
+    height: dimensions.height,
+    ...(spec.maxBytes === undefined ? {} : { maxBytes: spec.maxBytes }),
+  } as const;
+  const transformationFingerprint = sha256(stable(
+    transformSemantic(source, sourceFingerprint, spec, output),
+  ));
 
   return {
     schemaVersion: 1,
@@ -294,12 +315,7 @@ export function planImageTransform(input: {
     source,
     sourceFingerprint,
     spec,
-    output: {
-      mediaType,
-      width: dimensions.width,
-      height: dimensions.height,
-      ...(spec.maxBytes === undefined ? {} : { maxBytes: spec.maxBytes }),
-    },
+    output,
     renderRequired,
     transformationFingerprint,
     derivedAssetId: `derived_${transformationFingerprint.slice(0, 24)}`,
@@ -307,6 +323,201 @@ export function planImageTransform(input: {
 }
 
 export { renderImageTransform, renderImageTransformCached } from "./renderer.js";
+
+function unknownRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : undefined;
+}
+
+function requiredPlanString(record: Readonly<Record<string, unknown>>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || !value) throw new Error(`Image transform plan requires string ${key}`);
+  return value;
+}
+
+function requiredPlanNumber(record: Readonly<Record<string, unknown>>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Image transform plan requires number ${key}`);
+  }
+  return value;
+}
+
+export function imageTransformSpecFromJson(
+  value: unknown,
+  defaults: ImageTransformSpec = {},
+): ImageTransformSpec {
+  if (value === undefined || value === null) return { ...defaults };
+  const record = unknownRecord(value);
+  if (!record) throw new Error("imageTransform must be an object");
+
+  const width = typeof record.width === "number" ? record.width : undefined;
+  const height = typeof record.height === "number" ? record.height : undefined;
+  const quality = typeof record.quality === "number" ? record.quality : undefined;
+  const maxBytes = typeof record.maxBytes === "number" ? record.maxBytes : undefined;
+  const focalX = typeof record.focalX === "number" ? record.focalX : undefined;
+  const focalY = typeof record.focalY === "number" ? record.focalY : undefined;
+  const fit = typeof record.fit === "string" ? record.fit : undefined;
+  const format = typeof record.format === "string" ? record.format : undefined;
+  const withoutEnlargement =
+    typeof record.withoutEnlargement === "boolean" ? record.withoutEnlargement : undefined;
+
+  if (fit !== undefined && fit !== "contain" && fit !== "cover") {
+    throw new Error("imageTransform.fit must be contain or cover");
+  }
+  if (format !== undefined && !["preserve", "jpeg", "png", "webp"].includes(format)) {
+    throw new Error("imageTransform.format must be preserve, jpeg, png, or webp");
+  }
+
+  const spec: ImageTransformSpec = {
+    ...defaults,
+    ...(width === undefined ? {} : { width }),
+    ...(height === undefined ? {} : { height }),
+    ...(fit === undefined ? {} : { fit: fit as ImageFit }),
+    ...(
+      focalX === undefined && focalY === undefined
+        ? {}
+        : { focalPoint: { x: focalX ?? defaults.focalPoint?.x ?? 0.5, y: focalY ?? defaults.focalPoint?.y ?? 0.5 } }
+    ),
+    ...(format === undefined ? {} : { format: format as ImageOutputFormat }),
+    ...(quality === undefined ? {} : { quality }),
+    ...(maxBytes === undefined ? {} : { maxBytes }),
+    ...(withoutEnlargement === undefined ? {} : { withoutEnlargement }),
+  };
+  normalizeImageTransformSpec(spec);
+  return spec;
+}
+
+export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
+  const record = unknownRecord(value);
+  if (!record) throw new Error("Image transform plan must be an object");
+  if (record.schemaVersion !== 1) throw new Error("Unsupported image transform plan schemaVersion");
+  if (record.implementationVersion !== MEDIA_TRANSFORM_IMPLEMENTATION) {
+    throw new Error(
+      `Unsupported image transform implementation: ${String(record.implementationVersion ?? "missing")}`,
+    );
+  }
+  const source = unknownRecord(record.source);
+  const spec = unknownRecord(record.spec);
+  const output = unknownRecord(record.output);
+  if (!source || !spec || !output) throw new Error("Image transform plan is incomplete");
+
+  const sourceMediaType = requiredPlanString(source, "mediaType");
+  const outputMediaTypeValue = requiredPlanString(output, "mediaType");
+  if (!["image/jpeg", "image/png", "image/webp"].includes(sourceMediaType)) {
+    throw new Error(`Unsupported image transform source media type: ${sourceMediaType}`);
+  }
+  if (!["image/jpeg", "image/png", "image/webp"].includes(outputMediaTypeValue)) {
+    throw new Error(`Unsupported image transform output media type: ${outputMediaTypeValue}`);
+  }
+
+  const fit = requiredPlanString(spec, "fit");
+  const format = requiredPlanString(spec, "format");
+  if (fit !== "contain" && fit !== "cover") throw new Error(`Unsupported image transform fit: ${fit}`);
+  if (!["preserve", "jpeg", "png", "webp"].includes(format)) {
+    throw new Error(`Unsupported image transform format: ${format}`);
+  }
+  const focal = unknownRecord(spec.focalPoint);
+  if (!focal) throw new Error("Image transform plan requires focalPoint");
+
+  const sourceWidth = requiredPlanNumber(source, "width");
+  const sourceHeight = requiredPlanNumber(source, "height");
+  const sourceByteLength = requiredPlanNumber(source, "byteLength");
+  const outputWidth = requiredPlanNumber(output, "width");
+  const outputHeight = requiredPlanNumber(output, "height");
+  const quality = requiredPlanNumber(spec, "quality");
+  const focalX = requiredPlanNumber(focal, "x");
+  const focalY = requiredPlanNumber(focal, "y");
+  const specWidth = typeof spec.width === "number" ? spec.width : undefined;
+  const specHeight = typeof spec.height === "number" ? spec.height : undefined;
+  const specMaxBytes = typeof spec.maxBytes === "number" ? spec.maxBytes : undefined;
+  const outputMaxBytes = typeof output.maxBytes === "number" ? output.maxBytes : undefined;
+  if (typeof spec.withoutEnlargement !== "boolean") {
+    throw new Error("Image transform plan requires boolean withoutEnlargement");
+  }
+  if (typeof record.renderRequired !== "boolean") {
+    throw new Error("Image transform plan requires boolean renderRequired");
+  }
+
+  const normalized = normalizeImageTransformSpec({
+    ...(specWidth === undefined ? {} : { width: specWidth }),
+    ...(specHeight === undefined ? {} : { height: specHeight }),
+    fit,
+    focalPoint: { x: focalX, y: focalY },
+    format: format as ImageOutputFormat,
+    quality,
+    ...(specMaxBytes === undefined ? {} : { maxBytes: specMaxBytes }),
+    withoutEnlargement: spec.withoutEnlargement,
+  });
+
+  if (
+    sourceWidth <= 0 ||
+    sourceHeight <= 0 ||
+    sourceByteLength <= 0 ||
+    outputWidth <= 0 ||
+    outputHeight <= 0
+  ) {
+    throw new Error("Image transform plan dimensions and byte length must be positive");
+  }
+  if (outputMaxBytes !== normalized.maxBytes) {
+    throw new Error("Image transform plan byte ceiling is inconsistent");
+  }
+
+  const parsedSource: ImageMetadata = {
+    mediaType: sourceMediaType as ImageMetadata["mediaType"],
+    width: sourceWidth,
+    height: sourceHeight,
+    byteLength: sourceByteLength,
+  };
+  const expectedDimensions = plannedDimensions(parsedSource, normalized);
+  const expectedMediaType = outputMediaType(parsedSource.mediaType, normalized.format);
+  if (
+    outputWidth !== expectedDimensions.width ||
+    outputHeight !== expectedDimensions.height ||
+    outputMediaTypeValue !== expectedMediaType
+  ) {
+    throw new Error("Image transform plan output is inconsistent with source metadata and spec");
+  }
+
+  const sourceFingerprint = requiredPlanString(record, "sourceFingerprint");
+  const expectedFingerprint = sha256(stable(transformSemantic(
+    parsedSource,
+    sourceFingerprint,
+    normalized,
+    {
+      mediaType: expectedMediaType,
+      width: expectedDimensions.width,
+      height: expectedDimensions.height,
+      ...(outputMaxBytes === undefined ? {} : { maxBytes: outputMaxBytes }),
+    },
+  )));
+  const transformationFingerprint = requiredPlanString(record, "transformationFingerprint");
+  const derivedAssetId = requiredPlanString(record, "derivedAssetId");
+  if (transformationFingerprint !== expectedFingerprint) {
+    throw new Error("Image transform plan fingerprint is inconsistent");
+  }
+  if (derivedAssetId !== `derived_${expectedFingerprint.slice(0, 24)}`) {
+    throw new Error("Image transform plan derived asset id is inconsistent");
+  }
+
+  return {
+    schemaVersion: 1,
+    implementationVersion: MEDIA_TRANSFORM_IMPLEMENTATION,
+    source: parsedSource,
+    sourceFingerprint,
+    spec: normalized,
+    output: {
+      mediaType: outputMediaTypeValue as ImageMetadata["mediaType"],
+      width: outputWidth,
+      height: outputHeight,
+      ...(outputMaxBytes === undefined ? {} : { maxBytes: outputMaxBytes }),
+    },
+    renderRequired: record.renderRequired,
+    transformationFingerprint,
+    derivedAssetId,
+  };
+}
 
 export function assertImagePlanRenderableWithoutTransformer(plan: ImageTransformPlan): void {
   if (plan.renderRequired) {

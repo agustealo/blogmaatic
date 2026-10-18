@@ -4,6 +4,7 @@ import http from "node:http";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
@@ -14,6 +15,7 @@ function makeServer() {
   const tags = new Map();
   const categories = new Map();
   const media = new Map();
+  const mediaUploads = [];
   let nextPost = 10;
   let nextTerm = 20;
   let nextMedia = 30;
@@ -64,8 +66,10 @@ function makeServer() {
     }
     const url = new URL(request.url, "http://localhost");
     const path = url.pathname.replace("/wp-json/wp/v2", "");
-    let raw = "";
-    for await (const chunk of request) raw += chunk;
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const rawBuffer = Buffer.concat(chunks);
+    const raw = rawBuffer.toString("utf8");
     let body = {};
     if (raw && (request.headers["content-type"] ?? "").includes("application/json")) {
       body = JSON.parse(raw);
@@ -141,6 +145,11 @@ function makeServer() {
       return json(response, 200, [...media.values()].filter((item) => !slug || item.slug === slug));
     }
     if (request.method === "POST" && path === "/media") {
+      mediaUploads.push({
+        contentType: request.headers["content-type"],
+        contentDisposition: request.headers["content-disposition"],
+        byteLength: rawBuffer.length,
+      });
       const id = nextMedia++;
       const item = {
         id,
@@ -166,10 +175,55 @@ function makeServer() {
   return {
     server,
     posts,
+    mediaUploads,
     get counts() {
       return { postCreates, postUpdates };
     },
   };
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const typeBytes = Buffer.from(type);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])));
+  return Buffer.concat([length, typeBytes, data, checksum]);
+}
+
+function validPng(width, height) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    const row = Buffer.alloc(1 + width * 4);
+    for (let x = 0; x < width; x += 1) {
+      const offset = 1 + x * 4;
+      row[offset] = 40;
+      row[offset + 1] = 120;
+      row[offset + 2] = 210;
+      row[offset + 3] = 255;
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([137,80,78,71,13,10,26,10]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(Buffer.concat(rows))),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 function publication(assetPath) {
@@ -209,7 +263,7 @@ function publication(assetPath) {
   };
 }
 
-function route() {
+function route(extra = {}) {
   return {
     id: "route-1",
     enabled: true,
@@ -226,7 +280,7 @@ function route() {
       "asset.publish",
       "taxonomy.publish",
     ],
-    variant: {},
+    variant: { ...extra },
   };
 }
 
@@ -452,5 +506,67 @@ test("source content service browses, adopts, reads revisions, trashes, restores
     assert.equal(api.posts.has(56), true);
   } finally {
     api.server.close();
+  }
+});
+
+
+test("WordPress uploads rendered route-specific image derivatives with traceable evidence", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  const root = await mkdtemp(join(tmpdir(), "blogmaatic-wp-transform-"));
+  const image = join(root, "hero.png");
+  await writeFile(image, validPng(16, 9));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+        assetSourceRoots: [root],
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const projection = await publisher.compile({
+      publication: publication(image),
+      route: route({
+        imageTransform: {
+          width: 12,
+          height: 6,
+          fit: "cover",
+          format: "jpeg",
+          quality: 82,
+          maxBytes: 200000,
+        },
+      }),
+    });
+    const planned = projection.payload.assets[0].transform;
+    assert.equal(planned.output.width, 12);
+    assert.equal(planned.output.height, 6);
+    assert.equal(planned.output.mediaType, "image/jpeg");
+
+    const delivered = await publisher.deliver({ idempotencyKey: "wp-transform", projection });
+    assert.equal(api.mediaUploads.length, 1);
+    assert.equal(api.mediaUploads[0].contentType, "image/jpeg");
+    assert.match(api.mediaUploads[0].contentDisposition, /\.jpg"/);
+    assert.ok(api.mediaUploads[0].byteLength > 0);
+    assert.equal(delivered.evidence.mediaTransforms.length, 1);
+    assert.equal(delivered.evidence.mediaTransforms[0].transformationFingerprint, planned.transformationFingerprint);
+    assert.equal(delivered.evidence.mediaTransforms[0].mediaType, "image/jpeg");
+    assert.equal(delivered.evidence.mediaTransforms[0].width, 12);
+    assert.equal(delivered.evidence.mediaTransforms[0].height, 6);
+    assert.match(delivered.evidence.mediaTransforms[0].outputFingerprint, /^[0-9a-f]{64}$/);
+  } finally {
+    api.server.close();
+    await rm(root, { recursive: true, force: true });
   }
 });

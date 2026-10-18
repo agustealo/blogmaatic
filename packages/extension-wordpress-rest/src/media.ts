@@ -1,6 +1,8 @@
 import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 
+import { renderImageTransformCached } from "@blogmaatic/media";
+
 import { WordPressRestClient } from "./client.js";
 import { termSlug } from "./taxonomy.js";
 import type { CompiledWordPressAsset, WordPressMediaRecord } from "./types.js";
@@ -24,6 +26,13 @@ export interface PublishedMedia {
   readonly assetId: string;
   readonly mediaId?: number;
   readonly sourceUrl: string;
+  readonly transformationFingerprint?: string;
+  readonly derivedAssetId?: string;
+  readonly outputFingerprint?: string;
+  readonly mediaType?: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly cacheHit?: boolean;
 }
 
 export async function publishMedia(
@@ -41,16 +50,61 @@ export async function publishMedia(
   const slug = mediaSlug(publicationId, asset);
   const existing = await findMedia(client, slug);
   if (existing) {
-    return { assetId: asset.assetId, mediaId: existing.id, sourceUrl: existing.source_url };
+    return {
+      assetId: asset.assetId,
+      mediaId: existing.id,
+      sourceUrl: existing.source_url,
+      ...(asset.transform ? {
+        transformationFingerprint: asset.transform.transformationFingerprint,
+        derivedAssetId: asset.transform.derivedAssetId,
+        mediaType: asset.transform.output.mediaType,
+        width: asset.transform.output.width,
+        height: asset.transform.output.height,
+      } : {}),
+    };
   }
 
-  const bytes = await readFile(asset.localPath);
-  const contentType = asset.mediaType ?? "application/octet-stream";
+  let bytes: Uint8Array;
+  let contentType = asset.mediaType ?? "application/octet-stream";
+  let fileName = basename(asset.localPath);
+  let transformEvidence: Omit<PublishedMedia, "assetId" | "mediaId" | "sourceUrl"> = {};
+  if (asset.transform?.renderRequired) {
+    const rendered = await renderImageTransformCached({
+      sourcePath: asset.localPath,
+      plan: asset.transform,
+    });
+    bytes = rendered.bytes;
+    contentType = rendered.mediaType;
+    const extension = rendered.mediaType === "image/png" ? "png" : rendered.mediaType === "image/webp" ? "webp" : "jpg";
+    fileName = `${asset.transform.derivedAssetId}.${extension}`;
+    transformEvidence = {
+      transformationFingerprint: asset.transform.transformationFingerprint,
+      derivedAssetId: asset.transform.derivedAssetId,
+      outputFingerprint: rendered.outputFingerprint,
+      mediaType: rendered.mediaType,
+      width: rendered.width,
+      height: rendered.height,
+      cacheHit: rendered.cacheHit ?? false,
+    };
+  } else {
+    bytes = await readFile(asset.localPath);
+    if (asset.transform) {
+      transformEvidence = {
+        transformationFingerprint: asset.transform.transformationFingerprint,
+        derivedAssetId: asset.transform.derivedAssetId,
+        outputFingerprint: asset.transform.sourceFingerprint,
+        mediaType: asset.transform.output.mediaType,
+        width: asset.transform.output.width,
+        height: asset.transform.output.height,
+        cacheHit: false,
+      };
+    }
+  }
   const created = await client.requestBytes<WordPressMediaRecord>(
     "/media",
     bytes,
     contentType,
-    basename(asset.localPath),
+    fileName,
   );
   const updated = await client.requestJson<WordPressMediaRecord>(`/media/${created.id}`, {
     method: "POST",
@@ -59,5 +113,10 @@ export async function publishMedia(
       ...(asset.alt ? { alt_text: asset.alt } : {}),
     }),
   });
-  return { assetId: asset.assetId, mediaId: updated.id, sourceUrl: updated.source_url };
+  return {
+    assetId: asset.assetId,
+    mediaId: updated.id,
+    sourceUrl: updated.source_url,
+    ...transformEvidence,
+  };
 }

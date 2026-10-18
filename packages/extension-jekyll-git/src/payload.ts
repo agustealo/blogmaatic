@@ -1,4 +1,5 @@
 import type { CompiledProjection } from "@blogmaatic/core";
+import { parseImageTransformPlan } from "@blogmaatic/media";
 
 import { getString, isRecord } from "./json.js";
 import type { AssetOperation, JekyllPayload } from "./types.js";
@@ -22,11 +23,15 @@ export function parsePayload(projection: CompiledProjection): JekyllPayload {
         if (!sourcePath || !assetPath || !assetFingerprint) {
           throw new Error("Invalid Jekyll asset operation");
         }
+        const mediaType = getString(item, "mediaType");
+        const transform = item.transform === undefined ? undefined : parseImageTransformPlan(item.transform);
         return {
           assetId: getString(item, "assetId") ?? "unknown",
           sourcePath,
           relativePath: assetPath,
           fingerprint: assetFingerprint,
+          ...(mediaType ? { mediaType } : {}),
+          ...(transform ? { transform } : {}),
         };
       })
     : [];

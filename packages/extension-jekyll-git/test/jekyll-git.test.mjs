@@ -3,11 +3,13 @@ import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import { promisify } from "node:util";
 import test from "node:test";
 
 import { PolicyEngine, PublicationKernel } from "@blogmaatic/core";
 import { ConnectionAuthority, ExtensionRuntime } from "@blogmaatic/extension-sdk";
+import { inspectImageBytes } from "@blogmaatic/media";
 import { JekyllGitPublisher } from "../dist/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -26,6 +28,50 @@ async function repository() {
   await git(root, ["add", "_config.yml"]);
   await git(root, ["commit", "-m", "seed"]);
   return root;
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const typeBytes = Buffer.from(type);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])));
+  return Buffer.concat([length, typeBytes, data, checksum]);
+}
+
+function validPng(width, height) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    const row = Buffer.alloc(1 + width * 4);
+    for (let x = 0; x < width; x += 1) {
+      const offset = 1 + x * 4;
+      row[offset] = 55;
+      row[offset + 1] = 125;
+      row[offset + 2] = 205;
+      row[offset + 3] = 255;
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([137,80,78,71,13,10,26,10]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(Buffer.concat(rows))),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 function publication(overrides = {}) {
@@ -57,7 +103,7 @@ function publication(overrides = {}) {
   };
 }
 
-function group(connectionId = "jekyll-main") {
+function group(connectionId = "jekyll-main", extraVariant = {}) {
   return {
     id: "group-1",
     name: "Main publication",
@@ -73,7 +119,7 @@ function group(connectionId = "jekyll-main") {
           channel: "posts",
         },
         requiredCapabilities: ["article.create", "article.update", "article.inspect"],
-        variant: { layout: "post", permalink: "/maintain-everywhere/" },
+        variant: { layout: "post", permalink: "/maintain-everywhere/", ...extraVariant },
       },
     ],
   };
@@ -213,6 +259,83 @@ test("local asset publication is restricted to configured source roots", async (
   const post = await readFile(join(root, receipts[0].remote.id), "utf8");
   assert.match(post, /!\[Hero\]\(\/assets\/blogmaatic\/pub-1\/hero-hero-image\.png\)/);
   assert.doesNotMatch(post, new RegExp(assetRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("Jekyll renders route-specific image derivatives with correct path, bytes, drift state and evidence", async () => {
+  const root = await repository();
+  const assetRoot = await mkdtemp(join(tmpdir(), "blogmaatic-jekyll-transform-"));
+  const source = join(assetRoot, "hero.png");
+  await writeFile(source, validPng(16, 9));
+  const connections = new ConnectionAuthority([
+    {
+      id: "jekyll-main",
+      extensionId: "blogmaatic.jekyll-git",
+      displayName: "Transform Jekyll",
+      status: "active",
+      settings: {
+        repositoryPath: root,
+        branch: "main",
+        authorName: "Blogmaatic",
+        authorEmail: "blogmaatic@example.test",
+        assetSourceRoots: [assetRoot],
+      },
+      secretRefs: {},
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    },
+  ]);
+  const runtime = new ExtensionRuntime(connections);
+  runtime.registerPublisher(new JekyllGitPublisher(connections));
+  const kernel = new PublicationKernel(
+    runtime.publishers,
+    new PolicyEngine([{ id: "allow", defaultEffect: "allow", rules: [] }]),
+  );
+  const item = publication({
+    current: {
+      ...publication().current,
+      content: {
+        ...publication().current.content,
+        assets: [{ id: "hero", kind: "image", source, mediaType: "image/png", alt: "Hero" }],
+        blocks: [{ id: "image", kind: "image", data: { assetId: "hero" } }],
+      },
+    },
+  });
+  const transformGroup = group("jekyll-main", {
+    imageTransform: {
+      width: 12,
+      height: 6,
+      fit: "cover",
+      format: "jpeg",
+      quality: 82,
+      maxBytes: 200000,
+    },
+  });
+
+  const first = await kernel.publish({ publication: item, group: transformGroup });
+  assert.equal(first[0].status, "verified");
+  const assetPath = (await git(root, ["ls-files", "assets/blogmaatic/**"])).trim();
+  assert.match(assetPath, /hero-hero\.jpg$/);
+  const bytes = await readFile(join(root, assetPath));
+  const metadata = inspectImageBytes(bytes);
+  assert.equal(metadata.mediaType, "image/jpeg");
+  assert.equal(metadata.width, 12);
+  assert.equal(metadata.height, 6);
+  assert.equal(first[0].evidence.mediaTransforms.length, 1);
+  assert.equal(first[0].evidence.mediaTransforms[0].mediaType, "image/jpeg");
+  assert.equal(first[0].evidence.mediaTransforms[0].width, 12);
+  assert.equal(first[0].evidence.mediaTransforms[0].height, 6);
+  assert.match(first[0].evidence.mediaTransforms[0].outputFingerprint, /^[0-9a-f]{64}$/);
+
+  const post = await readFile(join(root, first[0].remote.id), "utf8");
+  assert.match(post, /!\[Hero\]\(\/assets\/blogmaatic\/pub-1\/hero-hero\.jpg\)/);
+
+  const report = await kernel.reconcile(item, transformGroup);
+  assert.equal(report.items[0].observed.state, "synchronized");
+  assert.equal(report.items[0].action, "none");
+  const commitCount = await git(root, ["rev-list", "--count", "HEAD"]);
+  const second = await kernel.publish({ publication: item, group: transformGroup });
+  assert.equal(second[0].status, "verified");
+  assert.equal(await git(root, ["rev-list", "--count", "HEAD"]), commitCount);
 });
 
 test("push-enabled connections publish the exact Git commit to a real remote branch", async () => {
