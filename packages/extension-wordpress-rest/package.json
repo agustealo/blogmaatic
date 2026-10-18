@@ -8,6 +8,7 @@
   "dependencies": {
     "@blogmaatic/core": "0.1.0",
     "@blogmaatic/extension-sdk": "0.1.0",
+    "@blogmaatic/media": "0.1.0",
     "@blogmaatic/secrets": "0.1.0"
   },
   "scripts": {
