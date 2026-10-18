@@ -54,6 +54,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceTaxonomyKind,
+  SourceTaxonomyKind,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SourceTaxonomyRecord,
