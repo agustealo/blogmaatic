@@ -98,6 +98,12 @@ Tags come from Publication IR tags plus optional route tags. Categories come fro
 
 Terms are looked up by stable slug. When `createMissingTerms=true`, missing terms are created. A concurrent `term_exists` response is reconciled back to the existing term id instead of failing the publication.
 
+Content also exposes deliberate source-taxonomy creation through the provider-neutral Operator API. Authors can create a WordPress category or tag before publishing, rather than depending on publish-time auto-create. A term name is required; slug and description are optional. When the slug is omitted, Blogmaatic uses the same deterministic `termSlug()` normalization as publication-time taxonomy resolution.
+
+Creation is idempotent by stable slug. Blogmaatic first reuses an existing matching term when found, and it also recovers a concurrent WordPress `term_exists` response by fetching the winning term id. This keeps editor-time creation and publish-time resolution on one taxonomy identity contract.
+
+Creating a remote term does not itself create a canonical Publication revision. Control Room immediately adds the returned term name to the current editor draft; the user's normal Publication Save remains the immutable canonical content boundary.
+
 ## Ownership and collision protection
 
 A stable slug is useful for rediscovery after restart, but a matching slug alone is not proof that Blogmaatic owns the remote object.
