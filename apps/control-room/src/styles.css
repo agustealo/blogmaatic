@@ -557,3 +557,92 @@ a.data-table__row:hover { background: var(--surface-2); }
 @media (max-width: 430px) {
   .source-asset-grid { grid-template-columns: 1fr; }
 }
+
+
+/* Source taxonomy browser */
+.source-taxonomy-toolbar {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  display: grid;
+  grid-template-columns: auto minmax(240px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.source-taxonomy-toolbar .segmented-control {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.source-taxonomy-toolbar .segmented-control button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.source-taxonomy-toolbar .segmented-control button.is-active {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.source-taxonomy-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  padding: 14px;
+}
+.source-taxonomy-item {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.source-taxonomy-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  background: var(--surface);
+}
+.source-taxonomy-item > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.source-taxonomy-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-taxonomy-item small {
+  color: var(--muted);
+  font-size: .7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-taxonomy-item > span:last-child {
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+@media (max-width: 700px) {
+  .source-taxonomy-toolbar { grid-template-columns: 1fr; }
+  .source-taxonomy-toolbar .segmented-control { width: 100%; }
+  .source-taxonomy-toolbar .segmented-control button { flex: 1; }
+  .source-taxonomy-list { grid-template-columns: 1fr; padding: 10px; }
+}
