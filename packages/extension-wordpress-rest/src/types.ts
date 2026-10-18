@@ -1,3 +1,4 @@
+import type { ImageTransformPlan } from "@blogmaatic/media";
 import type { JsonValue } from "@blogmaatic/core";
 
 export interface WordPressSettings {
@@ -19,6 +20,7 @@ export interface CompiledWordPressAsset {
   readonly fingerprint?: string;
   readonly localPath?: string;
   readonly wordpressMediaId?: number;
+  readonly transform?: ImageTransformPlan;
 }
 
 export interface WordPressProjectionPayload {
