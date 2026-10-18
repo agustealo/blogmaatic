@@ -4,6 +4,7 @@ import test from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
@@ -66,14 +67,50 @@ function makeServer() {
   return { server, posts, requests };
 }
 
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const typeBytes = Buffer.from(type);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])));
+  return Buffer.concat([length, typeBytes, data, checksum]);
+}
+
 function localPng(width, height) {
-  const bytes = Buffer.alloc(24);
-  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes, 0);
-  bytes.writeUInt32BE(13, 8);
-  Buffer.from("IHDR").copy(bytes, 12);
-  bytes.writeUInt32BE(width, 16);
-  bytes.writeUInt32BE(height, 20);
-  return bytes;
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    const row = Buffer.alloc(1 + width * 4);
+    for (let x = 0; x < width; x += 1) {
+      const offset = 1 + x * 4;
+      row[offset] = 60;
+      row[offset + 1] = 110;
+      row[offset + 2] = 210;
+      row[offset + 3] = 255;
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([137,80,78,71,13,10,26,10]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(Buffer.concat(rows))),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 function publication(source = "https://cdn.example.test/hero.png") {
@@ -210,18 +247,18 @@ test("local image sources are confined to configured roots", async () => {
 });
 
 
-test("local image projection records deterministic destination media plan and refuses unrendered transforms", async () => {
+test("local image projection renders the deterministic destination media plan before upload", async () => {
   const api = makeServer();
   await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
   const allowed = await mkdtemp(join(tmpdir(), "blogmaatic-fb-media-"));
   const image = join(allowed, "hero.png");
-  await writeFile(image, localPng(1600, 900));
+  await writeFile(image, localPng(16, 9));
   try {
     const extension = publisher(api.server.address().port, [allowed]);
     const transformRoute = route({
       imageTransform: {
-        width: 1200,
-        height: 630,
+        width: 12,
+        height: 6,
         fit: "cover",
         format: "jpeg",
         quality: 82,
@@ -236,20 +273,33 @@ test("local image projection records deterministic destination media plan and re
     assert.equal(first.fingerprint, second.fingerprint);
     const asset = first.payload.images[0];
     assert.equal(asset.mediaType, "image/png");
-    assert.equal(asset.transform.source.width, 1600);
-    assert.equal(asset.transform.source.height, 900);
-    assert.equal(asset.transform.output.width, 1200);
-    assert.equal(asset.transform.output.height, 630);
+    assert.equal(asset.transform.source.width, 16);
+    assert.equal(asset.transform.source.height, 9);
+    assert.equal(asset.transform.output.width, 12);
+    assert.equal(asset.transform.output.height, 6);
     assert.equal(asset.transform.output.mediaType, "image/jpeg");
     assert.equal(asset.transform.spec.fit, "cover");
     assert.equal(asset.transform.renderRequired, true);
     assert.match(asset.transform.transformationFingerprint, /^[0-9a-f]{64}$/);
 
-    await assert.rejects(
-      extension.deliver({ idempotencyKey: "media-transform", projection: first }),
-      /requires a media renderer/,
+    const delivered = await extension.deliver({ idempotencyKey: "media-transform", projection: first });
+    assert.equal(delivered.evidence.imageCount, 1);
+    assert.equal(delivered.evidence.mediaTransforms.length, 1);
+    assert.equal(
+      delivered.evidence.mediaTransforms[0].transformationFingerprint,
+      asset.transform.transformationFingerprint,
     );
-    assert.equal(api.posts.size, 0);
+    assert.equal(
+      delivered.evidence.mediaTransforms[0].derivedAssetId,
+      asset.transform.derivedAssetId,
+    );
+    assert.equal(delivered.evidence.mediaTransforms[0].mediaType, "image/jpeg");
+    assert.equal(delivered.evidence.mediaTransforms[0].width, 12);
+    assert.equal(delivered.evidence.mediaTransforms[0].height, 6);
+    assert.match(delivered.evidence.mediaTransforms[0].outputFingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(api.posts.size, 1);
+    const post = api.posts.get(delivered.remote.id);
+    assert.equal(post.attachments.data[0].subattachments.data.length, 1);
   } finally {
     api.server.close();
     await rm(allowed, { recursive: true, force: true });

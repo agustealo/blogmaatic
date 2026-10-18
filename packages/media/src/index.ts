@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { JsonValue } from "@blogmaatic/core";
 
+export const MEDIA_TRANSFORM_IMPLEMENTATION = "blogmaatic-sharp-0.35.5-v1" as const;
+
 export type ImageFit = "contain" | "cover";
 export type ImageOutputFormat = "preserve" | "jpeg" | "png" | "webp";
 
@@ -41,7 +43,7 @@ export interface ImageMetadata {
 
 export interface ImageTransformPlan {
   readonly schemaVersion: 1;
-  readonly implementationVersion: "blogmaatic-media-plan-v1";
+  readonly implementationVersion: typeof MEDIA_TRANSFORM_IMPLEMENTATION;
   readonly source: ImageMetadata;
   readonly sourceFingerprint: string;
   readonly spec: NormalizedImageTransformSpec;
@@ -219,10 +221,14 @@ function plannedDimensions(
     return { width: source.width, height: source.height };
   }
   if (targetWidth !== undefined && targetHeight !== undefined && spec.fit === "cover") {
-    if (spec.withoutEnlargement && source.width <= targetWidth && source.height <= targetHeight) {
-      return { width: source.width, height: source.height };
-    }
-    return { width: targetWidth, height: targetHeight };
+    let scale = Math.max(targetWidth / source.width, targetHeight / source.height);
+    if (spec.withoutEnlargement) scale = Math.min(scale, 1);
+    const resizedWidth = Math.max(1, Math.round(source.width * scale));
+    const resizedHeight = Math.max(1, Math.round(source.height * scale));
+    return {
+      width: Math.min(targetWidth, resizedWidth),
+      height: Math.min(targetHeight, resizedHeight),
+    };
   }
 
   const widthRatio = targetWidth === undefined ? Number.POSITIVE_INFINITY : targetWidth / source.width;
@@ -255,7 +261,7 @@ export function planImageTransform(input: {
     (spec.maxBytes !== undefined && source.byteLength > spec.maxBytes);
 
   const transformSemantic: JsonValue = {
-    implementationVersion: "blogmaatic-media-plan-v1",
+    implementationVersion: MEDIA_TRANSFORM_IMPLEMENTATION,
     sourceFingerprint,
     source: {
       mediaType: source.mediaType,
@@ -284,7 +290,7 @@ export function planImageTransform(input: {
 
   return {
     schemaVersion: 1,
-    implementationVersion: "blogmaatic-media-plan-v1",
+    implementationVersion: MEDIA_TRANSFORM_IMPLEMENTATION,
     source,
     sourceFingerprint,
     spec,
@@ -299,6 +305,8 @@ export function planImageTransform(input: {
     derivedAssetId: `derived_${transformationFingerprint.slice(0, 24)}`,
   };
 }
+
+export { renderImageTransform, renderImageTransformCached } from "./renderer.js";
 
 export function assertImagePlanRenderableWithoutTransformer(plan: ImageTransformPlan): void {
   if (plan.renderRequired) {

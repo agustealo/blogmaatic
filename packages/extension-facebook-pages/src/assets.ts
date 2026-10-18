@@ -5,6 +5,7 @@ import { isAbsolute, relative } from "node:path";
 import type { PublicationAsset } from "@blogmaatic/core";
 import {
   planImageTransform,
+  renderImageTransformCached,
   type ImageTransformSpec,
 } from "@blogmaatic/media";
 
@@ -101,9 +102,46 @@ export async function compileFacebookAssets(
   return compiled;
 }
 
-export async function localAssetBlob(asset: FacebookAssetSpec): Promise<Blob> {
+export interface FacebookLocalAssetBlob {
+  readonly blob: Blob;
+  readonly mediaType: string;
+  readonly fileName: string;
+  readonly outputFingerprint: string;
+  readonly cacheHit: boolean;
+}
+
+function outputExtension(mediaType: string): string {
+  return mediaType === "image/png" ? "png" : mediaType === "image/webp" ? "webp" : "jpg";
+}
+
+export async function localAssetBlob(asset: FacebookAssetSpec): Promise<FacebookLocalAssetBlob> {
   if (!asset.localPath) throw new Error("Facebook asset is not a managed local file");
+  if (asset.transform?.renderRequired) {
+    const rendered = await renderImageTransformCached({
+      sourcePath: asset.localPath,
+      plan: asset.transform,
+    });
+    const buffer = rendered.bytes.buffer.slice(
+      rendered.bytes.byteOffset,
+      rendered.bytes.byteOffset + rendered.bytes.byteLength,
+    ) as ArrayBuffer;
+    return {
+      blob: new Blob([buffer], { type: rendered.mediaType }),
+      mediaType: rendered.mediaType,
+      fileName: `${asset.assetId}.${outputExtension(rendered.mediaType)}`,
+      outputFingerprint: rendered.outputFingerprint,
+      cacheHit: rendered.cacheHit ?? false,
+    };
+  }
+
   const bytes = await readFile(asset.localPath);
+  const mediaType = asset.transform?.output.mediaType ?? asset.mediaType ?? "application/octet-stream";
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  return new Blob([buffer], { type: asset.mediaType ?? "application/octet-stream" });
+  return {
+    blob: new Blob([buffer], { type: mediaType }),
+    mediaType,
+    fileName: `${asset.assetId}.${outputExtension(mediaType)}`,
+    outputFingerprint: sha256(bytes),
+    cacheHit: false,
+  };
 }
