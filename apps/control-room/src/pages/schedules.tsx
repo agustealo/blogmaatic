@@ -1,5 +1,5 @@
-import { useCallback, useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router";
 
 import type {
   AutomationSchedule,
@@ -42,17 +42,19 @@ function CreateSchedulePanel({
   loading,
   onCreated,
   onCancel,
+  initialPublicationId,
 }: {
   readonly groups: readonly PublicationGroupRegistryEntry[];
   readonly publications: readonly PublicationWorkspaceEntry[];
   readonly loading: boolean;
   readonly onCreated: (schedule: AutomationSchedule) => void;
   readonly onCancel: () => void;
+  readonly initialPublicationId?: string;
 }) {
   const { session } = useConnection();
   const [name, setName] = useState("Scheduled publication");
   const [groupId, setGroupId] = useState(groups[0]?.group.id ?? "");
-  const [publicationId, setPublicationId] = useState(publications[0]?.publication.id ?? "");
+  const [publicationId, setPublicationId] = useState(initialPublicationId ?? publications[0]?.publication.id ?? "");
   const [timezone, setTimezone] = useState(localTimezone);
   const [localDate, setLocalDate] = useState(futureLocalDate);
   const [localTime, setLocalTime] = useState("09:00");
@@ -62,6 +64,14 @@ function CreateSchedulePanel({
   const [pendingPlan, setPendingPlan] = useState<PendingSchedulePlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    if (loading || publications.length === 0) return;
+    setPublicationId((current) => {
+      if (current && publications.some((entry) => entry.publication.id === current)) return current;
+      return publications[0]?.publication.id ?? "";
+    });
+  }, [loading, publications]);
 
   const toggleWeekday = (day: number, checked: boolean) => {
     setWeekdays((current) => {
@@ -162,10 +172,10 @@ function CreateSchedulePanel({
   const effectiveGroupId = pendingPlan?.groupId ?? (groupId || groups[0]?.group.id || "");
 
   return (
-    <Panel title="Create Schedule" meta="Immutable publication snapshot">
+    <Panel title="Schedule publication" meta="Content and destinations are frozen at creation">
       <form className="setup-step setup-form" onSubmit={submit}>
         <ErrorBanner error={error} />
-        <p>Schedule an approved Workspace Publication through one enabled Publication Group. Blogmaatic creates a dedicated schedule-trigger Automation, freezes the current publication and group snapshots, and lets the durable scheduler own future dispatch.</p>
+        <p>Choose approved content, where it should publish, and when it should go live. Blogmaatic freezes that exact content and destination plan so later edits cannot silently change this schedule.</p>
         {pendingPlan ? (
           <div className="warning-banner" role="status">
             <strong>Retrying a partially created schedule.</strong>
@@ -177,18 +187,18 @@ function CreateSchedulePanel({
           <input autoFocus value={name} onChange={(event) => setName(event.target.value)} disabled={Boolean(pendingPlan)} required autoComplete="off" />
         </label>
         <label className="field">
-          <span>Publication Group</span>
+          <span>Publish to</span>
           <select value={effectiveGroupId} onChange={(event) => setGroupId(event.target.value)} disabled={loading || groups.length === 0 || Boolean(pendingPlan)} required>
             {groups.map((entry) => <option key={entry.group.id} value={entry.group.id}>{entry.group.name}</option>)}
           </select>
-          <small>Only enabled Publication Groups are offered.</small>
+          <small>These are your enabled publishing route groups.</small>
         </label>
         <label className="field">
-          <span>Approved Publication</span>
+          <span>Content</span>
           <select value={publicationId || publications[0]?.publication.id || ""} onChange={(event) => setPublicationId(event.target.value)} disabled={loading || publications.length === 0} required>
             {publications.map((entry) => <option key={entry.publication.id} value={entry.publication.id}>{entry.publication.current.content.title}</option>)}
           </select>
-          <small>The current approved revision is frozen into this schedule. Later edits do not silently change a future dispatch.</small>
+          <small>The current approved revision is frozen into this schedule.</small>
         </label>
         <div className="setup-two-column">
           <label className="field"><span>Timezone</span><input value={timezone} onChange={(event) => setTimezone(event.target.value)} required /></label>
@@ -249,6 +259,10 @@ function CreateSchedulePanel({
 
 export function SchedulesPage() {
   const { session } = useConnection();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedPublicationId = searchParams.get("publication")?.trim() ?? "";
+  const requestCreate = searchParams.get("create") === "1";
+  const handledDeepLink = useRef(false);
   const [enabled, setEnabled] = useState<"" | "true" | "false">("");
   const [createOpen, setCreateOpen] = useState(false);
   const [supportLoading, setSupportLoading] = useState(false);
@@ -302,6 +316,16 @@ export function SchedulesPage() {
     }
   }, [session]);
 
+  useEffect(() => {
+    if (!requestCreate || handledDeepLink.current) return;
+    handledDeepLink.current = true;
+    void openCreate().finally(() => {
+      const next = new URLSearchParams(searchParams);
+      next.delete("create");
+      setSearchParams(next, { replace: true });
+    });
+  }, [openCreate, requestCreate, searchParams, setSearchParams]);
+
   const toggleSchedule = useCallback(async (schedule: AutomationSchedule) => {
     if (!session) return;
     const nextEnabled = !schedule.enabled;
@@ -348,6 +372,7 @@ export function SchedulesPage() {
           loading={supportLoading}
           onCreated={created}
           onCancel={() => setCreateOpen(false)}
+          {...(requestedPublicationId ? { initialPublicationId: requestedPublicationId } : {})}
         />
       ) : null}
       <div className="toolbar">

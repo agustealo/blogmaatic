@@ -369,3 +369,54 @@ a.data-table__row:hover { background: var(--surface-2); }
   .activity-approval, .activity-run-row { align-items: flex-start; flex-direction: column; }
   .activity-run-row > span:last-child { justify-items: start; text-align: left; }
 }
+
+
+/* Publication Studio */
+.publication-studio-support { display: grid; gap: 16px; margin-top: 16px; }
+.publication-publishing-panel { box-shadow: none; }
+.publication-publishing-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border-bottom: 1px solid var(--line); }
+.publication-publishing-summary > div { min-height: 82px; padding: 14px 16px; border-right: 1px solid var(--line); display: grid; align-content: center; gap: 6px; }
+.publication-publishing-summary > div:last-child { border-right: 0; }
+.publication-publishing-summary small { color: var(--muted); font-size: .75rem; }
+.publication-publishing-summary strong { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.publication-destination-summary { display: grid; }
+.publication-destination-summary__row { min-height: 66px; padding: 11px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.publication-destination-summary__row > span { min-width: 0; display: grid; gap: 4px; }
+.publication-destination-summary__row > span:last-child { justify-items: end; }
+.publication-destination-summary__row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.publication-destination-summary__row small { color: var(--muted); font-size: .75rem; }
+.publication-destination-summary__row a { color: var(--text); font-size: .76rem; font-weight: 750; }
+.publication-publishing-empty { padding: 18px 16px; color: var(--muted); font-size: .82rem; }
+.publication-publishing-actions { padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); }
+.publication-technical-details { margin: 0 16px 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+.publication-technical-details summary { cursor: pointer; color: var(--muted); font-size: .78rem; font-weight: 700; }
+.publication-technical-details dl { margin: 10px 0 0; display: grid; gap: 6px; }
+.publication-technical-details dl div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; font-size: .75rem; }
+.publication-technical-details dt { color: var(--muted); }
+.publication-technical-details dd { margin: 0; overflow-wrap: anywhere; }
+
+.distribution-history-row { grid-template-columns: minmax(180px, 1.2fr) minmax(120px, .8fr) minmax(150px, .9fr) auto minmax(90px, auto); }
+.distribution-history-row__status { justify-items: end; text-align: right; }
+.distribution-history-row__technical { min-width: 0; }
+.distribution-history-row__technical summary { cursor: pointer; color: var(--muted); font-size: .72rem; font-weight: 700; }
+.distribution-history-row__technical small { display: block; max-width: 240px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .publication-publishing-summary { grid-template-columns: 1fr 1fr; }
+  .publication-publishing-summary > div:nth-child(2) { border-right: 0; }
+  .publication-publishing-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+}
+
+@media (max-width: 560px) {
+  .publication-publishing-summary { grid-template-columns: 1fr; }
+  .publication-publishing-summary > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .publication-publishing-summary > div:last-child { border-bottom: 0; }
+  .publication-destination-summary__row { align-items: flex-start; flex-direction: column; }
+  .publication-destination-summary__row > span:last-child { justify-items: start; }
+}
+
+.publication-schedule-lock { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.publication-schedule-lock small { font-size: .74rem; }
+@media (max-width: 560px) {
+  .publication-schedule-lock { align-items: flex-start; flex-direction: column; }
+}
