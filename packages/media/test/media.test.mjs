@@ -10,6 +10,7 @@ import {
   inspectImageBytes,
   normalizeImageTransformSpec,
   planImageTransform,
+  parseImageTransformPlan,
   renderImageTransform,
   renderImageTransformCached,
 } from "../dist/index.js";
@@ -176,4 +177,29 @@ test("derived image cache reuses the transformation fingerprint identity", async
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test("serialized media plans reject tampered output geometry and identity", () => {
+  const plan = planImageTransform({
+    bytes: validPng(16, 9),
+    spec: { width: 12, height: 6, fit: "cover", format: "jpeg", quality: 82 },
+  });
+  const tamperedGeometry = {
+    ...plan,
+    output: { ...plan.output, width: 11 },
+  };
+  assert.throws(
+    () => parseImageTransformPlan(tamperedGeometry),
+    /output is inconsistent/,
+  );
+
+  const tamperedIdentity = {
+    ...plan,
+    transformationFingerprint: "0".repeat(64),
+  };
+  assert.throws(
+    () => parseImageTransformPlan(tamperedIdentity),
+    /fingerprint is inconsistent/,
+  );
 });
