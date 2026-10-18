@@ -369,6 +369,23 @@ export class WordPressContentService {
     return mediaView(record);
   }
 
+  async getRevision(
+    connectionId: string,
+    remoteId: string,
+    remoteRevisionId: string,
+  ): Promise<WordPressRevisionView> {
+    const { client, restBase } = this.#client(connectionId);
+    const postId = requireRemoteId(remoteId);
+    const revisionId = requireRemoteId(remoteRevisionId);
+    const revision = await client.requestJson<WordPressRevisionRecord>(
+      `/${restBase}/${postId}/revisions/${revisionId}?context=edit`,
+    );
+    if (revision.parent !== undefined && String(revision.parent) !== postId) {
+      throw new Error(`WordPress revision ${revisionId} does not belong to post ${postId}`);
+    }
+    return revisionView(revision);
+  }
+
   async revisions(connectionId: string, remoteId: string): Promise<readonly WordPressRevisionView[]> {
     const { client, restBase } = this.#client(connectionId);
     const id = requireRemoteId(remoteId);
