@@ -514,6 +514,18 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         mediaIds: publishedMedia
           .filter((media) => media.mediaId !== undefined)
           .map((media) => media.mediaId!),
+        mediaTransforms: publishedMedia
+          .filter((media) => media.transformationFingerprint)
+          .map((media) => ({
+            assetId: media.assetId,
+            transformationFingerprint: media.transformationFingerprint!,
+            ...(media.derivedAssetId ? { derivedAssetId: media.derivedAssetId } : {}),
+            ...(media.outputFingerprint ? { outputFingerprint: media.outputFingerprint } : {}),
+            ...(media.mediaType ? { mediaType: media.mediaType } : {}),
+            ...(media.width === undefined ? {} : { width: media.width }),
+            ...(media.height === undefined ? {} : { height: media.height }),
+            ...(media.cacheHit === undefined ? {} : { cacheHit: media.cacheHit }),
+          })) as unknown as JsonValue,
         categoryIds: [...categories],
         tagIds: [...tags],
         idempotencyKey: request.idempotencyKey,
