@@ -11,6 +11,7 @@ import type {
   SourceAuthorAssignBody,
   SourceAuthorQuery,
   SourceContentImportBody,
+  SourceRevisionRestoreBody,
   SourcePublishingStateBody,
   SourceTaxonomyQuery,
   SourceContentQuery,
@@ -269,6 +270,27 @@ function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
   };
 }
 
+function parseRevisionRestoreBody(body: unknown): SourceRevisionRestoreBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+  };
+}
+
 function parsePublishingStateBody(body: unknown): SourcePublishingStateBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -502,6 +524,44 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         requirePathString(values.remoteId, "remoteId"),
       )),
     };
+  });
+
+  app.post("/v1/connections/:connectionId/content/:remoteId/revisions/:revisionId/restore", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const remoteId = requirePathString(values.remoteId, "remoteId");
+    const revisionId = requirePathString(values.revisionId, "revisionId");
+    const body = parseRevisionRestoreBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-content.revision.restore",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        remoteId,
+        remoteRevisionId: revisionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).restoreRevision(
+        connectionId,
+        remoteId,
+        revisionId,
+        body,
+      )),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          restoredRemoteRevisionId: value.revision.remoteRevisionId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
   });
 
   app.post("/v1/connections/:connectionId/content/:remoteId/import", async (request, reply) => {
