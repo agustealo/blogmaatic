@@ -328,6 +328,51 @@ function requiredPlanNumber(record: Readonly<Record<string, unknown>>, key: stri
   return value;
 }
 
+export function imageTransformSpecFromJson(
+  value: unknown,
+  defaults: ImageTransformSpec = {},
+): ImageTransformSpec {
+  if (value === undefined || value === null) return { ...defaults };
+  const record = unknownRecord(value);
+  if (!record) throw new Error("imageTransform must be an object");
+
+  const width = typeof record.width === "number" ? record.width : undefined;
+  const height = typeof record.height === "number" ? record.height : undefined;
+  const quality = typeof record.quality === "number" ? record.quality : undefined;
+  const maxBytes = typeof record.maxBytes === "number" ? record.maxBytes : undefined;
+  const focalX = typeof record.focalX === "number" ? record.focalX : undefined;
+  const focalY = typeof record.focalY === "number" ? record.focalY : undefined;
+  const fit = typeof record.fit === "string" ? record.fit : undefined;
+  const format = typeof record.format === "string" ? record.format : undefined;
+  const withoutEnlargement =
+    typeof record.withoutEnlargement === "boolean" ? record.withoutEnlargement : undefined;
+
+  if (fit !== undefined && fit !== "contain" && fit !== "cover") {
+    throw new Error("imageTransform.fit must be contain or cover");
+  }
+  if (format !== undefined && !["preserve", "jpeg", "png", "webp"].includes(format)) {
+    throw new Error("imageTransform.format must be preserve, jpeg, png, or webp");
+  }
+
+  const spec: ImageTransformSpec = {
+    ...defaults,
+    ...(width === undefined ? {} : { width }),
+    ...(height === undefined ? {} : { height }),
+    ...(fit === undefined ? {} : { fit }),
+    ...(
+      focalX === undefined && focalY === undefined
+        ? {}
+        : { focalPoint: { x: focalX ?? defaults.focalPoint?.x ?? 0.5, y: focalY ?? defaults.focalPoint?.y ?? 0.5 } }
+    ),
+    ...(format === undefined ? {} : { format: format as ImageOutputFormat }),
+    ...(quality === undefined ? {} : { quality }),
+    ...(maxBytes === undefined ? {} : { maxBytes }),
+    ...(withoutEnlargement === undefined ? {} : { withoutEnlargement }),
+  };
+  normalizeImageTransformSpec(spec);
+  return spec;
+}
+
 export function parseImageTransformPlan(value: unknown): ImageTransformPlan {
   const record = unknownRecord(value);
   if (!record) throw new Error("Image transform plan must be an object");
