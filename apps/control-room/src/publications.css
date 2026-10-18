@@ -3,7 +3,7 @@
 .publication-list-panel, .publication-editor { box-shadow: none; }
 .publication-editor { position: sticky; top: 84px; }
 .publication-list { display: grid; }
-.publication-row { width: 100%; min-height: 82px; padding: 14px 18px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; display: grid; grid-template-columns: minmax(220px, 1.6fr) auto auto auto minmax(150px, .7fr); gap: 18px; align-items: center; text-align: left; cursor: pointer; }
+.publication-row { width: 100%; min-height: 82px; padding: 14px 18px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; display: grid; grid-template-columns: minmax(220px, 1.7fr) auto auto minmax(150px, .75fr); gap: 18px; align-items: center; text-align: left; cursor: pointer; }
 .publication-row:hover { background: var(--surface-2); }
 .publication-row:last-child { border-bottom: 0; }
 .publication-row > span { display: grid; gap: 4px; min-width: 0; }
@@ -29,7 +29,6 @@
   .publication-workspace--editing { grid-template-columns: 1fr; }
   .publication-editor { position: static; }
   .publication-row { grid-template-columns: minmax(180px, 1.4fr) auto auto minmax(140px, .7fr); }
-  .publication-row > span:nth-child(4) { display: none; }
 }
 
 @media (max-width: 760px) {
@@ -40,3 +39,7 @@
   .publication-editor__actions .button { flex: 1 1 150px; }
   .success-banner, .warning-banner { align-items: flex-start; }
 }
+
+
+.publication-studio-support { display: grid; gap: 16px; }
+.publication-studio-support .publication-history { margin-top: 0; }
