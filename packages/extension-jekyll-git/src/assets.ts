@@ -4,7 +4,7 @@ import { basename, isAbsolute, relative } from "node:path";
 import type { Publication } from "@blogmaatic/core";
 import {
   planImageTransform,
-  renderImageTransformCached,
+  renderImageTransform,
   type ImageTransformSpec,
 } from "@blogmaatic/media";
 
@@ -62,7 +62,7 @@ export async function assetOperations(
           `Jekyll image mediaType ${asset.mediaType} does not match detected bytes ${transform.source.mediaType}`,
         );
       }
-      const rendered = await renderImageTransformCached({ sourcePath, plan: transform });
+      const rendered = await renderImageTransform({ bytes, plan: transform });
       assetFingerprint = rendered.outputFingerprint;
       extension = rendered.mediaType === "image/png" ? ".png" : rendered.mediaType === "image/webp" ? ".webp" : ".jpg";
     }
