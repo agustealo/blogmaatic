@@ -319,6 +319,123 @@ function SourceAuthorPanel({
   );
 }
 
+type WordPressNativeStatus = "draft" | "pending" | "private" | "publish" | "future";
+
+function canonicalSourcePublishing(entry: PublicationWorkspaceEntry): {
+  readonly status: WordPressNativeStatus;
+  readonly scheduledAt?: string;
+} {
+  const value = entry.publication.current.content.attributes.sourcePublishing;
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Readonly<Record<string, unknown>>;
+    const status = record.status;
+    if (status === "draft" || status === "pending" || status === "private" || status === "publish" || status === "future") {
+      return {
+        status,
+        ...(typeof record.scheduledAt === "string" ? { scheduledAt: record.scheduledAt } : {}),
+      };
+    }
+  }
+  return { status: "publish" };
+}
+
+function localDateTimeValue(instant: string | undefined): string {
+  if (!instant) return "";
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function SourcePublishingStatePanel({
+  entry,
+  connectionId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const canonical = canonicalSourcePublishing(entry);
+  const [status, setStatus] = useState<WordPressNativeStatus>(canonical.status);
+  const [scheduledLocal, setScheduledLocal] = useState(localDateTimeValue(canonical.scheduledAt));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const next = canonicalSourcePublishing(entry);
+    setStatus(next.status);
+    setScheduledLocal(localDateTimeValue(next.scheduledAt));
+  }, [entry.publication.current.id]);
+
+  const save = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      let scheduledAt: string | undefined;
+      if (status === "future") {
+        if (!scheduledLocal) throw new Error("Choose a WordPress publish date and time.");
+        const parsed = new Date(scheduledLocal);
+        if (Number.isNaN(parsed.getTime())) throw new Error("Choose a valid WordPress publish date and time.");
+        scheduledAt = parsed.toISOString();
+      }
+      const result = await client.setSourcePublishingState(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        status,
+        ...(scheduledAt ? { scheduledAt } : {}),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress publishing state could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  }, [client, connectionId, entry.publication.id, entry.version, onUpdated, scheduledLocal, status]);
+
+  const dirty = status !== canonical.status ||
+    (status === "future" && scheduledLocal !== localDateTimeValue(canonical.scheduledAt));
+
+  return (
+    <Panel title="WordPress publishing state" meta="Separate from Blogmaatic workflow status" className="source-publishing-panel">
+      <ErrorBanner error={error} />
+      <div className="source-publishing-note">
+        <strong>Destination-native state.</strong>
+        <span>This controls the matching WordPress post only. It does not replace Blogmaatic approval or Automation schedules.</span>
+      </div>
+      <div className="source-publishing-controls">
+        <label className="field">
+          <span>WordPress post status</span>
+          <select value={status} onChange={(event) => setStatus(event.target.value as WordPressNativeStatus)} disabled={busy}>
+            <option value="draft">Draft</option>
+            <option value="pending">Pending review</option>
+            <option value="private">Private</option>
+            <option value="publish">Published</option>
+            <option value="future">Scheduled</option>
+          </select>
+        </label>
+        {status === "future" ? (
+          <label className="field">
+            <span>Publish date & time</span>
+            <input
+              type="datetime-local"
+              value={scheduledLocal}
+              onChange={(event) => setScheduledLocal(event.target.value)}
+              disabled={busy}
+            />
+            <small>Uses your browser's local time and stores an exact instant.</small>
+          </label>
+        ) : null}
+        <button className="button button--primary" type="button" onClick={() => void save()} disabled={busy || !dirty || (status === "future" && !scheduledLocal)}>
+          {busy ? "Saving…" : "Save WordPress state"}
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
 function SourceTaxonomyPanel({
   connectionId,
   onSelect,
@@ -1318,6 +1435,16 @@ export function PublicationsPage() {
           {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
           typeof activeEntry.publication.provenance.connectionId === "string" ? (
             <>
+              <SourcePublishingStatePanel
+                entry={activeEntry}
+                connectionId={activeEntry.publication.provenance.connectionId}
+                onUpdated={(next) => {
+                  setActiveEntry(next);
+                  setEditor(editorForEntry(next));
+                  setPendingPublish(false);
+                  setChangeNonce((value) => value + 1);
+                }}
+              />
               <SourceAuthorPanel
                 entry={activeEntry}
                 connectionId={activeEntry.publication.provenance.connectionId}

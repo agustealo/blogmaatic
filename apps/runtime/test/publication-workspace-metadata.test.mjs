@@ -259,3 +259,47 @@ test("canonical source author assignment is immutable, idempotent, and source-bo
   );
   assert.equal(current().version, 2);
 });
+
+
+test("canonical source publishing state is immutable idempotent and source-bound", async () => {
+  const publication = importedPublication();
+  const { manager, current } = managerWith(publication);
+
+  const scheduled = await manager.setSourcePublishingState("publication-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    status: "future",
+    scheduledAt: "2026-11-01T14:30:00-04:00",
+  });
+  assert.equal(scheduled.version, 2);
+  assert.equal(scheduled.publication.current.ordinal, 2);
+  assert.deepEqual(scheduled.publication.current.content.attributes.sourcePublishing, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    status: "future",
+    scheduledAt: "2026-11-01T18:30:00.000Z",
+  });
+  assert.deepEqual(
+    scheduled.publication.current.content.attributes.wordpress,
+    publication.current.content.attributes.wordpress,
+  );
+
+  const retry = await manager.setSourcePublishingState("publication-wp", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    status: "future",
+    scheduledAt: "2026-11-01T18:30:00.000Z",
+  });
+  assert.equal(retry.version, 2);
+  assert.equal(retry.publication.current.id, scheduled.publication.current.id);
+
+  await assert.rejects(
+    () => manager.setSourcePublishingState("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-other",
+      status: "draft",
+    }),
+    /does not match the publication source/,
+  );
+  assert.equal(current().version, 2);
+});

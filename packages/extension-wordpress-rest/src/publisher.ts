@@ -49,7 +49,40 @@ function variant(route: PublicationRoute): Readonly<Record<string, JsonValue>> {
   return route.variant ?? {};
 }
 
-function desiredStatus(route: PublicationRoute): PostStatus {
+function sourcePublishingState(
+  publication: Publication,
+  route: PublicationRoute,
+): { readonly status: PostStatus; readonly scheduledAt?: string } | undefined {
+  const source = publication.current.content.attributes.sourcePublishing;
+  if (!isRecord(source)) return undefined;
+  if (
+    source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    source.connectionId !== route.destination.connectionId
+  ) {
+    return undefined;
+  }
+  const status = source.status;
+  if (typeof status !== "string" || !POST_STATUSES.includes(status as PostStatus)) {
+    throw new Error(`Unsupported canonical WordPress publishing status: ${String(status)}`);
+  }
+  const scheduledAt = source.scheduledAt;
+  if (status === "future") {
+    if (typeof scheduledAt !== "string" || !scheduledAt.trim()) {
+      throw new Error("Canonical WordPress future publishing state requires scheduledAt");
+    }
+    const parsed = new Date(scheduledAt);
+    if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid canonical WordPress scheduledAt: ${scheduledAt}`);
+    return { status: "future", scheduledAt: parsed.toISOString() };
+  }
+  if (scheduledAt !== undefined) {
+    throw new Error("Canonical WordPress scheduledAt is only allowed when status is future");
+  }
+  return { status: status as PostStatus };
+}
+
+function desiredStatus(publication: Publication, route: PublicationRoute): PostStatus {
+  const source = sourcePublishingState(publication, route);
+  if (source) return source.status;
   const fromVariant = getString(variant(route), "status");
   const candidate = fromVariant ?? (route.destination.channel === "posts" ? "publish" : route.destination.channel);
   if (!POST_STATUSES.includes(candidate as PostStatus)) {
@@ -58,7 +91,13 @@ function desiredStatus(route: PublicationRoute): PostStatus {
   return candidate as PostStatus;
 }
 
-function desiredSchedule(route: PublicationRoute, status: PostStatus): string | undefined {
+function desiredSchedule(
+  publication: Publication,
+  route: PublicationRoute,
+  status: PostStatus,
+): string | undefined {
+  const source = sourcePublishingState(publication, route);
+  if (source) return source.scheduledAt;
   const value = getString(variant(route), "scheduledAt");
   if (status !== "future") return undefined;
   if (!value) throw new Error("WordPress future publications require route.variant.scheduledAt");
@@ -358,8 +397,8 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       route.destination.connectionId,
     );
     const settings = parseSettings(connection);
-    const status = desiredStatus(route);
-    const scheduledAt = desiredSchedule(route, status);
+    const status = desiredStatus(publication, route);
+    const scheduledAt = desiredSchedule(publication, route, status);
     const imageTransform = variant(route).imageTransform === undefined
       ? undefined
       : imageTransformSpecFromJson(variant(route).imageTransform);
@@ -489,6 +528,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         categories: [...categories].sort((left, right) => left - right),
         tags: [...tags].sort((left, right) => left - right),
         featuredMedia,
+        author: payload.authorId ?? null,
       }),
     );
     const markedContent = documentWithMarker(body, {

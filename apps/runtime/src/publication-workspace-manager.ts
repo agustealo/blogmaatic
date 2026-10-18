@@ -306,6 +306,63 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, input.expectedVersion, now);
   }
 
+  async setSourcePublishingState(
+    publicationId: string,
+    expectedVersion: number,
+    state: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly status: string;
+      readonly scheduledAt?: string;
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== state.extensionId ||
+      current.publication.provenance.connectionId !== state.connectionId
+    ) {
+      throw new Error("Source publishing state connection does not match the publication source");
+    }
+    const status = state.status.trim();
+    if (!status) throw new Error("Source publishing status is required");
+    const scheduledAt = state.scheduledAt?.trim();
+    if (scheduledAt) {
+      const parsed = new Date(scheduledAt);
+      if (Number.isNaN(parsed.getTime())) throw new Error("Source publishing schedule must be a valid instant");
+    }
+
+    const nextState: Record<string, JsonValue> = {
+      extensionId: state.extensionId,
+      connectionId: state.connectionId,
+      status,
+      ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
+    };
+    const existing = current.publication.current.content.attributes.sourcePublishing;
+    if (JSON.stringify(existing) === JSON.stringify(nextState)) return current;
+
+    const now = this.#now();
+    const publication: Publication = {
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...current.publication.current.content,
+          attributes: {
+            ...current.publication.current.content.attributes,
+            sourcePublishing: nextState,
+          },
+        },
+      },
+    };
+    return this.#store.update(publication, expectedVersion, now);
+  }
+
   async assignSourceAuthor(
     publicationId: string,
     expectedVersion: number,

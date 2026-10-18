@@ -67,6 +67,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourcePublishingStateBody,
+  SourcePublishingStateResult,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SchedulerDispatchResponse,
@@ -247,6 +249,16 @@ export class OperatorClient {
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
+  }
+
+  setSourcePublishingState(
+    connectionId: string,
+    input: SourcePublishingStateBody,
+  ): Promise<SourcePublishingStateResult> {
+    return this.#request<SourcePublishingStateResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/publishing-state`,
+      { method: "POST", body: input },
+    );
   }
 
   listSourceAuthors(
