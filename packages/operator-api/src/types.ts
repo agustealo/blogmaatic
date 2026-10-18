@@ -263,6 +263,7 @@ export interface PublicationWorkspaceCreateBody {
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
+  readonly categories?: readonly string[];
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
@@ -276,6 +277,8 @@ export interface PublicationWorkspaceUpdateBody {
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
+  readonly categories?: readonly string[];
+  readonly featuredAssetId?: string | null;
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;

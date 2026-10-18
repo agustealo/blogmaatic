@@ -44,13 +44,22 @@ function expectedVersion(input: Record<string, unknown>): number {
   return value as number;
 }
 
-function tags(input: Record<string, unknown>): readonly string[] | undefined {
-  const value = input.tags;
+function stringList(input: Record<string, unknown>, key: "tags" | "categories"): readonly string[] | undefined {
+  const value = input[key];
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.some((tag) => typeof tag !== "string" || !tag.trim())) {
-    throw new OperatorRequestError("tags must be an array of non-empty strings");
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new OperatorRequestError(`${key} must be an array of non-empty strings`);
   }
   return value as readonly string[];
+}
+
+function featuredAssetId(input: Record<string, unknown>): string | null | undefined {
+  const value = input.featuredAssetId;
+  if (value === undefined || value === null) return value;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new OperatorRequestError("featuredAssetId must be a non-empty string or null");
+  }
+  return value.trim();
 }
 
 function status(input: Record<string, unknown>): WorkspacePublicationStatus | undefined {
@@ -93,8 +102,9 @@ function optionalQueryString(input: Record<string, unknown>, key: string): strin
 
 export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationWorkspaceCreateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "slug", "canonicalUrl", "status"], "request body");
-  const parsedTags = tags(input);
+  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "slug", "canonicalUrl", "status"], "request body");
+  const parsedTags = stringList(input, "tags");
+  const parsedCategories = stringList(input, "categories");
   const parsedStatus = status(input);
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -112,6 +122,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
     ...(summary === undefined ? {} : { summary }),
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
+    ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),
@@ -120,7 +131,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
 
 export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationWorkspaceUpdateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "featuredAssetId", "slug", "canonicalUrl", "status"], "request body");
   const title = optionalString(input, "title");
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -129,7 +140,9 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
   }
   const summary = optionalString(input, "summary");
   const language = optionalString(input, "language");
-  const parsedTags = tags(input);
+  const parsedTags = stringList(input, "tags");
+  const parsedCategories = stringList(input, "categories");
+  const parsedFeaturedAssetId = featuredAssetId(input);
   const slug = optionalString(input, "slug");
   const canonicalUrl = optionalString(input, "canonicalUrl");
   const parsedStatus = status(input);
@@ -141,6 +154,8 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
     ...(summary === undefined ? {} : { summary }),
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
+    ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
+    ...(parsedFeaturedAssetId === undefined ? {} : { featuredAssetId: parsedFeaturedAssetId }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),

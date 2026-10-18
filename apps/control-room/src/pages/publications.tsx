@@ -38,6 +38,9 @@ interface PublicationEditor {
   readonly body: string;
   readonly bodyFormat: "plain" | "html";
   readonly tags: string;
+  readonly categories: string;
+  readonly featuredAssetId: string;
+  readonly imageAssets: readonly { readonly id: string; readonly label: string; readonly source: string }[];
   readonly language: string;
   readonly slug: string;
   readonly canonicalUrl: string;
@@ -87,6 +90,9 @@ function editorForCreate(): PublicationEditor {
     body: "",
     bodyFormat: "plain",
     tags: "",
+    categories: "",
+    featuredAssetId: "",
+    imageAssets: [],
     language: "en",
     slug: "",
     canonicalUrl: "",
@@ -106,6 +112,21 @@ function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
     body: body.body,
     bodyFormat: body.format,
     tags: entry.publication.current.content.tags.join(", "),
+    categories: Array.isArray(entry.publication.current.content.attributes.categories)
+      ? entry.publication.current.content.attributes.categories
+          .filter((value): value is string => typeof value === "string")
+          .join(", ")
+      : "",
+    featuredAssetId: entry.publication.current.content.assets.find(
+      (asset) => asset.kind === "image" && asset.attributes?.featured === true,
+    )?.id ?? "",
+    imageAssets: entry.publication.current.content.assets
+      .filter((asset) => asset.kind === "image")
+      .map((asset) => ({
+        id: asset.id,
+        label: asset.alt?.trim() || asset.id,
+        source: asset.source,
+      })),
     language: entry.publication.current.content.language,
     slug: entry.publication.slug ?? "",
     canonicalUrl: entry.publication.canonicalUrl ?? "",
@@ -114,8 +135,8 @@ function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
   };
 }
 
-function tagsFromInput(value: string): readonly string[] {
-  return [...new Set(value.split(/[,\n]/).map((tag) => tag.trim()).filter(Boolean))];
+function listFromInput(value: string): readonly string[] {
+  return [...new Set(value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean))];
 }
 
 function destinationLabel(extensionId: string): string {
@@ -582,7 +603,8 @@ export function PublicationsPage() {
         bodyFormat: editor.bodyFormat,
         summary: editor.summary,
         language: editor.language.trim() || "en",
-        tags: tagsFromInput(editor.tags),
+        tags: listFromInput(editor.tags),
+        categories: listFromInput(editor.categories),
         slug: editor.slug,
         canonicalUrl: editor.canonicalUrl,
         status: editor.status,
@@ -592,7 +614,11 @@ export function PublicationsPage() {
         saved = await client.createPublication(common);
       } else {
         if (!editor.publicationId || editor.expectedVersion === undefined) throw new Error("Publication edit state is incomplete");
-        const update: PublicationWorkspaceUpdateBody = { expectedVersion: editor.expectedVersion, ...common };
+        const update: PublicationWorkspaceUpdateBody = {
+          expectedVersion: editor.expectedVersion,
+          ...common,
+          featuredAssetId: editor.featuredAssetId || null,
+        };
         saved = await client.updatePublication(editor.publicationId, update);
       }
       setActiveEntry(saved);
@@ -743,6 +769,17 @@ export function PublicationsPage() {
               </label>
               <div className="publication-editor__grid">
                 <label className="field"><span>Tags</span><input value={editor.tags} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, tags: event.target.value } : current); }} placeholder="news, launch, product" /></label>
+                <label className="field"><span>Categories</span><input value={editor.categories} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, categories: event.target.value } : current); }} placeholder="Publishing, Tutorials" /></label>
+                {editor.imageAssets.length ? (
+                  <label className="field">
+                    <span>Featured image</span>
+                    <select value={editor.featuredAssetId} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, featuredAssetId: event.target.value } : current); }}>
+                      <option value="">No featured image</option>
+                      {editor.imageAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.label}</option>)}
+                    </select>
+                    {editor.featuredAssetId ? <small>{editor.imageAssets.find((asset) => asset.id === editor.featuredAssetId)?.source}</small> : null}
+                  </label>
+                ) : null}
                 <label className="field"><span>Language</span><input value={editor.language} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, language: event.target.value } : current); }} required /></label>
                 <label className="field"><span>Slug</span><input value={editor.slug} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, slug: event.target.value } : current); }} /></label>
                 <label className="field"><span>Canonical URL</span><input type="url" value={editor.canonicalUrl} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, canonicalUrl: event.target.value } : current); }} /></label>

@@ -9,7 +9,7 @@ import type {
   PublicationWorkspaceListQuery,
   PublicationWorkspaceStore,
 } from "@blogmaatic/control-plane";
-import type { Publication, PublicationBlock, PublicationGroup, PublicationStatus } from "@blogmaatic/core";
+import type { JsonValue, Publication, PublicationAsset, PublicationBlock, PublicationGroup, PublicationStatus } from "@blogmaatic/core";
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
 
@@ -23,6 +23,7 @@ export interface PublicationWorkspaceCreateInput {
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
+  readonly categories?: readonly string[];
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
@@ -36,6 +37,8 @@ export interface PublicationWorkspaceUpdateInput {
   readonly summary?: string;
   readonly language?: string;
   readonly tags?: readonly string[];
+  readonly categories?: readonly string[];
+  readonly featuredAssetId?: string | null;
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
@@ -70,6 +73,58 @@ function normalizeTags(tags: readonly string[] | undefined): readonly string[] {
   return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
 }
 
+function normalizeCategories(categories: readonly string[] | undefined): readonly string[] {
+  if (!categories) return [];
+  return [...new Set(categories.map((category) => category.trim()).filter(Boolean))];
+}
+
+function withoutFeaturedAttribute(
+  attributes: Readonly<Record<string, JsonValue>> | undefined,
+): Readonly<Record<string, JsonValue>> | undefined {
+  if (!attributes || attributes.featured === undefined) return attributes;
+  const { featured: _featured, ...rest } = attributes;
+  return Object.keys(rest).length ? rest : undefined;
+}
+
+function withFeaturedAsset(
+  assets: readonly PublicationAsset[],
+  featuredAssetId: string | null,
+): readonly PublicationAsset[] {
+  const selectedId = featuredAssetId?.trim() || null;
+  if (selectedId) {
+    const selected = assets.find((asset) => asset.id === selectedId);
+    if (!selected) throw new Error(`Featured asset does not exist: ${selectedId}`);
+    if (selected.kind !== "image") throw new Error(`Featured asset must be an image: ${selectedId}`);
+  }
+
+  return assets.map((asset) => {
+    const clean = withoutFeaturedAttribute(asset.attributes);
+    if (asset.id !== selectedId) {
+      if (clean) return { ...asset, attributes: clean };
+      if (!asset.attributes) return asset;
+      const { attributes: _attributes, ...withoutAttributes } = asset;
+      return withoutAttributes;
+    }
+    return {
+      ...asset,
+      attributes: {
+        ...(clean ?? {}),
+        featured: true,
+      },
+    };
+  });
+}
+
+function withCategories(
+  attributes: Readonly<Record<string, JsonValue>>,
+  categories: readonly string[],
+): Readonly<Record<string, JsonValue>> {
+  const next: Record<string, JsonValue> = { ...attributes };
+  if (categories.length) next.categories = [...categories];
+  else delete next.categories;
+  return next;
+}
+
 function blocksFromBody(
   body: string | undefined,
   format: PublicationBodyFormat = "plain",
@@ -99,7 +154,9 @@ function contentChanged(input: PublicationWorkspaceUpdateInput): boolean {
     input.body !== undefined ||
     input.summary !== undefined ||
     input.language !== undefined ||
-    input.tags !== undefined;
+    input.tags !== undefined ||
+    input.categories !== undefined ||
+    input.featuredAssetId !== undefined;
 }
 
 export class PublicationWorkspaceManager {
@@ -193,7 +250,7 @@ export class PublicationWorkspaceManager {
           blocks: blocksFromBody(input.body, input.bodyFormat),
           assets: [],
           tags: normalizeTags(input.tags),
-          attributes: {},
+          attributes: withCategories({}, normalizeCategories(input.categories)),
         },
       },
       ...(canonicalUrl ? { canonicalUrl } : {}),
@@ -225,9 +282,13 @@ export class PublicationWorkspaceManager {
         ...(summary ? { summary } : {}),
         language: input.language === undefined ? oldContent.language : requireText(input.language, "Publication language"),
         blocks: input.body === undefined ? oldContent.blocks : blocksFromBody(input.body, input.bodyFormat),
-        assets: oldContent.assets,
+        assets: input.featuredAssetId === undefined
+          ? oldContent.assets
+          : withFeaturedAsset(oldContent.assets, input.featuredAssetId),
         tags: input.tags === undefined ? oldContent.tags : normalizeTags(input.tags),
-        attributes: oldContent.attributes,
+        attributes: input.categories === undefined
+          ? oldContent.attributes
+          : withCategories(oldContent.attributes, normalizeCategories(input.categories)),
       },
     } : current.publication.current;
 
