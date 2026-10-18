@@ -15,6 +15,9 @@ function makeServer() {
   const tags = new Map();
   const categories = new Map();
   const media = new Map();
+  const users = new Map([
+    [1, { id: 1, name: "Editor", slug: "editor", link: "http://example.test/author/editor", avatar_urls: { "96": "http://example.test/avatar/editor.png" } }],
+  ]);
   const mediaUploads = [];
   let nextPost = 10;
   let nextTerm = 20;
@@ -36,13 +39,14 @@ function makeServer() {
     categories: post.categories,
     tags: post.tags,
     featured_media: post.featured_media,
+    author: post.author,
     date_gmt: post.date_gmt,
   });
   const toPost = (id, body) => {
     modification += 1;
     return {
       id,
-      author: 1,
+      author: body.author ?? 1,
       link: `http://example.test/?p=${id}`,
       slug: body.slug ?? "",
       status: body.status ?? "draft",
@@ -75,7 +79,22 @@ function makeServer() {
       body = JSON.parse(raw);
     }
 
-    if (request.method === "GET" && path === "/users/me") return json(response, 200, { id: 1, name: "Editor" });
+    if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
+    if (request.method === "GET" && path === "/users") {
+      const search = url.searchParams.get("search")?.toLowerCase();
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const perPage = Number(url.searchParams.get("per_page") ?? "100");
+      const filtered = [...users.values()]
+        .filter((user) => !search || [user.name, user.slug].some((value) => value.toLowerCase().includes(search)))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      const start = (page - 1) * perPage;
+      return json(response, 200, filtered.slice(start, start + perPage));
+    }
+    const userMatch = path.match(/^\/users\/(\d+)$/);
+    if (userMatch && request.method === "GET") {
+      const user = users.get(Number(userMatch[1]));
+      return user ? json(response, 200, user) : json(response, 404, { code: "not_found", message: "Not found", data: { status: 404 } });
+    }
     if (request.method === "GET" && path === "/posts") {
       const slug = url.searchParams.get("slug");
       return json(response, 200, [...posts.values()].filter((post) => !slug || post.slug === slug));
@@ -220,6 +239,7 @@ function makeServer() {
     tags,
     categories,
     media,
+    users,
     mediaUploads,
     get counts() {
       return { postCreates, postUpdates };
@@ -685,6 +705,186 @@ test("source content service verifies image bytes before WordPress upload and pr
 
     await content.deleteMediaPermanent("wp-1", String(uploaded.id));
     assert.equal(api.media.has(uploaded.id), false);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("source content service searches WordPress authors without exposing email", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.users.set(7, {
+      id: 7,
+      name: "Editor Seven",
+      slug: "editor-seven",
+      link: "http://example.test/author/editor-seven",
+      email: "private@example.test",
+      avatar_urls: { "96": "http://example.test/avatar/7.png" },
+    });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+
+    const page = await content.listAuthors("wp-1", { search: "seven", page: 1, perPage: 10 });
+    assert.equal(page.items.length, 1);
+    assert.deepEqual(page.items[0], {
+      id: 7,
+      name: "Editor Seven",
+      slug: "editor-seven",
+      link: "http://example.test/author/editor-seven",
+      avatarUrl: "http://example.test/avatar/7.png",
+    });
+    assert.equal("email" in page.items[0], false);
+    assert.deepEqual(await content.getAuthor("wp-1", "7"), page.items[0]);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress compiles, delivers, and detects drift for canonical source author", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.users.set(7, { id: 7, name: "Editor Seven", slug: "editor-seven" });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const item = {
+      id: "publication-author",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      slug: "author-proof",
+      status: "approved",
+      current: {
+        id: "revision-author",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Author Proof",
+          language: "en",
+          blocks: [{ id: "p1", kind: "paragraph", data: { text: "By the right person." } }],
+          assets: [],
+          tags: [],
+          attributes: {
+            sourceAuthor: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              remoteId: "7",
+              displayName: "Editor Seven",
+            },
+          },
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
+    };
+
+    const projection = await publisher.compile({ publication: item, route: route() });
+    assert.equal(projection.payload.authorId, 7);
+    const delivered = await publisher.deliver({ idempotencyKey: "author-proof", projection });
+    const saved = api.posts.get(Number(delivered.remote.id));
+    assert.equal(saved.author, 7);
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+    saved.author = 1;
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress ignores canonical source author owned by another connection", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const connections = new ConnectionAuthority([
+      { ...baseConnection, id: "wp-1", displayName: "WordPress One" },
+      { ...baseConnection, id: "wp-2", displayName: "WordPress Two" },
+    ]);
+    const publisher = new WordPressRestPublisher(
+      connections,
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const item = {
+      id: "publication-author-isolation",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      status: "approved",
+      current: {
+        id: "revision-author-isolation",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Author Isolation",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            sourceAuthor: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              remoteId: "7",
+              displayName: "Editor Seven",
+            },
+          },
+        },
+      },
+      provenance: { source: "wordpress" },
+    };
+    const wp2Route = {
+      ...route(),
+      destination: { ...route().destination, connectionId: "wp-2" },
+    };
+    const projection = await publisher.compile({ publication: item, route: wp2Route });
+    assert.equal(projection.payload.authorId, undefined);
   } finally {
     api.server.close();
   }
