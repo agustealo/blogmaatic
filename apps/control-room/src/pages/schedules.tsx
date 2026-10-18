@@ -332,10 +332,10 @@ export function SchedulesPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Runtime scheduling"
-        title="Schedules"
-        description="Create, inspect, enable, and disable durable publication schedules. Each schedule freezes an approved Publication Workspace revision and current Publication Group snapshot, while the runtime owns timezone-aware future dispatch."
-        actions={<button className="button button--primary" type="button" onClick={() => void openCreate()} disabled={supportLoading}>New Schedule</button>}
+        eyebrow="Publishing plan"
+        title="Calendar"
+        description="Plan when approved content publishes. Blogmaatic keeps the exact content and destination snapshot behind every scheduled delivery."
+        actions={<button className="button button--primary" type="button" onClick={() => void openCreate()} disabled={supportLoading}>Schedule content</button>}
       />
       <ErrorBanner error={actionError ?? collection.error} />
       {createdScheduleId ? (
@@ -362,7 +362,7 @@ export function SchedulesPage() {
         <button className="button button--quiet" type="button" onClick={() => void collection.reload()} disabled={collection.loading}>Refresh</button>
       </div>
       {collection.loading ? <LoadingBlock /> : (
-        <Panel className="table-panel" title="Durable schedules" meta="Automatic dispatch">
+        <Panel className="table-panel" title="Upcoming and recurring" meta="Automatic publishing">
           <div className="data-table data-table--schedules">
             <div className="data-table__head"><span>Schedule</span><span>Automation</span><span>Local time</span><span>Next fire</span><span>State</span></div>
             {collection.items.map((schedule) => {
