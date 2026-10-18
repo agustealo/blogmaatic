@@ -573,6 +573,20 @@ test("source content service searches and maps WordPress Media Library images", 
       modifiedGmt: "2026-10-18T12:00:00",
     });
     assert.deepEqual(await content.getMedia("wp-1", "77"), page.items[0]);
+
+    api.media.set(88, {
+      id: 88,
+      slug: "release-notes",
+      source_url: "http://example.test/uploads/release-notes.pdf",
+      media_type: "file",
+      mime_type: "application/pdf",
+      alt_text: "",
+      title: { raw: "Release notes" },
+    });
+    await assert.rejects(
+      content.getMedia("wp-1", "88"),
+      /is not an image/,
+    );
   } finally {
     api.server.close();
   }
