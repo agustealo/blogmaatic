@@ -16,6 +16,7 @@ export interface PublicationWorkspaceEntry {
 
 export interface PublicationWorkspaceListQuery extends PageRequest {
   readonly status?: PublicationStatus;
+  readonly search?: string;
 }
 
 export interface PublicationWorkspaceStore {
@@ -45,6 +46,17 @@ function requireId(value: string, label: string): string {
 function requireVersion(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${label} must be a positive integer`);
   return value;
+}
+
+function searchTerms(value: string | undefined): readonly string[] {
+  const normalized = value?.trim();
+  if (!normalized) return [];
+  if (normalized.length > 200) throw new Error("Publication search must not exceed 200 characters");
+  return [...new Set(normalized.toLowerCase().split(/\s+/g).filter(Boolean))];
+}
+
+function likeLiteral(value: string): string {
+  return `%${value.replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
 }
 
 function parseRow(row: PublicationRow): PublicationWorkspaceEntry {
@@ -206,6 +218,22 @@ export class SqlitePublicationWorkspaceStore implements PublicationWorkspaceStor
     if (query.status) {
       clauses.push("h.status = ?");
       values.push(query.status);
+    }
+    for (const term of searchTerms(query.search)) {
+      const pattern = likeLiteral(term);
+      clauses.push(`(
+        LOWER(h.publication_id) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(json_extract(v.publication_json, '$.current.content.title'), '')) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(json_extract(v.publication_json, '$.current.content.summary'), '')) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(json_extract(v.publication_json, '$.slug'), '')) LIKE ? ESCAPE '\\'
+        OR LOWER(COALESCE(json_extract(v.publication_json, '$.provenance.source'), '')) LIKE ? ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1
+          FROM json_each(v.publication_json, '$.current.content.tags') AS tag
+          WHERE LOWER(CAST(tag.value AS TEXT)) LIKE ? ESCAPE '\\'
+        )
+      )`);
+      values.push(pattern, pattern, pattern, pattern, pattern, pattern);
     }
     if (cursor) {
       clauses.push("(h.updated_at < ? OR (h.updated_at = ? AND h.publication_id < ?))");

@@ -93,3 +93,92 @@ test("publication workspace survives restart on the shared control-plane databas
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("publication workspace search spans durable fields, composes with status, escapes wildcards, and paginates", async () => {
+  await withStore(async ({ store }) => {
+    const make = ({ id, title, status = "draft", summary, slug, tags = [], source = "blogmaatic.publication-workspace" }) => ({
+      id,
+      createdAt: "2026-10-18T10:00:00.000Z",
+      ...(slug ? { slug } : {}),
+      status,
+      current: {
+        id: `revision-${id}`,
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title,
+          ...(summary ? { summary } : {}),
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags,
+          attributes: {},
+        },
+      },
+      provenance: { source },
+    });
+
+    await store.create(make({
+      id: "publication-alpha",
+      title: "Detroit Safety Guide",
+      status: "approved",
+      summary: "Imported field notes",
+      slug: "detroit-safety",
+      tags: ["travel", "safety"],
+      source: "wordpress",
+    }), "2026-10-18T10:00:01.000Z");
+    await store.create(make({
+      id: "publication-beta",
+      title: "Safety Checklist",
+      status: "approved",
+      tags: ["wordpress", "checklist"],
+      source: "blogmaatic.publication-workspace",
+    }), "2026-10-18T10:00:02.000Z");
+    await store.create(make({
+      id: "publication-gamma",
+      title: "Launch 100% Ready",
+      status: "draft",
+      slug: "launch_100",
+      tags: ["release"],
+    }), "2026-10-18T10:00:03.000Z");
+
+    assert.deepEqual(
+      (await store.list({ search: "detroit" })).items.map((entry) => entry.publication.id),
+      ["publication-alpha"],
+    );
+    assert.deepEqual(
+      (await store.list({ search: "wordpress safety", status: "approved" })).items.map((entry) => entry.publication.id),
+      ["publication-beta", "publication-alpha"],
+    );
+    assert.deepEqual(
+      (await store.list({ search: "publication-alpha" })).items.map((entry) => entry.publication.id),
+      ["publication-alpha"],
+    );
+    assert.deepEqual(
+      (await store.list({ search: "100%" })).items.map((entry) => entry.publication.id),
+      ["publication-gamma"],
+    );
+    assert.deepEqual(
+      (await store.list({ search: "launch_100" })).items.map((entry) => entry.publication.id),
+      ["publication-gamma"],
+    );
+
+    const first = await store.list({ search: "safety", status: "approved", limit: 1 });
+    assert.deepEqual(first.items.map((entry) => entry.publication.id), ["publication-beta"]);
+    assert.ok(first.nextCursor);
+    const second = await store.list({
+      search: "safety",
+      status: "approved",
+      limit: 1,
+      cursor: first.nextCursor,
+    });
+    assert.deepEqual(second.items.map((entry) => entry.publication.id), ["publication-alpha"]);
+
+    await assert.rejects(
+      () => store.list({ search: "x".repeat(201) }),
+      /must not exceed 200/,
+    );
+  });
+});

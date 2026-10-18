@@ -495,6 +495,8 @@ export function PublicationsPage() {
   const { session } = useConnection();
   const client = session!.client;
   const [statusFilter, setStatusFilter] = useState<"" | WorkspacePublicationStatus>("");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [editor, setEditor] = useState<PublicationEditor | null>(null);
   const [activeEntry, setActiveEntry] = useState<PublicationWorkspaceEntry | null>(null);
@@ -504,12 +506,18 @@ export function PublicationsPage() {
   const [dispatchResult, setDispatchResult] = useState<PublicationWorkspaceDispatchResult | null>(null);
   const [changeNonce, setChangeNonce] = useState(0);
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => setSearchQuery(searchInput.trim()), 250);
+    return () => window.clearTimeout(handle);
+  }, [searchInput]);
+
   const loader = useCallback((cursor?: string) => client.listPublications({
     limit: 30,
     ...(statusFilter ? { status: statusFilter } : {}),
+    ...(searchQuery ? { search: searchQuery } : {}),
     ...(cursor ? { cursor } : {}),
-  }), [client, statusFilter]);
-  const collection = usePagedCollection(`publications:${statusFilter}:${changeNonce}`, loader);
+  }), [client, searchQuery, statusFilter]);
+  const collection = usePagedCollection(`publications:${statusFilter}:${searchQuery}:${changeNonce}`, loader);
 
   const selectedEntry = useMemo(
     () => publicationId ? collection.items.find((entry) => entry.publication.id === publicationId) : undefined,
@@ -651,7 +659,17 @@ export function PublicationsPage() {
         </div>
       ) : null}
 
-      <div className="toolbar">
+      <div className="toolbar content-library-toolbar">
+        <label className="field field--inline content-library-search">
+          <span>Search Content</span>
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Title, tag, slug, source, ID…"
+            autoComplete="off"
+          />
+        </label>
         <label className="field field--inline">
           <span>Status</span>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
@@ -659,6 +677,11 @@ export function PublicationsPage() {
             {statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </label>
+        {searchInput || statusFilter ? (
+          <button className="button button--quiet" type="button" onClick={() => { setSearchInput(""); setSearchQuery(""); setStatusFilter(""); }}>
+            Clear filters
+          </button>
+        ) : null}
         <button className="button button--quiet" type="button" onClick={() => void collection.reload()} disabled={collection.loading}>Refresh</button>
       </div>
 
@@ -676,8 +699,19 @@ export function PublicationsPage() {
               ))}
               {collection.items.length === 0 ? (
                 <div className="publication-empty">
-                  <EmptyState title="No content yet">Create your first article here, or import an existing post from a connected WordPress destination.</EmptyState>
-                  <button className="button button--primary" type="button" onClick={startCreate}>Create Publication</button>
+                  {searchQuery || statusFilter ? (
+                    <>
+                      <EmptyState title="No matching content">
+                        Try a different search or status. Search checks titles, summaries, slugs, tags, source, and publication IDs across the full Content library.
+                      </EmptyState>
+                      <button className="button button--quiet" type="button" onClick={() => { setSearchInput(""); setSearchQuery(""); setStatusFilter(""); }}>Clear filters</button>
+                    </>
+                  ) : (
+                    <>
+                      <EmptyState title="No content yet">Create your first article here, or import an existing post from a connected WordPress destination.</EmptyState>
+                      <button className="button button--primary" type="button" onClick={startCreate}>Create Publication</button>
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>

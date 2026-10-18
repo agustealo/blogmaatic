@@ -153,16 +153,26 @@ export function parsePublicationWorkspaceDispatchBody(body: unknown): Publicatio
   return { expectedVersion: expectedVersion(input) };
 }
 
-export function parsePublicationWorkspaceListQuery(query: unknown): { readonly limit?: number; readonly cursor?: string; readonly status?: WorkspacePublicationStatus } {
+export function parsePublicationWorkspaceListQuery(query: unknown): {
+  readonly limit?: number;
+  readonly cursor?: string;
+  readonly status?: WorkspacePublicationStatus;
+  readonly search?: string;
+} {
   const input = query === undefined || query === null ? {} : record(query, "query");
-  rejectUnknown(input, ["limit", "cursor", "status"], "query");
+  rejectUnknown(input, ["limit", "cursor", "status", "search"], "query");
   const limit = optionalQueryLimit(input);
   const cursor = optionalQueryString(input, "cursor");
   const parsedStatus = status(input);
+  const search = optionalQueryString(input, "search")?.trim();
+  if (search && search.length > 200) {
+    throw new OperatorRequestError("search must not exceed 200 characters");
+  }
   return {
     ...(limit === undefined ? {} : { limit }),
     ...(cursor === undefined ? {} : { cursor }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),
+    ...(search === undefined ? {} : { search }),
   };
 }
 
