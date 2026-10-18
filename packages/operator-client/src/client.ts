@@ -67,6 +67,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceRevisionRestoreBody,
+  SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourceTaxonomyPage,
@@ -348,6 +350,18 @@ export class OperatorClient {
   getSourceContent(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
     return this.#request<SourceContentRecord>(
       `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}`,
+    );
+  }
+
+  restoreSourceContentRevision(
+    connectionId: string,
+    remoteId: string,
+    remoteRevisionId: string,
+    input: SourceRevisionRestoreBody,
+  ): Promise<SourceRevisionRestoreResult> {
+    return this.#request<SourceRevisionRestoreResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/content/${encodeURIComponent(remoteId)}/revisions/${encodeURIComponent(remoteRevisionId)}/restore`,
+      { method: "POST", body: input },
     );
   }
 
