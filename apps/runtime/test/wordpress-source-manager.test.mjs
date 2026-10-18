@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { WordPressSourceManager } from "../dist/wordpress-source-manager.js";
 
-function snapshot(managed = false, publicationId, routeId) {
+function snapshot(managed = false, publicationId, routeId, native = {}) {
   return {
     post: {
       id: 55,
@@ -12,9 +12,9 @@ function snapshot(managed = false, publicationId, routeId) {
       excerpt: "<p>Imported summary</p>",
       contentHtml: "<h2>Imported heading</h2><p>Imported body.</p>",
       slug: "existing-wordpress-article",
-      status: "publish",
+      status: native.status ?? "publish",
       link: "https://example.test/?p=55",
-      dateGmt: "2026-10-04T12:00:00",
+      dateGmt: native.dateGmt ?? "2026-10-04T12:00:00",
       modifiedGmt: "2026-10-04T12:30:00",
       categoryIds: [4],
       tagIds: [8],
@@ -36,7 +36,8 @@ function snapshot(managed = false, publicationId, routeId) {
 }
 
 test("WordPress import creates one canonical publication and recovers it on retry", async () => {
-  let currentSnapshot = snapshot();
+  const importedNative = { status: "future", dateGmt: "2026-11-01T18:30:00" };
+  let currentSnapshot = snapshot(false, undefined, undefined, importedNative);
   let stored;
   let adoptCount = 0;
   const projectionWrites = [];
@@ -50,7 +51,7 @@ test("WordPress import creates one canonical publication and recovers it on retr
     },
     async adopt(_connectionId, _remoteId, projection) {
       adoptCount += 1;
-      currentSnapshot = snapshot(true, projection.publicationId, projection.routeId);
+      currentSnapshot = snapshot(true, projection.publicationId, projection.routeId, importedNative);
       return currentSnapshot.post;
     },
   };
@@ -153,7 +154,8 @@ test("WordPress import creates one canonical publication and recovers it on retr
   assert.deepEqual(first.publication.publication.current.content.attributes.sourcePublishing, {
     extensionId: "blogmaatic.wordpress-rest",
     connectionId: "wp-main",
-    status: "publish",
+    status: "future",
+    scheduledAt: "2026-11-01T18:30:00.000Z",
   });
   assert.equal(first.remote.managed, true);
   assert.equal(adoptCount, 1);
