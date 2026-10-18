@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 
 import type {
   OperatorClientError,
+  OperatorDistributionHistoryPage,
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchResult,
   PublicationWorkspaceEntry,
@@ -168,7 +169,8 @@ function VersionsPanel({ publicationId, nonce }: { readonly publicationId: strin
 
 function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationWorkspaceEntry; readonly nonce: number }) {
   const { session } = useConnection();
-  const [records, setRecords] = useState<readonly Awaited<ReturnType<typeof session.client.listPublicationDistributions>>["items"]>([]);
+  const client = session!.client;
+  const [records, setRecords] = useState<OperatorDistributionHistoryPage["items"]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -176,7 +178,7 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
     let active = true;
     setLoading(true);
     setError(null);
-    void session.client.listPublicationDistributions(entry.publication.id, { limit: 50 })
+    void client.listPublicationDistributions(entry.publication.id, { limit: 50 })
       .then((page) => {
         if (active) setRecords(page.items);
       })
@@ -187,7 +189,7 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [entry.publication.id, nonce, session]);
+  }, [client, entry.publication.id, nonce]);
 
   const latestByRoute = useMemo(() => {
     const map = new Map<string, (typeof records)[number]>();
