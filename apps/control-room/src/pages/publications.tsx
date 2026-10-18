@@ -383,6 +383,32 @@ function ProjectionPreviewPanel({ entry, nonce }: { readonly entry: PublicationW
                       <span><small>Fidelity</small><strong>{item.summary.fidelity.score}%{item.summary.fidelity.exact ? " exact" : ""}</strong></span>
                     ) : null}
                   </div>
+                  {item.summary.media?.length ? (
+                    <div className="projection-preview-media">
+                      {item.summary.media.map((media, index) => (
+                        <div className="projection-preview-media__item" key={media.derivedAssetId ?? media.assetId ?? index}>
+                          <span>
+                            <strong>{media.assetId ?? `Image ${index + 1}`}</strong>
+                            <small>
+                              {media.sourceWidth && media.sourceHeight ? `${media.sourceWidth}×${media.sourceHeight}` : "Unknown source size"}
+                              {" → "}
+                              {media.outputWidth && media.outputHeight ? `${media.outputWidth}×${media.outputHeight}` : "Original size"}
+                            </small>
+                          </span>
+                          <span>
+                            <StatusPill value={media.renderRequired ? "transform required" : "ready as-is"} tone={media.renderRequired ? "warn" : "good"} />
+                            <small>{media.outputMediaType ?? media.sourceMediaType ?? ""}{media.fit ? ` · ${media.fit}` : ""}</small>
+                          </span>
+                          {media.transformationFingerprint ? (
+                            <details>
+                              <summary>Transform identity</summary>
+                              <code>{media.transformationFingerprint}</code>
+                            </details>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   {item.summary.title ? <h3>{item.summary.title}</h3> : null}
                   {item.summary.text ? <pre className="projection-preview-text">{item.summary.text}</pre> : null}
                   {item.summary.publicUrl ? <p className="projection-preview-link">Link: {item.summary.publicUrl}</p> : null}
