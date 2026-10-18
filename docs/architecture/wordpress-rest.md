@@ -135,6 +135,23 @@ Unmanaged WordPress content remains read-only until explicit import. Destructive
 
 WordPress-native revisions are exposed as remote evidence only. They do not replace Blogmaatic's canonical immutable Publication revisions.
 
+### Revision recovery
+
+A WordPress-native revision may be explicitly recovered into Blogmaatic, but recovery never mutates canonical history in place and never writes back to WordPress automatically.
+
+The restore flow is:
+
+1. verify the canonical Publication is bound to the exact WordPress extension, connection, and remote post id
+2. enforce the caller's exact workspace version before remote revision retrieval
+3. fetch the selected WordPress revision in edit context
+4. create a new immutable Blogmaatic Publication revision
+5. replace only the recoverable editorial fields: title, excerpt/summary, and raw editable HTML body
+6. preserve canonical assets, tags, taxonomy metadata, source author, native publishing state, and other provider metadata
+7. record the remote post/revision identity in `PublicationIR.attributes.sourceRevisionRecovery`
+8. require an explicit later publish action before WordPress is changed
+
+Recovered WordPress HTML remains an explicit `embed.html` block so recovery does not perform a lossy HTML-to-block conversion. The Operator API audit ledger records both the remote revision identity and the resulting canonical revision/version.
+
 ## Drift verification
 
 Authenticated inspection uses `context=edit` so raw editable content can be observed.
