@@ -23,6 +23,7 @@ import type {
   OperatorApiOptions,
   OperatorDistributionHistory,
   OperatorPublicationGroupManager,
+  OperatorPublicationPreviewManager,
   OperatorPublicationWorkspaceManager,
 } from "./types.js";
 import { requirePathString, requirePathVersion } from "./validation.js";
@@ -77,6 +78,17 @@ function publicationManager(options: OperatorApiOptions): OperatorPublicationWor
     );
   }
   return options.publications;
+}
+
+function previewManager(options: OperatorApiOptions): OperatorPublicationPreviewManager {
+  if (!options.previews) {
+    throw new PublicationGroupApiError(
+      503,
+      "PUBLICATION_PREVIEW_UNAVAILABLE",
+      "Publication preview is unavailable",
+    );
+  }
+  return options.previews;
 }
 
 async function authorize(
@@ -165,6 +177,16 @@ function registerPublicationWorkspaceRoutes(app: FastifyInstance, options: Opera
     await authorize(options, request, "publications:read");
     const publicationId = requirePathString(params(request).publicationId, "publicationId");
     return publicationOr404(publicationManager(options), publicationId);
+  });
+
+  app.get("/v1/publications/:publicationId/preview", async (request) => {
+    await authorize(options, request, "publications:read");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    const queryValues = query(request) as Record<string, unknown>;
+    const groupId = requirePathString(queryValues.groupId, "groupId");
+    await publicationOr404(publicationManager(options), publicationId);
+    await currentOr404(manager(options), groupId);
+    return publicationDomainCall(() => previewManager(options).preview(publicationId, groupId));
   });
 
   app.get("/v1/publications/:publicationId/distributions", async (request) => {
