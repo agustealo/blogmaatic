@@ -142,7 +142,20 @@ function makeServer() {
 
     if (request.method === "GET" && path === "/media") {
       const slug = url.searchParams.get("slug");
-      return json(response, 200, [...media.values()].filter((item) => !slug || item.slug === slug));
+      const search = url.searchParams.get("search")?.toLowerCase();
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const perPage = Number(url.searchParams.get("per_page") ?? "100");
+      const filtered = [...media.values()].filter((item) => {
+        if (slug && item.slug !== slug) return false;
+        if (!search) return true;
+        return [
+          item.slug,
+          item.alt_text ?? "",
+          item.title?.raw ?? item.title?.rendered ?? "",
+        ].some((value) => value.toLowerCase().includes(search));
+      });
+      const start = (page - 1) * perPage;
+      return json(response, 200, filtered.slice(start, start + perPage));
     }
     if (request.method === "POST" && path === "/media") {
       mediaUploads.push({
