@@ -7,6 +7,7 @@ import type {
   OperatorSourceContentManager,
   SourceAssetAttachBody,
   SourceAssetQuery,
+  SourceAssetUploadInput,
   SourceContentImportBody,
   SourceTaxonomyQuery,
   SourceContentQuery,
@@ -140,6 +141,70 @@ function parseTaxonomyQuery(request: FastifyRequest): SourceTaxonomyQuery {
   };
 }
 
+const SOURCE_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function boundedOptionalString(
+  input: Record<string, unknown>,
+  key: string,
+  maxLength: number,
+): string | undefined {
+  const value = optionalString(input, key);
+  if (value && value.length > maxLength) {
+    throw new OperatorRequestError(`${key} must not exceed ${maxLength} characters`);
+  }
+  return value;
+}
+
+function parseAssetUpload(request: FastifyRequest): SourceAssetUploadInput {
+  const input = query(request);
+  const allowed = new Set(["publicationId", "expectedVersion", "featured", "filename", "alt", "title"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+
+  const publicationId = optionalString(input, "publicationId");
+  if (!publicationId) throw new OperatorRequestError("publicationId is required");
+  const expectedVersion = optionalInteger(input, "expectedVersion", 1, Number.MAX_SAFE_INTEGER);
+  if (expectedVersion === undefined) throw new OperatorRequestError("expectedVersion is required");
+  const filename = boundedOptionalString(input, "filename", 180);
+  if (!filename) throw new OperatorRequestError("filename is required");
+  if (/[\\/\u0000-\u001f\u007f]/u.test(filename) || filename === "." || filename === "..") {
+    throw new OperatorRequestError("filename must be a simple file name without path separators or control characters");
+  }
+
+  const featuredRaw = input.featured;
+  let featured: boolean | undefined;
+  if (featuredRaw !== undefined) {
+    if (featuredRaw === "true") featured = true;
+    else if (featuredRaw === "false") featured = false;
+    else throw new OperatorRequestError("featured must be true or false");
+  }
+
+  const contentType = request.headers["content-type"];
+  if (typeof contentType !== "string") throw new OperatorRequestError("Content-Type is required");
+  const mediaType = contentType.split(";", 1)[0]!.trim().toLowerCase();
+  if (!SOURCE_IMAGE_MEDIA_TYPES.has(mediaType)) {
+    throw new OperatorRequestError("Content-Type must be image/jpeg, image/png, or image/webp");
+  }
+
+  const body = request.body;
+  if (!(body instanceof Uint8Array) || body.byteLength === 0) {
+    throw new OperatorRequestError("Image upload body is required");
+  }
+
+  const alt = boundedOptionalString(input, "alt", 500);
+  const title = boundedOptionalString(input, "title", 500);
+  return {
+    publicationId,
+    expectedVersion,
+    filename,
+    mediaType,
+    bytes: new Uint8Array(body),
+    ...(featured === undefined ? {} : { featured }),
+    ...(alt === undefined ? {} : { alt }),
+    ...(title === undefined ? {} : { title }),
+  };
+}
+
 function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -193,6 +258,11 @@ async function authorize(
 
 export function registerSourceContentRoutes(app: FastifyInstance, options: OperatorApiOptions): void {
   const clock = options.clock ?? { now: () => new Date().toISOString() };
+  app.addContentTypeParser(
+    ["image/jpeg", "image/png", "image/webp"],
+    { parseAs: "buffer" },
+    (_request, body, done) => done(null, body),
+  );
 
   app.get("/v1/connections/:connectionId/taxonomy", async (request) => {
     await authorize(options, request, "source-content:read");
@@ -204,6 +274,38 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     await authorize(options, request, "source-content:read");
     const connectionId = requirePathString(params(request).connectionId, "connectionId");
     return domainCall(() => manager(options).listAssets(connectionId, parseAssetQuery(request)));
+  });
+
+  app.post("/v1/connections/:connectionId/assets/upload", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const input = parseAssetUpload(request);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-asset.upload",
+      resource: { type: "publication", id: input.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: input.publicationId,
+        expectedVersion: input.expectedVersion,
+        featured: input.featured ?? false,
+        filename: input.filename,
+        mediaType: input.mediaType,
+        byteLength: input.bytes.byteLength,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).uploadAsset(connectionId, input)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          assetRemoteId: value.asset.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
   });
 
   app.post("/v1/connections/:connectionId/assets/:remoteId/attach", async (request, reply) => {
