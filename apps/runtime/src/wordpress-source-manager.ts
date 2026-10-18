@@ -31,6 +31,9 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceTaxonomyPage,
+  SourceTaxonomyQuery,
+  SourceTaxonomyRecord,
 } from "@blogmaatic/operator-api";
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
@@ -70,6 +73,24 @@ function sourceRecord(connectionId: string, post: WordPressPostView): SourceCont
     ...(post.ownership.publicationId ? { publicationId: post.ownership.publicationId } : {}),
     ...(post.ownership.routeId ? { routeId: post.ownership.routeId } : {}),
     metadata,
+  };
+}
+
+function sourceTaxonomyRecord(
+  connectionId: string,
+  kind: "category" | "tag",
+  term: { readonly id: number; readonly name: string; readonly slug: string; readonly description?: string; readonly count?: number },
+): SourceTaxonomyRecord {
+  return {
+    connectionId,
+    extensionId: WORDPRESS_REST_EXTENSION_ID,
+    kind,
+    remoteId: String(term.id),
+    name: term.name,
+    slug: term.slug,
+    ...(term.description ? { description: term.description } : {}),
+    ...(term.count === undefined ? {} : { count: term.count }),
+    metadata: { wordpressTermId: term.id },
   };
 }
 
@@ -203,6 +224,20 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     });
     return {
       items: page.items.map((post) => sourceRecord(connectionId, post)),
+      page: page.page,
+      limit: page.perPage,
+      hasMore: page.hasMore,
+    };
+  }
+
+  async listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage> {
+    const page = await this.#content.listTerms(connectionId, query.kind, {
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.page === undefined ? {} : { page: query.page }),
+      ...(query.limit === undefined ? {} : { perPage: query.limit }),
+    });
+    return {
+      items: page.items.map((term) => sourceTaxonomyRecord(connectionId, query.kind, term)),
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
