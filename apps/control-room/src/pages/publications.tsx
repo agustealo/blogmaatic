@@ -12,6 +12,7 @@ import type {
   PublicationWorkspaceUpdateBody,
   SourceAssetRecord,
   SourceAuthorRecord,
+  SourceContentRevision,
   SourceTaxonomyKind,
   SourceTaxonomyRecord,
   WorkspacePublicationStatus,
@@ -787,6 +788,105 @@ function SourceAssetLibraryPanel({
   );
 }
 
+function SourceRevisionRecoveryPanel({
+  entry,
+  connectionId,
+  remoteId,
+  onRestored,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly remoteId: string;
+  readonly onRestored: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [items, setItems] = useState<readonly SourceContentRevision[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setItems(await client.listSourceContentRevisions(connectionId, remoteId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress revisions could not be loaded"));
+    } finally {
+      setLoading(false);
+    }
+  }, [client, connectionId, remoteId]);
+
+  useEffect(() => {
+    void load();
+  }, [load, entry.publication.current.id]);
+
+  const restore = useCallback(async (revision: SourceContentRevision) => {
+    setBusy(revision.remoteRevisionId);
+    setError(null);
+    try {
+      const result = await client.restoreSourceContentRevision(
+        connectionId,
+        remoteId,
+        revision.remoteRevisionId,
+        {
+          publicationId: entry.publication.id,
+          expectedVersion: entry.version,
+        },
+      );
+      onRestored(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress revision could not be restored"));
+    } finally {
+      setBusy(null);
+    }
+  }, [client, connectionId, entry.publication.id, entry.version, onRestored, remoteId]);
+
+  return (
+    <Panel title="WordPress revisions" meta="Recover remote history into canonical content" className="source-revision-panel">
+      <ErrorBanner error={error} />
+      <div className="source-revision-note">
+        <strong>Recovery creates a new Blogmaatic revision.</strong>
+        <span>WordPress is not rewritten until you explicitly publish the recovered canonical content.</span>
+      </div>
+      {loading ? <LoadingBlock /> : (
+        <div className="source-revision-list">
+          {items.map((revision) => {
+            const authorId = revision.metadata.authorId;
+            return (
+              <article className="source-revision-row" key={revision.remoteRevisionId}>
+                <div className="source-revision-row__content">
+                  <strong>{revision.title || `WordPress revision #${revision.remoteRevisionId}`}</strong>
+                  <small>
+                    {revision.modifiedAt || revision.createdAt
+                      ? formatInstant(revision.modifiedAt ?? revision.createdAt ?? "")
+                      : "Timestamp unavailable"}
+                    {typeof authorId === "number" ? ` · author #${authorId}` : ""}
+                  </small>
+                  {revision.excerpt ? <p>{revision.excerpt.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()}</p> : null}
+                </div>
+                <button
+                  className="button button--quiet"
+                  type="button"
+                  onClick={() => void restore(revision)}
+                  disabled={busy !== null}
+                >
+                  {busy === revision.remoteRevisionId ? "Restoring…" : "Restore into Blogmaatic"}
+                </button>
+              </article>
+            );
+          })}
+          {items.length === 0 ? <EmptyState title="No WordPress revisions">This remote post has no native revisions available.</EmptyState> : null}
+        </div>
+      )}
+      <div className="collection-footer">
+        <button className="button button--quiet" type="button" onClick={() => void load()} disabled={loading}>Refresh revisions</button>
+      </div>
+    </Panel>
+  );
+}
+
 function VersionsPanel({ publicationId, nonce }: { readonly publicationId: string; readonly nonce: number }) {
   const { session } = useConnection();
   const loader = useCallback((cursor?: string) => {
@@ -1467,6 +1567,19 @@ export function PublicationsPage() {
                   } : current);
                 }}
               />
+              {typeof activeEntry.publication.provenance.remoteId === "string" ? (
+                <SourceRevisionRecoveryPanel
+                  entry={activeEntry}
+                  connectionId={activeEntry.publication.provenance.connectionId}
+                  remoteId={activeEntry.publication.provenance.remoteId}
+                  onRestored={(next) => {
+                    setActiveEntry(next);
+                    setEditor(editorForEntry(next));
+                    setPendingPublish(false);
+                    setChangeNonce((value) => value + 1);
+                  }}
+                />
+              ) : null}
               <SourceAssetLibraryPanel
               entry={activeEntry}
               connectionId={activeEntry.publication.provenance.connectionId}
