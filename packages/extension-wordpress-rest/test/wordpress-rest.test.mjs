@@ -1103,3 +1103,180 @@ test("WordPress uploads rendered route-specific image derivatives with traceable
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test("WordPress source publishing state overrides route defaults only on matching connection", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-1", displayName: "WordPress One" },
+        { ...baseConnection, id: "wp-2", displayName: "WordPress Two" },
+      ]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const item = {
+      id: "publication-source-state",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      slug: "source-state-proof",
+      status: "approved",
+      current: {
+        id: "revision-source-state",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Source state proof",
+          language: "en",
+          blocks: [{ id: "p1", kind: "paragraph", data: { text: "Scheduled natively." } }],
+          assets: [],
+          tags: [],
+          attributes: {
+            sourcePublishing: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              status: "future",
+              scheduledAt: "2026-11-01T18:30:00.000Z",
+            },
+          },
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
+    };
+    const routeDefaultDraft = route({ status: "draft" });
+    const projection = await publisher.compile({ publication: item, route: routeDefaultDraft });
+    assert.equal(projection.payload.status, "future");
+    assert.equal(projection.payload.scheduledAt, "2026-11-01T18:30:00.000Z");
+
+    const delivered = await publisher.deliver({ idempotencyKey: "source-state-proof", projection });
+    const saved = api.posts.get(Number(delivered.remote.id));
+    assert.equal(saved.status, "future");
+    assert.equal(saved.date_gmt, "2026-11-01T18:30:00");
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+    saved.date_gmt = "2026-11-02T18:30:00";
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+
+    const wp2Route = {
+      ...routeDefaultDraft,
+      destination: { ...routeDefaultDraft.destination, connectionId: "wp-2" },
+    };
+    const otherProjection = await publisher.compile({ publication: item, route: wp2Route });
+    assert.equal(otherProjection.payload.status, "draft");
+    assert.equal(otherProjection.payload.scheduledAt, undefined);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress canonical source publishing state rejects invalid schedule combinations", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-18T10:00:00.000Z",
+      updatedAt: "2026-10-18T10:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = {
+      id: "publication-invalid-source-state",
+      createdAt: "2026-10-18T10:00:00.000Z",
+      status: "approved",
+      current: {
+        id: "revision-invalid-source-state",
+        ordinal: 1,
+        createdAt: "2026-10-18T10:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Invalid source state",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {},
+        },
+      },
+      provenance: { source: "wordpress" },
+    };
+
+    await assert.rejects(
+      publisher.compile({
+        publication: {
+          ...base,
+          current: {
+            ...base.current,
+            content: {
+              ...base.current.content,
+              attributes: {
+                sourcePublishing: {
+                  extensionId: "blogmaatic.wordpress-rest",
+                  connectionId: "wp-1",
+                  status: "future",
+                },
+              },
+            },
+          },
+        },
+        route: route({ status: "draft" }),
+      }),
+      /requires scheduledAt/,
+    );
+
+    await assert.rejects(
+      publisher.compile({
+        publication: {
+          ...base,
+          current: {
+            ...base.current,
+            content: {
+              ...base.current.content,
+              attributes: {
+                sourcePublishing: {
+                  extensionId: "blogmaatic.wordpress-rest",
+                  connectionId: "wp-1",
+                  status: "draft",
+                  scheduledAt: "2026-11-01T18:30:00.000Z",
+                },
+              },
+            },
+          },
+        },
+        route: route(),
+      }),
+      /only allowed when status is future/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
