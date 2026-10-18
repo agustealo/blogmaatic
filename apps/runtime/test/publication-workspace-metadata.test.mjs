@@ -303,3 +303,94 @@ test("canonical source publishing state is immutable idempotent and source-bound
   );
   assert.equal(current().version, 2);
 });
+
+
+test("source revision recovery creates a new canonical revision and preserves managed metadata", async () => {
+  const publication = importedPublication();
+  publication.current.content.attributes.sourceAuthor = {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "7",
+    displayName: "Editor Seven",
+  };
+  publication.current.content.attributes.sourcePublishing = {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    status: "future",
+    scheduledAt: "2026-11-01T18:30:00.000Z",
+  };
+  const beforeAssets = structuredClone(publication.current.content.assets);
+  const beforeAttributes = structuredClone(publication.current.content.attributes);
+  const { manager, current } = managerWith(publication);
+
+  const restored = await manager.restoreSourceRevision("publication-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "55",
+    remoteRevisionId: "9055",
+    title: "Recovered remote title",
+    summary: "Recovered excerpt",
+    contentHtml: "<h2>Recovered heading</h2><p>Recovered body.</p>",
+    sourceModifiedAt: "2026-10-17T20:00:00",
+    sourceAuthorId: 9,
+  });
+
+  assert.equal(restored.version, 2);
+  assert.equal(restored.publication.current.ordinal, 2);
+  assert.equal(restored.publication.current.id, "revision_metadata-revision-2");
+  assert.equal(restored.publication.current.content.title, "Recovered remote title");
+  assert.equal(restored.publication.current.content.summary, "Recovered excerpt");
+  assert.deepEqual(restored.publication.current.content.blocks, [{
+    id: "source-revision-9055",
+    kind: "embed",
+    data: { html: "<h2>Recovered heading</h2><p>Recovered body.</p>" },
+  }]);
+  assert.deepEqual(restored.publication.current.content.assets, beforeAssets);
+  assert.deepEqual(restored.publication.current.content.tags, ["news"]);
+  assert.deepEqual(restored.publication.current.content.attributes.categories, beforeAttributes.categories);
+  assert.deepEqual(restored.publication.current.content.attributes.wordpress, beforeAttributes.wordpress);
+  assert.deepEqual(restored.publication.current.content.attributes.sourceAuthor, beforeAttributes.sourceAuthor);
+  assert.deepEqual(restored.publication.current.content.attributes.sourcePublishing, beforeAttributes.sourcePublishing);
+  assert.deepEqual(restored.publication.current.content.attributes.sourceRevisionRecovery, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "55",
+    remoteRevisionId: "9055",
+    recoveredAt: "2026-10-18T14:45:00.000Z",
+    sourceModifiedAt: "2026-10-17T20:00:00",
+    sourceAuthorId: 9,
+  });
+
+  await assert.rejects(
+    () => manager.restoreSourceRevision("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      remoteId: "99",
+      remoteRevisionId: "9001",
+      title: "Wrong post",
+      contentHtml: "<p>wrong</p>",
+    }),
+    /does not match the publication source identity/,
+  );
+  assert.equal(current().version, 2);
+});
+
+test("source revision recovery can clear an empty remote excerpt without deleting other metadata", async () => {
+  const publication = importedPublication();
+  publication.current.content.summary = "Current summary";
+  const { manager } = managerWith(publication);
+
+  const restored = await manager.restoreSourceRevision("publication-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    remoteId: "55",
+    remoteRevisionId: "9056",
+    title: "",
+    contentHtml: "",
+  });
+
+  assert.equal(restored.publication.current.content.title, "Imported WordPress article");
+  assert.equal("summary" in restored.publication.current.content, false);
+  assert.deepEqual(restored.publication.current.content.blocks, []);
+  assert.equal(restored.publication.current.content.assets.length, 3);
+});
