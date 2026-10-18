@@ -26,6 +26,10 @@ import type {
   WordPressTermPage,
   WordPressTermQuery,
   WordPressTermRecord,
+  WordPressUserPage,
+  WordPressUserQuery,
+  WordPressUserRecord,
+  WordPressUserView,
 } from "./types.js";
 
 const ALL_POST_STATUSES = "publish,future,draft,pending,private,trash";
@@ -83,6 +87,18 @@ function postView(post: WordPressPostRecord): WordPressPostView {
       ? { featuredMediaId: post.featured_media }
       : {}),
     ownership: ownership(post),
+  };
+}
+
+function userView(user: WordPressUserRecord): WordPressUserView {
+  const avatarEntries = Object.entries(user.avatar_urls ?? {})
+    .filter(([, value]) => typeof value === "string" && value)
+    .sort(([left], [right]) => Number(right) - Number(left));
+  return {
+    id: user.id,
+    name: user.name,
+    ...(user.slug ? { slug: user.slug } : {}),
+    ...(avatarEntries[0]?.[1] ? { avatarUrl: avatarEntries[0][1] } : {}),
   };
 }
 
@@ -192,12 +208,44 @@ export class WordPressContentService {
         `/media/${post.featured_media}?context=edit`,
       );
     }
+    const author = post.author && post.author > 0
+      ? userView(await client.requestJson<WordPressUserRecord>(`/users/${post.author}?context=edit`))
+      : undefined;
     return {
       post: postView(post),
       categoryNames,
       tagNames,
       ...(featuredMedia ? { featuredMedia } : {}),
+      ...(author ? { author } : {}),
     };
+  }
+
+  async listUsers(connectionId: string, query: WordPressUserQuery = {}): Promise<WordPressUserPage> {
+    const { client } = this.#client(connectionId);
+    const page = requirePage(query.page);
+    const perPage = requirePerPage(query.perPage);
+    const params = new URLSearchParams({
+      context: "edit",
+      who: "authors",
+      page: String(page),
+      per_page: String(perPage),
+      orderby: "name",
+      order: "asc",
+    });
+    if (query.search?.trim()) params.set("search", query.search.trim());
+    const records = await client.requestJson<readonly WordPressUserRecord[]>(`/users?${params.toString()}`);
+    return {
+      items: records.map(userView),
+      page,
+      perPage,
+      hasMore: records.length === perPage,
+    };
+  }
+
+  async getUser(connectionId: string, remoteId: string): Promise<WordPressUserView> {
+    const { client } = this.#client(connectionId);
+    const id = requireRemoteId(remoteId);
+    return userView(await client.requestJson<WordPressUserRecord>(`/users/${id}?context=edit`));
   }
 
   async listTerms(
