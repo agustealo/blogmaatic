@@ -34,6 +34,7 @@ export interface WordPressProjectionPayload {
   readonly categories: readonly string[];
   readonly assets: readonly Readonly<Record<string, JsonValue>>[];
   readonly featuredAssetId?: string;
+  readonly authorId?: number;
 }
 
 export interface WordPressPostRecord {
@@ -173,9 +174,39 @@ export interface WordPressRevisionView {
   readonly contentHtml: string;
 }
 
+export interface WordPressUserRecord {
+  readonly id: number;
+  readonly name: string;
+  readonly slug?: string;
+  readonly avatar_urls?: Readonly<Record<string, string>>;
+  readonly roles?: readonly string[];
+  readonly capabilities?: Readonly<Record<string, boolean>>;
+}
+
+export interface WordPressUserQuery {
+  readonly search?: string;
+  readonly page?: number;
+  readonly perPage?: number;
+}
+
+export interface WordPressUserView {
+  readonly id: number;
+  readonly name: string;
+  readonly slug?: string;
+  readonly avatarUrl?: string;
+}
+
+export interface WordPressUserPage {
+  readonly items: readonly WordPressUserView[];
+  readonly page: number;
+  readonly perPage: number;
+  readonly hasMore: boolean;
+}
+
 export interface WordPressImportSnapshot {
   readonly post: WordPressPostView;
   readonly categoryNames: readonly string[];
   readonly tagNames: readonly string[];
   readonly featuredMedia?: WordPressMediaRecord;
+  readonly author?: WordPressUserView;
 }
