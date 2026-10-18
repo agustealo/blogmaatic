@@ -348,9 +348,10 @@ export class PublicationWorkspaceManager {
         ordinal: current.publication.current.ordinal + 1,
         createdAt: now,
         content: {
-          ...oldContent,
+          schemaVersion: oldContent.schemaVersion,
           title,
-          ...(summary ? { summary } : { summary: undefined }),
+          ...(summary ? { summary } : {}),
+          language: oldContent.language,
           blocks: html.trim()
             ? [{
               id: `source-revision-${remoteRevisionId}`,
@@ -358,6 +359,8 @@ export class PublicationWorkspaceManager {
               data: { html },
             }]
             : [],
+          assets: oldContent.assets,
+          tags: oldContent.tags,
           attributes: {
             ...oldContent.attributes,
             sourceRevisionRecovery: {
