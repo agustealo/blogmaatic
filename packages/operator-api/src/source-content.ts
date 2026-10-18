@@ -8,6 +8,8 @@ import type {
   SourceAssetAttachBody,
   SourceAssetQuery,
   SourceAssetUploadInput,
+  SourceAuthorAssignBody,
+  SourceAuthorQuery,
   SourceContentImportBody,
   SourceTaxonomyQuery,
   SourceContentQuery,
@@ -103,6 +105,42 @@ function parseQuery(request: FastifyRequest): SourceContentQuery {
     ...(status ? { status } : {}),
     ...(page === undefined ? {} : { page }),
     ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseAuthorQuery(request: FastifyRequest): SourceAuthorQuery {
+  const input = query(request);
+  const allowed = new Set(["search", "page", "limit"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+  const search = optionalString(input, "search");
+  const page = optionalInteger(input, "page", 1, 1000000);
+  const limit = optionalInteger(input, "limit", 1, 100);
+  return {
+    ...(search ? { search } : {}),
+    ...(page === undefined ? {} : { page }),
+    ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseAuthorAssignBody(body: unknown): SourceAuthorAssignBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
   };
 }
 
@@ -263,6 +301,43 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     { parseAs: "buffer" },
     (_request, body, done) => done(null, body),
   );
+
+  app.get("/v1/connections/:connectionId/authors", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    return domainCall(() => manager(options).listAuthors(connectionId, parseAuthorQuery(request)));
+  });
+
+  app.post("/v1/connections/:connectionId/authors/:remoteId/assign", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const remoteId = requirePathString(values.remoteId, "remoteId");
+    const body = parseAuthorAssignBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-author.assign",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        remoteId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).assignAuthor(connectionId, remoteId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          authorRemoteId: value.author.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
 
   app.get("/v1/connections/:connectionId/taxonomy", async (request) => {
     await authorize(options, request, "source-content:read");
