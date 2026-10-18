@@ -16,6 +16,7 @@ import {
   WordPressRestPublisher,
   type WordPressMediaView,
   type WordPressPostView,
+  type WordPressUserView,
   type WordPressRevisionView,
 } from "@blogmaatic/extension-wordpress-rest";
 import type {
@@ -26,6 +27,11 @@ import type {
   SourceAssetQuery,
   SourceAssetRecord,
   SourceAssetUploadInput,
+  SourceAuthorAssignBody,
+  SourceAuthorAssignResult,
+  SourceAuthorPage,
+  SourceAuthorQuery,
+  SourceAuthorRecord,
   SourceContentImportBody,
   SourceContentImportResult,
   SourceContentPage,
@@ -92,6 +98,19 @@ function sourceTaxonomyRecord(
     ...(term.description ? { description: term.description } : {}),
     ...(term.count === undefined ? {} : { count: term.count }),
     metadata: { wordpressTermId: term.id },
+  };
+}
+
+function sourceAuthorRecord(connectionId: string, author: WordPressUserView): SourceAuthorRecord {
+  return {
+    connectionId,
+    extensionId: WORDPRESS_REST_EXTENSION_ID,
+    remoteId: String(author.id),
+    displayName: author.name,
+    slug: author.slug,
+    ...(author.link ? { link: author.link } : {}),
+    ...(author.avatarUrl ? { avatarUrl: author.avatarUrl } : {}),
+    metadata: { wordpressUserId: author.id },
   };
 }
 
@@ -242,6 +261,56 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
+    };
+  }
+
+  async listAuthors(connectionId: string, query: SourceAuthorQuery = {}): Promise<SourceAuthorPage> {
+    const page = await this.#content.listAuthors(connectionId, {
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.page === undefined ? {} : { page: query.page }),
+      ...(query.limit === undefined ? {} : { perPage: query.limit }),
+    });
+    return {
+      items: page.items.map((author) => sourceAuthorRecord(connectionId, author)),
+      page: page.page,
+      limit: page.perPage,
+      hasMore: page.hasMore,
+    };
+  }
+
+  async assignAuthor(
+    connectionId: string,
+    remoteId: string,
+    body: SourceAuthorAssignBody,
+  ): Promise<SourceAuthorAssignResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source author connection does not match the publication source");
+    }
+
+    const author = await this.#content.getAuthor(connectionId, remoteId);
+    const publication = await this.#publications.assignSourceAuthor(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        remoteId: String(author.id),
+        displayName: author.name,
+      },
+    );
+    return {
+      publication,
+      author: sourceAuthorRecord(connectionId, author),
     };
   }
 
@@ -549,6 +618,13 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            ...(snapshot.post.author === undefined ? {} : {
+              sourceAuthor: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                remoteId: String(snapshot.post.author),
+              },
+            }),
             wordpress: {
               connectionId,
               remoteId: String(snapshot.post.id),
