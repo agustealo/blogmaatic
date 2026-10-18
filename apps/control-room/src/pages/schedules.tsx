@@ -521,7 +521,7 @@ export function SchedulesPage() {
             <option value="false">Disabled</option>
           </select>
         </label>
-        <button className="button button--quiet" type="button" onClick={() => void collection.reload()} disabled={collection.loading}>Refresh</button>
+        <button className="button button--quiet" type="button" onClick={() => void Promise.all([collection.reload(), loadCalendar()])} disabled={collection.loading || calendarLoading}>Refresh</button>
       </div>
       {collection.loading ? <LoadingBlock /> : (
         <Panel className="table-panel" title="Schedule management" meta="Advanced timing controls">
