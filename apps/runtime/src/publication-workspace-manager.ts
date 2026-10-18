@@ -100,11 +100,10 @@ function withFeaturedAsset(
   return assets.map((asset) => {
     const clean = withoutFeaturedAttribute(asset.attributes);
     if (asset.id !== selectedId) {
-      return {
-        ...asset,
-        ...(clean ? { attributes: clean } : {}),
-        ...(!clean && asset.attributes ? { attributes: undefined } : {}),
-      } as PublicationAsset;
+      if (clean) return { ...asset, attributes: clean };
+      if (!asset.attributes) return asset;
+      const { attributes: _attributes, ...withoutAttributes } = asset;
+      return withoutAttributes;
     }
     return {
       ...asset,
