@@ -17,6 +17,10 @@ import {
   type ExtensionHealth,
   type ManagedPublisherExtension,
 } from "@blogmaatic/extension-sdk";
+import {
+  assertImagePlanRenderableWithoutTransformer,
+  type ImageTransformSpec,
+} from "@blogmaatic/media";
 import { SecretAuthority } from "@blogmaatic/secrets";
 import { adaptPublicationForSocial } from "@blogmaatic/variants";
 
@@ -65,6 +69,43 @@ function getNumber(record: Readonly<Record<string, JsonValue>>, key: string): nu
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function getRecord(record: Readonly<Record<string, JsonValue>>, key: string): Readonly<Record<string, JsonValue>> | undefined {
+  const value = record[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, JsonValue>>
+    : undefined;
+}
+
+function imageTransformSpec(route: PublicationRoute): ImageTransformSpec {
+  const media = getRecord(variant(route), "imageTransform");
+  if (!media) return { maxBytes: 10 * 1024 * 1024 };
+  const fit = getString(media, "fit");
+  if (fit !== undefined && fit !== "contain" && fit !== "cover") {
+    throw new Error("Facebook imageTransform.fit must be contain or cover");
+  }
+  const format = getString(media, "format");
+  if (format !== undefined && !["preserve", "jpeg", "png", "webp"].includes(format)) {
+    throw new Error("Facebook imageTransform.format must be preserve, jpeg, png, or webp");
+  }
+  const focalX = getNumber(media, "focalX");
+  const focalY = getNumber(media, "focalY");
+  const withoutEnlargement = getBoolean(media, "withoutEnlargement");
+  return {
+    ...(getNumber(media, "width") === undefined ? {} : { width: getNumber(media, "width") }),
+    ...(getNumber(media, "height") === undefined ? {} : { height: getNumber(media, "height") }),
+    ...(fit === undefined ? {} : { fit: fit as "contain" | "cover" }),
+    ...(
+      focalX === undefined && focalY === undefined
+        ? {}
+        : { focalPoint: { x: focalX ?? 0.5, y: focalY ?? 0.5 } }
+    ),
+    ...(format === undefined ? {} : { format: format as "preserve" | "jpeg" | "png" | "webp" }),
+    ...(getNumber(media, "quality") === undefined ? {} : { quality: getNumber(media, "quality") }),
+    maxBytes: getNumber(media, "maxBytes") ?? 10 * 1024 * 1024,
+    ...(withoutEnlargement === undefined ? {} : { withoutEnlargement }),
+  };
+}
+
 function desiredMode(publication: Publication, route: PublicationRoute): FacebookProjectionMode {
   const explicit = getString(variant(route), "mode");
   if (explicit) {
@@ -98,6 +139,10 @@ function semanticPayload(payload: FacebookProjectionPayload): unknown {
       mediaType: asset.mediaType ?? null,
       alt: asset.alt ?? null,
       fingerprint: asset.fingerprint ?? null,
+      transformFingerprint: asset.transform?.transformationFingerprint ?? null,
+      outputWidth: asset.transform?.output.width ?? null,
+      outputHeight: asset.transform?.output.height ?? null,
+      outputMediaType: asset.transform?.output.mediaType ?? null,
     })),
   };
 }
@@ -138,6 +183,7 @@ async function uploadImage(
   const common: Record<string, string> = { published: "false" };
   if (scheduled) common.temporary = "true";
   if (asset.localPath) {
+    if (asset.transform) assertImagePlanRenderableWithoutTransformer(asset.transform);
     const form = new FormData();
     for (const [key, value] of Object.entries(common)) form.set(key, value);
     form.set("source", await localAssetBlob(asset), `${asset.assetId}.${asset.mediaType === "image/png" ? "png" : "jpg"}`);
@@ -255,7 +301,7 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
       throw new Error(`Facebook projection fidelity ${adapted.fidelity.score} is below required ${minimumFidelity}`);
     }
     const images = mode === "image"
-      ? await compileFacebookAssets(adapted.imageAssets, settings)
+      ? await compileFacebookAssets(adapted.imageAssets, settings, imageTransformSpec(route))
       : [];
     if (mode === "image" && images.length === 0) {
       throw new Error("Facebook image mode requires at least one image in the publication projection");
