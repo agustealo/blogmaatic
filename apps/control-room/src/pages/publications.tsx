@@ -452,6 +452,7 @@ function SourceTaxonomyPanel({
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   const load = useCallback(async (nextPage = 1, append = false) => {
@@ -495,6 +496,31 @@ function SourceTaxonomyPanel({
     return () => { active = false; };
   }, [client, connectionId, kind]);
 
+  const normalizedSearch = search.trim();
+  const exactMatch = normalizedSearch
+    ? items.some((item) => item.name.localeCompare(normalizedSearch, undefined, { sensitivity: "accent" }) === 0)
+    : true;
+
+  const create = useCallback(async () => {
+    const name = search.trim();
+    if (!name) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const created = await client.createSourceTaxonomy(connectionId, { kind, name });
+      setItems((current) => [
+        created,
+        ...current.filter((item) => !(item.kind === created.kind && item.remoteId === created.remoteId)),
+      ]);
+      onSelect(created.kind, created.name);
+      setSearch(created.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress taxonomy could not be created"));
+    } finally {
+      setCreating(false);
+    }
+  }, [client, connectionId, kind, onSelect, search]);
+
   return (
     <Panel title="WordPress taxonomy" meta="Add existing categories and tags" className="source-taxonomy-panel">
       <ErrorBanner error={error} />
@@ -534,6 +560,20 @@ function SourceTaxonomyPanel({
             </button>
           ))}
           {items.length === 0 ? <EmptyState title="No taxonomy found">No WordPress {kind === "category" ? "categories" : "tags"} match this search.</EmptyState> : null}
+          {normalizedSearch && !exactMatch ? (
+            <button
+              className="source-taxonomy-create"
+              type="button"
+              onClick={() => void create()}
+              disabled={creating || loading}
+            >
+              <span>
+                <strong>{creating ? "Creating…" : `Create & add “${normalizedSearch}”`}</strong>
+                <small>Creates this {kind} in WordPress, then adds it to the current draft.</small>
+              </span>
+              <span>+</span>
+            </button>
+          ) : null}
         </div>
       )}
       {hasMore ? (

@@ -729,3 +729,26 @@ a.data-table__row:hover { background: var(--surface-2); }
   .source-revision-row { grid-template-columns: 1fr; }
   .source-revision-row > .button { width: 100%; }
 }
+
+
+/* Deliberate source taxonomy creation */
+.source-taxonomy-create {
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.source-taxonomy-create:hover:not(:disabled) { background: var(--surface); }
+.source-taxonomy-create:disabled { opacity: .62; cursor: default; }
+.source-taxonomy-create > span:first-child { min-width: 0; display: grid; gap: 3px; }
+.source-taxonomy-create strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-taxonomy-create small { color: var(--muted); font-size: .74rem; line-height: 1.4; }
+.source-taxonomy-create > span:last-child { font-size: 1.25rem; font-weight: 700; }

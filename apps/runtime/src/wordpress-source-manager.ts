@@ -42,6 +42,7 @@ import type {
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceTaxonomyCreateBody,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SourceTaxonomyRecord,
@@ -252,6 +253,18 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       limit: page.perPage,
       hasMore: page.hasMore,
     };
+  }
+
+  async createTaxonomy(
+    connectionId: string,
+    body: SourceTaxonomyCreateBody,
+  ): Promise<SourceTaxonomyRecord> {
+    const term = await this.#content.createTerm(connectionId, body.kind, {
+      name: body.name,
+      ...(body.slug === undefined ? {} : { slug: body.slug }),
+      ...(body.description === undefined ? {} : { description: body.description }),
+    });
+    return sourceTaxonomyRecord(connectionId, body.kind, term);
   }
 
   async listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage> {

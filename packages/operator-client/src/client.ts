@@ -71,6 +71,8 @@ import type {
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceTaxonomyCreateBody,
+  SourceTaxonomyRecord,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SchedulerDispatchResponse,
@@ -280,6 +282,16 @@ export class OperatorClient {
   ): Promise<SourceAuthorAssignResult> {
     return this.#request<SourceAuthorAssignResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/authors/${encodeURIComponent(remoteId)}/assign`,
+      { method: "POST", body: input },
+    );
+  }
+
+  createSourceTaxonomy(
+    connectionId: string,
+    input: SourceTaxonomyCreateBody,
+  ): Promise<SourceTaxonomyRecord> {
+    return this.#request<SourceTaxonomyRecord>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/taxonomy`,
       { method: "POST", body: input },
     );
   }

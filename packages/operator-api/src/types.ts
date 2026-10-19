@@ -318,6 +318,13 @@ export interface SourceTaxonomyQuery {
   readonly limit?: number;
 }
 
+export interface SourceTaxonomyCreateBody {
+  readonly kind: SourceTaxonomyKind;
+  readonly name: string;
+  readonly slug?: string;
+  readonly description?: string;
+}
+
 export interface SourceTaxonomyRecord {
   readonly connectionId: string;
   readonly extensionId: string;
@@ -354,6 +361,7 @@ export interface OperatorSourceContentManager {
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
+  createTaxonomy(connectionId: string, body: SourceTaxonomyCreateBody): Promise<SourceTaxonomyRecord>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
   restore(connectionId: string, remoteId: string): Promise<SourceContentRecord>;

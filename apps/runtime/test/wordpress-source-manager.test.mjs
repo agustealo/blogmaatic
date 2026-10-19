@@ -320,6 +320,52 @@ test("WordPress source assets browse safely and attach idempotently to matching 
 });
 
 
+test("WordPress taxonomy creation maps through the provider-neutral source boundary", async () => {
+  let createInput;
+  const manager = new WordPressSourceManager({
+    content: {
+      async createTerm(connectionId, kind, input) {
+        assert.equal(connectionId, "wp-main");
+        assert.equal(kind, "tag");
+        createInput = input;
+        return {
+          id: 91,
+          name: "Editorial AI",
+          slug: "editorial-ai",
+          description: "AI-assisted editorial work",
+          count: 0,
+        };
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {},
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const created = await manager.createTaxonomy("wp-main", {
+    kind: "tag",
+    name: "Editorial AI",
+    description: "AI-assisted editorial work",
+  });
+  assert.deepEqual(createInput, {
+    name: "Editorial AI",
+    description: "AI-assisted editorial work",
+  });
+  assert.deepEqual(created, {
+    connectionId: "wp-main",
+    extensionId: "blogmaatic.wordpress-rest",
+    kind: "tag",
+    remoteId: "91",
+    name: "Editorial AI",
+    slug: "editorial-ai",
+    description: "AI-assisted editorial work",
+    count: 0,
+    metadata: { wordpressTermId: 91 },
+  });
+});
+
 test("WordPress taxonomy maps through the provider-neutral source boundary", async () => {
   const manager = new WordPressSourceManager({
     content: {
