@@ -1013,3 +1013,122 @@ test("WordPress revision recovery is source-bound before remote fetch and maps s
     sourceAuthorId: 9,
   });
 });
+
+
+test("WordPress source content types map provider-neutrally and scope source records", async () => {
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { return "posts"; },
+      async listContentTypes(connectionId) {
+        assert.equal(connectionId, "wp-main");
+        return [{
+          slug: "page",
+          name: "Pages",
+          restBase: "pages",
+          hierarchical: true,
+          viewable: true,
+          taxonomies: [],
+        }];
+      },
+      async list(connectionId, query) {
+        assert.equal(connectionId, "wp-main");
+        assert.deepEqual(query, { contentType: "pages", page: 1, perPage: 20 });
+        return {
+          items: [{
+            id: 71,
+            author: 1,
+            title: "About",
+            excerpt: "",
+            contentHtml: "<p>About</p>",
+            slug: "about",
+            status: "publish",
+            link: "https://example.test/about",
+            dateGmt: "2026-10-19T13:00:00",
+            modifiedGmt: "2026-10-19T13:30:00",
+            categoryIds: [],
+            tagIds: [],
+            featuredMediaId: 0,
+            ownership: { managed: false },
+          }],
+          page: 1,
+          perPage: 20,
+          hasMore: false,
+        };
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {},
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  assert.deepEqual(await manager.listContentTypes("wp-main"), [{
+    connectionId: "wp-main",
+    extensionId: "blogmaatic.wordpress-rest",
+    key: "pages",
+    label: "Pages",
+    hierarchical: true,
+    metadata: {
+      wordpressTypeSlug: "page",
+      restNamespace: null,
+      taxonomies: [],
+    },
+  }]);
+
+  const page = await manager.list("wp-main", { contentType: "pages", page: 1, limit: 20 });
+  assert.equal(page.items[0].contentType, "pages");
+  assert.equal(page.items[0].remoteId, "71");
+});
+
+test("WordPress import rejects an explicit source content type that does not match the route channel", async () => {
+  let snapshotReads = 0;
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { return "posts"; },
+      async importSnapshot() {
+        snapshotReads += 1;
+        throw new Error("must not fetch mismatched source content");
+      },
+    },
+    publisher: {},
+    publicationGroups: {
+      async get(id) {
+        assert.equal(id, "group-main");
+        return {
+          group: {
+            id: "group-main",
+            name: "Posts",
+            policySetId: "default",
+            routes: [{
+              id: "route-wordpress",
+              enabled: true,
+              desiredState: "present",
+              destination: {
+                extensionId: "blogmaatic.wordpress-rest",
+                connectionId: "wp-main",
+                channel: "posts",
+              },
+              requiredCapabilities: ["article.create"],
+            }],
+          },
+          version: 1,
+          enabled: true,
+        };
+      },
+    },
+    publications: {},
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.import("wp-main", "71", {
+      contentType: "pages",
+      groupId: "group-main",
+      routeId: "route-wordpress",
+    }),
+    /targets WordPress content type posts, not pages/,
+  );
+  assert.equal(snapshotReads, 0);
+});
