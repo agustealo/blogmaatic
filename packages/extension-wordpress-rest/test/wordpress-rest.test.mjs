@@ -2157,3 +2157,155 @@ test("WordPress canonical source publishing state rejects invalid schedule combi
     api.server.close();
   }
 });
+
+
+test("WordPress content types are discovered and source browsing is scoped by REST base", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.pages.set(71, {
+      id: 71,
+      author: 1,
+      link: "http://example.test/?page_id=71",
+      slug: "about",
+      status: "publish",
+      title: { raw: "About" },
+      excerpt: { raw: "" },
+      content: { raw: "<p>About this site.</p>" },
+      categories: [],
+      tags: [],
+      featured_media: 0,
+      date_gmt: "2026-10-19T13:00:00",
+      modified_gmt: "2026-10-19T13:30:00",
+    });
+    api.books.set(81, {
+      id: 81,
+      author: 1,
+      link: "http://example.test/?book=81",
+      slug: "systems-thinking",
+      status: "draft",
+      title: { raw: "Systems Thinking" },
+      excerpt: { raw: "Book excerpt" },
+      content: { raw: "<p>Book body.</p>" },
+      categories: [],
+      tags: [],
+      featured_media: 0,
+      date_gmt: null,
+      modified_gmt: "2026-10-19T14:00:00",
+    });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-19T12:00:00.000Z",
+      updatedAt: "2026-10-19T12:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+
+    const types = await content.listContentTypes("wp-1");
+    assert.deepEqual(types.map((type) => [type.name, type.restBase]), [
+      ["Books", "books"],
+      ["Pages", "pages"],
+      ["Posts", "posts"],
+    ]);
+    assert.equal(types.some((type) => type.restBase === "media"), false);
+
+    const pages = await content.list("wp-1", { contentType: "pages", perPage: 30 });
+    assert.deepEqual(pages.items.map((item) => item.id), [71]);
+    assert.equal((await content.get("wp-1", "71", "pages")).title, "About");
+
+    const books = await content.list("wp-1", { contentType: "books", perPage: 30 });
+    assert.deepEqual(books.items.map((item) => item.id), [81]);
+    assert.equal((await content.revisions("wp-1", "81", "books"))[0].parent, 81);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress route channel selects content type while status remains independent", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-19T12:00:00.000Z",
+      updatedAt: "2026-10-19T12:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const pageRoute = {
+      ...route(),
+      destination: { ...route().destination, channel: "pages" },
+    };
+    const projection = await publisher.compile({
+      publication: publication(undefined),
+      route: pageRoute,
+    });
+    assert.equal(projection.payload.contentType, "pages");
+    assert.equal(projection.payload.status, "publish");
+
+    const delivered = await publisher.deliver({ idempotencyKey: "page-route", projection });
+    assert.equal(api.pages.has(Number(delivered.remote.id)), true);
+    assert.equal(api.posts.has(Number(delivered.remote.id)), false);
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+  } finally {
+    api.server.close();
+  }
+});
+
+test("legacy custom post type setting remains the fallback for old posts-channel routes", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Legacy Books",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+        postTypeRestBase: "books",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-19T12:00:00.000Z",
+      updatedAt: "2026-10-19T12:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const projection = await publisher.compile({
+      publication: publication(undefined),
+      route: route(),
+    });
+    assert.equal(projection.payload.contentType, "books");
+    assert.equal(projection.payload.status, "publish");
+    const delivered = await publisher.deliver({ idempotencyKey: "legacy-books", projection });
+    assert.equal(api.books.has(Number(delivered.remote.id)), true);
+  } finally {
+    api.server.close();
+  }
+});
