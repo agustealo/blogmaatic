@@ -24,6 +24,7 @@ export interface CompiledWordPressAsset {
 }
 
 export interface WordPressProjectionPayload {
+  readonly contentType: string;
   readonly title: string;
   readonly excerpt: string;
   readonly slug: string;
