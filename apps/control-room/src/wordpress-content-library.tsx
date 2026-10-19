@@ -6,6 +6,7 @@ import type {
   PublicationGroupRegistryEntry,
   SourceContentRecord,
   SourceContentRevision,
+  SourceContentTypeRecord,
 } from "@blogmaatic/operator-client";
 
 import { EmptyState, ErrorBanner, LoadingBlock, Panel, StatusPill } from "./components";
@@ -29,6 +30,12 @@ export function WordPressContentLibrary({
   const { session } = useConnection();
   const client = session!.client;
   const navigate = useNavigate();
+  const legacyDefaultContentType =
+    typeof connection.settings.postTypeRestBase === "string" && connection.settings.postTypeRestBase.trim()
+      ? connection.settings.postTypeRestBase.trim()
+      : "posts";
+  const [contentTypes, setContentTypes] = useState<readonly SourceContentTypeRecord[]>([]);
+  const [contentType, setContentType] = useState(legacyDefaultContentType);
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<readonly SourceContentRecord[]>([]);
   const [page, setPage] = useState(1);
@@ -53,18 +60,39 @@ export function WordPressContentLibrary({
         channel: route.destination.channel,
       })),
   ), [connection.extensionId, connection.id, references]);
+  const eligibleRoutes = useMemo(
+    () => routes.filter((route) => route.channel === contentType),
+    [contentType, routes],
+  );
   const [importRoute, setImportRoute] = useState("");
 
   useEffect(() => {
-    if (routes.some((route) => route.key === importRoute)) return;
-    setImportRoute(routes.length === 1 ? routes[0]!.key : "");
-  }, [importRoute, routes]);
+    if (eligibleRoutes.some((route) => route.key === importRoute)) return;
+    setImportRoute(eligibleRoutes.length === 1 ? eligibleRoutes[0]!.key : "");
+  }, [eligibleRoutes, importRoute]);
+
+  useEffect(() => {
+    let active = true;
+    void client.listSourceContentTypes(connection.id)
+      .then((types) => {
+        if (!active) return;
+        setContentTypes(types);
+        setContentType((current) => types.some((type) => type.key === current)
+          ? current
+          : types.find((type) => type.key === legacyDefaultContentType)?.key ?? types[0]?.key ?? legacyDefaultContentType);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress content types could not be discovered"));
+      });
+    return () => { active = false; };
+  }, [client, connection.id, legacyDefaultContentType]);
 
   const load = useCallback(async (nextPage = 1, append = false) => {
     setLoading(true);
     setError(null);
     try {
       const result = await client.listSourceContent(connection.id, {
+        contentType,
         page: nextPage,
         limit: 30,
         ...(search.trim() ? { search: search.trim() } : {}),
@@ -77,7 +105,7 @@ export function WordPressContentLibrary({
     } finally {
       setLoading(false);
     }
-  }, [client, connection.id, search]);
+  }, [client, connection.id, contentType, search]);
 
   useEffect(() => {
     let active = true;
@@ -88,7 +116,7 @@ export function WordPressContentLibrary({
     setPendingDelete(null);
     setLoading(true);
     setError(null);
-    void client.listSourceContent(connection.id, { page: 1, limit: 30 })
+    void client.listSourceContent(connection.id, { contentType, page: 1, limit: 30 })
       .then((result) => {
         if (!active) return;
         setItems(result.items);
@@ -102,14 +130,14 @@ export function WordPressContentLibrary({
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [client, connection.id]);
+  }, [client, connection.id, contentType]);
 
   const replaceItem = useCallback((next: SourceContentRecord) => {
     setItems((current) => current.map((item) => item.remoteId === next.remoteId ? next : item));
   }, []);
 
   const importItem = useCallback(async (item: SourceContentRecord) => {
-    const selected = routes.find((route) => route.key === importRoute);
+    const selected = eligibleRoutes.find((route) => route.key === importRoute);
     if (!selected) {
       setError(new Error("Choose where this WordPress post should publish before importing it."));
       return;
@@ -118,6 +146,7 @@ export function WordPressContentLibrary({
     setError(null);
     try {
       const result = await client.importSourceContent(connection.id, item.remoteId, {
+        contentType: item.contentType,
         groupId: selected.groupId,
         routeId: selected.routeId,
       });
@@ -129,13 +158,13 @@ export function WordPressContentLibrary({
     } finally {
       setBusy(null);
     }
-  }, [client, connection.id, importRoute, navigate, onImported, replaceItem, routes]);
+  }, [client, connection.id, eligibleRoutes, importRoute, navigate, onImported, replaceItem]);
 
   const loadRevisions = useCallback(async (item: SourceContentRecord) => {
     setBusy(`revisions:${item.remoteId}`);
     setError(null);
     try {
-      const result = await client.listSourceContentRevisions(connection.id, item.remoteId);
+      const result = await client.listSourceContentRevisions(connection.id, item.remoteId, item.contentType);
       setRevisions((current) => ({ ...current, [item.remoteId]: result }));
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error("WordPress revisions could not be loaded"));
@@ -152,11 +181,11 @@ export function WordPressContentLibrary({
     setError(null);
     try {
       if (action === "trash") {
-        replaceItem(await client.trashSourceContent(connection.id, item.remoteId));
+        replaceItem(await client.trashSourceContent(connection.id, item.remoteId, item.contentType));
       } else if (action === "restore") {
-        replaceItem(await client.restoreSourceContent(connection.id, item.remoteId));
+        replaceItem(await client.restoreSourceContent(connection.id, item.remoteId, item.contentType));
       } else {
-        await client.deleteSourceContentPermanently(connection.id, item.remoteId);
+        await client.deleteSourceContentPermanently(connection.id, item.remoteId, item.contentType);
         setItems((current) => current.filter((candidate) => candidate.remoteId !== item.remoteId));
         setPendingDelete(null);
       }
@@ -171,7 +200,14 @@ export function WordPressContentLibrary({
     <Panel title={title} meta={meta} className="wordpress-content-panel">
       <div className="wordpress-content-toolbar">
         <label className="field">
-          <span>Search posts</span>
+          <span>Content type</span>
+          <select value={contentType} onChange={(event) => setContentType(event.target.value)}>
+            {contentTypes.length === 0 ? <option value={contentType}>{contentType}</option> : null}
+            {contentTypes.map((type) => <option key={type.key} value={type.key}>{type.label}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span>Search {contentTypes.find((type) => type.key === contentType)?.label ?? contentType}</span>
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -188,7 +224,7 @@ export function WordPressContentLibrary({
           <span>Publish through</span>
           <select value={importRoute} onChange={(event) => setImportRoute(event.target.value)}>
             <option value="">Choose publishing route</option>
-            {routes.map((route) => (
+            {eligibleRoutes.map((route) => (
               <option key={route.key} value={route.key}>{route.groupName} · {route.channel}</option>
             ))}
           </select>
@@ -196,10 +232,10 @@ export function WordPressContentLibrary({
         <button className="button button--quiet" type="button" onClick={() => void load(1, false)} disabled={loading}>Refresh</button>
       </div>
       <ErrorBanner error={error} />
-      {routes.length === 0 ? (
+      {eligibleRoutes.length === 0 ? (
         <div className="warning-banner">
-          <strong>This WordPress destination is not in an enabled publishing route.</strong>
-          <span>Add it to a Publishing route before importing existing WordPress content into canonical Blogmaatic ownership.</span>
+          <strong>No enabled publishing route targets this WordPress content type.</strong>
+          <span>Add {contentType} to a Publishing route before importing this source content into canonical Blogmaatic ownership.</span>
         </div>
       ) : null}
       {loading && items.length === 0 ? <LoadingBlock /> : (
@@ -208,10 +244,10 @@ export function WordPressContentLibrary({
             const itemRevisions = revisions[item.remoteId];
             const deleting = pendingDelete === item.remoteId;
             return (
-              <article className="wordpress-content-row" key={item.remoteId}>
+              <article className="wordpress-content-row" key={`${item.contentType}:${item.remoteId}`}>
                 <div className="wordpress-content-row__headline">
                   <span>
-                    <strong>{item.title || `WordPress post #${item.remoteId}`}</strong>
+                    <strong>{item.title || `WordPress ${item.contentType} #${item.remoteId}`}</strong>
                     <small>/{item.slug || "(no slug)"} · {item.status}</small>
                   </span>
                   <div>
