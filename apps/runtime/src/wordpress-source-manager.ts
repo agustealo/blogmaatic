@@ -14,6 +14,7 @@ import {
   WORDPRESS_REST_EXTENSION_ID,
   WordPressContentService,
   WordPressRestPublisher,
+  type WordPressContentTypeView,
   type WordPressMediaView,
   type WordPressPostView,
   type WordPressUserView,
@@ -34,6 +35,7 @@ import type {
   SourceAuthorRecord,
   SourceContentImportBody,
   SourceContentImportResult,
+  SourceContentTypeRecord,
   SourceContentPage,
   SourceContentQuery,
   SourceContentRecord,
@@ -62,7 +64,11 @@ export interface WordPressSourceManagerOptions {
   readonly id?: () => string;
 }
 
-function sourceRecord(connectionId: string, post: WordPressPostView): SourceContentRecord {
+function sourceRecord(
+  connectionId: string,
+  contentType: string,
+  post: WordPressPostView,
+): SourceContentRecord {
   const metadata: Record<string, JsonValue> = {
     authorId: post.author ?? null,
     categoryIds: [...post.categoryIds],
@@ -71,6 +77,7 @@ function sourceRecord(connectionId: string, post: WordPressPostView): SourceCont
   };
   return {
     connectionId,
+    contentType,
     extensionId: WORDPRESS_REST_EXTENSION_ID,
     remoteId: String(post.id),
     remoteUrl: post.link,
@@ -85,6 +92,24 @@ function sourceRecord(connectionId: string, post: WordPressPostView): SourceCont
     ...(post.ownership.publicationId ? { publicationId: post.ownership.publicationId } : {}),
     ...(post.ownership.routeId ? { routeId: post.ownership.routeId } : {}),
     metadata,
+  };
+}
+
+function sourceContentTypeRecord(
+  connectionId: string,
+  type: WordPressContentTypeView,
+): SourceContentTypeRecord {
+  return {
+    connectionId,
+    extensionId: WORDPRESS_REST_EXTENSION_ID,
+    key: type.restBase,
+    label: type.name,
+    hierarchical: type.hierarchical,
+    metadata: {
+      wordpressTypeSlug: type.slug,
+      restNamespace: type.restNamespace ?? null,
+      taxonomies: [...type.taxonomies],
+    },
   };
 }
 
@@ -240,15 +265,22 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     this.#id = options.id ?? randomUUID;
   }
 
+  async listContentTypes(connectionId: string): Promise<readonly SourceContentTypeRecord[]> {
+    return (await this.#content.listContentTypes(connectionId))
+      .map((type) => sourceContentTypeRecord(connectionId, type));
+  }
+
   async list(connectionId: string, query: SourceContentQuery = {}): Promise<SourceContentPage> {
+    const contentType = query.contentType ?? this.#content.defaultContentType(connectionId);
     const page = await this.#content.list(connectionId, {
+      contentType,
       ...(query.search ? { search: query.search } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.page === undefined ? {} : { page: query.page }),
       ...(query.limit === undefined ? {} : { perPage: query.limit }),
     });
     return {
-      items: page.items.map((post) => sourceRecord(connectionId, post)),
+      items: page.items.map((post) => sourceRecord(connectionId, contentType, post)),
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
@@ -500,12 +532,22 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     };
   }
 
-  async get(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
-    return sourceRecord(connectionId, await this.#content.get(connectionId, remoteId));
+  async get(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<SourceContentRecord> {
+    const resolved = contentType ?? this.#content.defaultContentType(connectionId);
+    return sourceRecord(connectionId, resolved, await this.#content.get(connectionId, remoteId, resolved));
   }
 
-  async revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]> {
-    return (await this.#content.revisions(connectionId, remoteId)).map(sourceRevision);
+  async revisions(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<readonly SourceContentRevision[]> {
+    const resolved = contentType ?? this.#content.defaultContentType(connectionId);
+    return (await this.#content.revisions(connectionId, remoteId, resolved)).map(sourceRevision);
   }
 
   async restoreRevision(
@@ -529,7 +571,16 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       throw new Error("Source revision does not match the publication source identity");
     }
 
-    const revision = await this.#content.getRevision(connectionId, remoteId, remoteRevisionId);
+    const contentType = body.contentType ?? this.#content.defaultContentType(connectionId);
+    const storedType = current.publication.current.content.attributes.wordpress;
+    if (
+      isRecord(storedType) &&
+      typeof storedType.contentType === "string" &&
+      storedType.contentType !== contentType
+    ) {
+      throw new Error("Source revision content type does not match the publication source");
+    }
+    const revision = await this.#content.getRevision(connectionId, remoteId, remoteRevisionId, contentType);
     const publication = await this.#publications.restoreSourceRevision(
       body.publicationId,
       body.expectedVersion,
@@ -556,11 +607,22 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     remoteId: string,
     body: SourceContentImportBody,
   ): Promise<SourceContentImportResult> {
-    const snapshot = await this.#content.importSnapshot(connectionId, remoteId);
     const groupEntry = await this.#publicationGroups.get(body.groupId);
     if (!groupEntry) throw new Error(`Publication group is not registered: ${body.groupId}`);
     if (!groupEntry.enabled) throw new Error(`Publication group is disabled: ${body.groupId}`);
     const route = routeForImport(body.groupId, body.routeId, connectionId, groupEntry.group);
+    const explicitContentType = body.contentType?.trim();
+    if (explicitContentType && route.destination.channel !== explicitContentType) {
+      throw new Error(
+        `Publication route ${body.routeId} targets WordPress content type ${route.destination.channel}, not ${explicitContentType}`,
+      );
+    }
+    const contentType = explicitContentType ?? (
+      route.destination.channel === "posts"
+        ? this.#content.defaultContentType(connectionId)
+        : route.destination.channel
+    );
+    const snapshot = await this.#content.importSnapshot(connectionId, remoteId, contentType);
 
     let workspace = await this.#publications.findImportedSource(
       WORDPRESS_REST_EXTENSION_ID,
@@ -578,7 +640,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     }
 
     if (!workspace) {
-      const publication = this.#importedPublication(connectionId, snapshot);
+      const publication = this.#importedPublication(connectionId, contentType, snapshot);
       workspace = await this.#publications.registerImported(publication);
     }
 
@@ -593,7 +655,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       snapshot.post.ownership.publicationId !== workspace.publication.id ||
       snapshot.post.ownership.routeId !== route.id
     ) {
-      adopted = await this.#content.adopt(connectionId, remoteId, projection);
+      adopted = await this.#content.adopt(connectionId, remoteId, projection, contentType);
     }
 
     const remote = remoteIdentity(adopted);
@@ -624,6 +686,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       remote,
       evidence: {
         action: "wordpress.import",
+        contentType,
         nativeStatus: adopted.status,
         sourceModifiedAt: adopted.modifiedGmt ?? null,
       },
@@ -659,32 +722,56 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
 
     return {
       publication: workspace,
-      remote: sourceRecord(connectionId, adopted),
+      remote: sourceRecord(connectionId, contentType, adopted),
     };
   }
 
-  async trash(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
-    return sourceRecord(connectionId, await this.#content.trash(connectionId, remoteId));
+  async trash(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<SourceContentRecord> {
+    const resolved = contentType ?? this.#content.defaultContentType(connectionId);
+    return sourceRecord(
+      connectionId,
+      resolved,
+      await this.#content.trash(connectionId, remoteId, resolved),
+    );
   }
 
-  async restore(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
-    return sourceRecord(connectionId, await this.#content.restore(connectionId, remoteId));
+  async restore(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<SourceContentRecord> {
+    const resolved = contentType ?? this.#content.defaultContentType(connectionId);
+    return sourceRecord(
+      connectionId,
+      resolved,
+      await this.#content.restore(connectionId, remoteId, resolved),
+    );
   }
 
-  async deletePermanent(connectionId: string, remoteId: string): Promise<SourceContentRecord> {
-    const current = await this.#content.get(connectionId, remoteId);
-    const deleted = await this.#content.deletePermanent(connectionId, remoteId);
+  async deletePermanent(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<SourceContentRecord> {
+    const resolved = contentType ?? this.#content.defaultContentType(connectionId);
+    const current = await this.#content.get(connectionId, remoteId, resolved);
+    const deleted = await this.#content.deletePermanent(connectionId, remoteId, resolved);
     if (current.ownership.publicationId && current.ownership.routeId) {
       await this.#projectionState.delete(
         current.ownership.publicationId,
         current.ownership.routeId,
       );
     }
-    return sourceRecord(connectionId, deleted);
+    return sourceRecord(connectionId, resolved, deleted);
   }
 
   #importedPublication(
     connectionId: string,
+    contentType: string,
     snapshot: Awaited<ReturnType<WordPressContentService["importSnapshot"]>>,
   ): Publication {
     const now = this.#now();
@@ -744,6 +831,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
             },
             wordpress: {
               connectionId,
+              contentType,
               remoteId: String(snapshot.post.id),
               remoteStatus: snapshot.post.status,
               authorId: snapshot.post.author ?? null,
