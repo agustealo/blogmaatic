@@ -12,6 +12,8 @@ import { WordPressContentService, WordPressRestPublisher } from "../dist/index.j
 
 function makeServer() {
   const posts = new Map();
+  const pages = new Map();
+  const books = new Map();
   const tags = new Map();
   const categories = new Map();
   const media = new Map();
@@ -80,6 +82,48 @@ function makeServer() {
       body = JSON.parse(raw);
     }
 
+    if (request.method === "GET" && path === "/types") {
+      return json(response, 200, {
+        post: {
+          slug: "post",
+          name: "Posts",
+          description: "Blog posts",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "posts",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category", "post_tag"],
+        },
+        page: {
+          slug: "page",
+          name: "Pages",
+          description: "Static pages",
+          hierarchical: true,
+          viewable: true,
+          rest_base: "pages",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+        book: {
+          slug: "book",
+          name: "Books",
+          description: "Custom book entries",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "books",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category"],
+        },
+        attachment: {
+          slug: "attachment",
+          name: "Media",
+          viewable: false,
+          rest_base: "media",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+      });
+    }
     if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
     if (request.method === "GET" && path === "/users") {
       const search = url.searchParams.get("search")?.toLowerCase();
@@ -155,6 +199,680 @@ function makeServer() {
       if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
         posts.delete(id);
         return json(response, 200, { deleted: true, previous: current });
+      }
+    }
+
+    for (const [name, collection] of [["pages", pages], ["books", books]]) {
+      if (request.method === "GET" && path === `/${name}`) {
+        const slug = url.searchParams.get("slug");
+        return json(response, 200, [...collection.values()].filter((item) => !slug || item.slug === slug));
+      }
+      if (request.method === "POST" && path === `/${name}`) {
+        const id = nextPost++;
+        const item = toPost(id, body);
+        collection.set(id, item);
+        return json(response, 201, item);
+      }
+      const revisionItem = path.match(new RegExp(`^/${name}/(\\d+)/revisions/(\\d+)import assert from "node:assert/strict";
+import test from "node:test";
+import http from "node:http";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { deflateSync } from "node:zlib";
+
+import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
+import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
+import { WordPressContentService, WordPressRestPublisher } from "../dist/index.js";
+
+function makeServer() {
+  const posts = new Map();
+  const pages = new Map();
+  const books = new Map();
+  const tags = new Map();
+  const categories = new Map();
+  const media = new Map();
+  const users = new Map([
+    [1, { id: 1, name: "Editor", slug: "editor", link: "http://example.test/author/editor", avatar_urls: { "96": "http://example.test/avatar/editor.png" } }],
+  ]);
+  const mediaUploads = [];
+  const termCreateRaces = new Set();
+  let nextPost = 10;
+  let nextTerm = 20;
+  let nextMedia = 30;
+  let postCreates = 0;
+  let postUpdates = 0;
+  let modification = 0;
+  const authorization = `Basic ${Buffer.from("editor:app password").toString("base64")}`;
+  const json = (response, status, body) => {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+  };
+  const flatten = (post) => ({
+    title: post.title.raw,
+    excerpt: post.excerpt.raw,
+    content: post.content.raw,
+    slug: post.slug,
+    status: post.status,
+    categories: post.categories,
+    tags: post.tags,
+    featured_media: post.featured_media,
+    author: post.author,
+    date_gmt: post.date_gmt,
+  });
+  const toPost = (id, body) => {
+    modification += 1;
+    return {
+      id,
+      author: body.author ?? 1,
+      link: `http://example.test/?p=${id}`,
+      slug: body.slug ?? "",
+      status: body.status ?? "draft",
+      title: { raw: body.title ?? "" },
+      excerpt: { raw: body.excerpt ?? "" },
+      content: { raw: body.content ?? "" },
+      categories: body.categories ?? [],
+      tags: body.tags ?? [],
+      featured_media: body.featured_media ?? 0,
+      date_gmt: body.date_gmt ?? null,
+      modified_gmt: `2026-09-22T18:00:${String(modification).padStart(2, "0")}`,
+    };
+  };
+  const server = http.createServer(async (request, response) => {
+    if (request.headers.authorization !== authorization) {
+      return json(response, 401, {
+        code: "rest_not_logged_in",
+        message: "Unauthorized",
+        data: { status: 401 },
+      });
+    }
+    const url = new URL(request.url, "http://localhost");
+    const path = url.pathname.replace("/wp-json/wp/v2", "");
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const rawBuffer = Buffer.concat(chunks);
+    const raw = rawBuffer.toString("utf8");
+    let body = {};
+    if (raw && (request.headers["content-type"] ?? "").includes("application/json")) {
+      body = JSON.parse(raw);
+    }
+
+    if (request.method === "GET" && path === "/types") {
+      return json(response, 200, {
+        post: {
+          slug: "post",
+          name: "Posts",
+          description: "Blog posts",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "posts",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category", "post_tag"],
+        },
+        page: {
+          slug: "page",
+          name: "Pages",
+          description: "Static pages",
+          hierarchical: true,
+          viewable: true,
+          rest_base: "pages",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+        book: {
+          slug: "book",
+          name: "Books",
+          description: "Custom book entries",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "books",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category"],
+        },
+        attachment: {
+          slug: "attachment",
+          name: "Media",
+          viewable: false,
+          rest_base: "media",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+      });
+    }
+    if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
+    if (request.method === "GET" && path === "/users") {
+      const search = url.searchParams.get("search")?.toLowerCase();
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const perPage = Number(url.searchParams.get("per_page") ?? "100");
+      const filtered = [...users.values()]
+        .filter((user) => !search || [user.name, user.slug].some((value) => value.toLowerCase().includes(search)))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      const start = (page - 1) * perPage;
+      return json(response, 200, filtered.slice(start, start + perPage));
+    }
+    const userMatch = path.match(/^\/users\/(\d+)$/);
+    if (userMatch && request.method === "GET") {
+      const user = users.get(Number(userMatch[1]));
+      return user ? json(response, 200, user) : json(response, 404, { code: "not_found", message: "Not found", data: { status: 404 } });
+    }
+    if (request.method === "GET" && path === "/posts") {
+      const slug = url.searchParams.get("slug");
+      return json(response, 200, [...posts.values()].filter((post) => !slug || post.slug === slug));
+    }
+    if (request.method === "POST" && path === "/posts") {
+      postCreates += 1;
+      const id = nextPost++;
+      const post = toPost(id, body);
+      posts.set(id, post);
+      return json(response, 201, post);
+    }
+    const revisionItemMatch = path.match(/^\/posts\/(\d+)\/revisions\/(\d+)$/);
+    if (revisionItemMatch && request.method === "GET") {
+      const id = Number(revisionItemMatch[1]);
+      const revisionId = Number(revisionItemMatch[2]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, {
+        id: revisionId,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: { raw: `Revision ${revisionId}` },
+        excerpt: { raw: "<p>Revision excerpt</p>" },
+        content: { raw: `<h2>Revision ${revisionId}</h2><p>Recovered body.</p>` },
+      });
+    }
+    const revisionMatch = path.match(/^\/posts\/(\d+)\/revisions$/);
+    if (revisionMatch && request.method === "GET") {
+      const id = Number(revisionMatch[1]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, [{
+        id: 9000 + id,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: current.title,
+        excerpt: current.excerpt,
+        content: current.content,
+      }]);
+    }
+    const postMatch = path.match(/^\/posts\/(\d+)$/);
+    if (postMatch) {
+      const id = Number(postMatch[1]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      if (request.method === "GET") return json(response, 200, current);
+      if (request.method === "POST") {
+        postUpdates += 1;
+        const post = toPost(id, { ...flatten(current), ...body });
+        posts.set(id, post);
+        return json(response, 200, post);
+      }
+      if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
+        posts.delete(id);
+        return json(response, 200, { deleted: true, previous: current });
+      }
+    }
+
+));
+      if (revisionItem && request.method === "GET") {
+        const id = Number(revisionItem[1]);
+        const revisionId = Number(revisionItem[2]);
+        const current = collection.get(id);
+        if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+        return json(response, 200, {
+          id: revisionId,
+          parent: id,
+          author: current.author,
+          date_gmt: current.date_gmt,
+          modified_gmt: current.modified_gmt,
+          title: current.title,
+          excerpt: current.excerpt,
+          content: current.content,
+        });
+      }
+      const revisionList = path.match(new RegExp(`^/${name}/(\\d+)/revisionsimport assert from "node:assert/strict";
+import test from "node:test";
+import http from "node:http";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { deflateSync } from "node:zlib";
+
+import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
+import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
+import { WordPressContentService, WordPressRestPublisher } from "../dist/index.js";
+
+function makeServer() {
+  const posts = new Map();
+  const pages = new Map();
+  const books = new Map();
+  const tags = new Map();
+  const categories = new Map();
+  const media = new Map();
+  const users = new Map([
+    [1, { id: 1, name: "Editor", slug: "editor", link: "http://example.test/author/editor", avatar_urls: { "96": "http://example.test/avatar/editor.png" } }],
+  ]);
+  const mediaUploads = [];
+  const termCreateRaces = new Set();
+  let nextPost = 10;
+  let nextTerm = 20;
+  let nextMedia = 30;
+  let postCreates = 0;
+  let postUpdates = 0;
+  let modification = 0;
+  const authorization = `Basic ${Buffer.from("editor:app password").toString("base64")}`;
+  const json = (response, status, body) => {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+  };
+  const flatten = (post) => ({
+    title: post.title.raw,
+    excerpt: post.excerpt.raw,
+    content: post.content.raw,
+    slug: post.slug,
+    status: post.status,
+    categories: post.categories,
+    tags: post.tags,
+    featured_media: post.featured_media,
+    author: post.author,
+    date_gmt: post.date_gmt,
+  });
+  const toPost = (id, body) => {
+    modification += 1;
+    return {
+      id,
+      author: body.author ?? 1,
+      link: `http://example.test/?p=${id}`,
+      slug: body.slug ?? "",
+      status: body.status ?? "draft",
+      title: { raw: body.title ?? "" },
+      excerpt: { raw: body.excerpt ?? "" },
+      content: { raw: body.content ?? "" },
+      categories: body.categories ?? [],
+      tags: body.tags ?? [],
+      featured_media: body.featured_media ?? 0,
+      date_gmt: body.date_gmt ?? null,
+      modified_gmt: `2026-09-22T18:00:${String(modification).padStart(2, "0")}`,
+    };
+  };
+  const server = http.createServer(async (request, response) => {
+    if (request.headers.authorization !== authorization) {
+      return json(response, 401, {
+        code: "rest_not_logged_in",
+        message: "Unauthorized",
+        data: { status: 401 },
+      });
+    }
+    const url = new URL(request.url, "http://localhost");
+    const path = url.pathname.replace("/wp-json/wp/v2", "");
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const rawBuffer = Buffer.concat(chunks);
+    const raw = rawBuffer.toString("utf8");
+    let body = {};
+    if (raw && (request.headers["content-type"] ?? "").includes("application/json")) {
+      body = JSON.parse(raw);
+    }
+
+    if (request.method === "GET" && path === "/types") {
+      return json(response, 200, {
+        post: {
+          slug: "post",
+          name: "Posts",
+          description: "Blog posts",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "posts",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category", "post_tag"],
+        },
+        page: {
+          slug: "page",
+          name: "Pages",
+          description: "Static pages",
+          hierarchical: true,
+          viewable: true,
+          rest_base: "pages",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+        book: {
+          slug: "book",
+          name: "Books",
+          description: "Custom book entries",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "books",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category"],
+        },
+        attachment: {
+          slug: "attachment",
+          name: "Media",
+          viewable: false,
+          rest_base: "media",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+      });
+    }
+    if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
+    if (request.method === "GET" && path === "/users") {
+      const search = url.searchParams.get("search")?.toLowerCase();
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const perPage = Number(url.searchParams.get("per_page") ?? "100");
+      const filtered = [...users.values()]
+        .filter((user) => !search || [user.name, user.slug].some((value) => value.toLowerCase().includes(search)))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      const start = (page - 1) * perPage;
+      return json(response, 200, filtered.slice(start, start + perPage));
+    }
+    const userMatch = path.match(/^\/users\/(\d+)$/);
+    if (userMatch && request.method === "GET") {
+      const user = users.get(Number(userMatch[1]));
+      return user ? json(response, 200, user) : json(response, 404, { code: "not_found", message: "Not found", data: { status: 404 } });
+    }
+    if (request.method === "GET" && path === "/posts") {
+      const slug = url.searchParams.get("slug");
+      return json(response, 200, [...posts.values()].filter((post) => !slug || post.slug === slug));
+    }
+    if (request.method === "POST" && path === "/posts") {
+      postCreates += 1;
+      const id = nextPost++;
+      const post = toPost(id, body);
+      posts.set(id, post);
+      return json(response, 201, post);
+    }
+    const revisionItemMatch = path.match(/^\/posts\/(\d+)\/revisions\/(\d+)$/);
+    if (revisionItemMatch && request.method === "GET") {
+      const id = Number(revisionItemMatch[1]);
+      const revisionId = Number(revisionItemMatch[2]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, {
+        id: revisionId,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: { raw: `Revision ${revisionId}` },
+        excerpt: { raw: "<p>Revision excerpt</p>" },
+        content: { raw: `<h2>Revision ${revisionId}</h2><p>Recovered body.</p>` },
+      });
+    }
+    const revisionMatch = path.match(/^\/posts\/(\d+)\/revisions$/);
+    if (revisionMatch && request.method === "GET") {
+      const id = Number(revisionMatch[1]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, [{
+        id: 9000 + id,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: current.title,
+        excerpt: current.excerpt,
+        content: current.content,
+      }]);
+    }
+    const postMatch = path.match(/^\/posts\/(\d+)$/);
+    if (postMatch) {
+      const id = Number(postMatch[1]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      if (request.method === "GET") return json(response, 200, current);
+      if (request.method === "POST") {
+        postUpdates += 1;
+        const post = toPost(id, { ...flatten(current), ...body });
+        posts.set(id, post);
+        return json(response, 200, post);
+      }
+      if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
+        posts.delete(id);
+        return json(response, 200, { deleted: true, previous: current });
+      }
+    }
+
+));
+      if (revisionList && request.method === "GET") {
+        const id = Number(revisionList[1]);
+        const current = collection.get(id);
+        if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+        return json(response, 200, [{
+          id: 9000 + id,
+          parent: id,
+          author: current.author,
+          date_gmt: current.date_gmt,
+          modified_gmt: current.modified_gmt,
+          title: current.title,
+          excerpt: current.excerpt,
+          content: current.content,
+        }]);
+      }
+      const itemMatch = path.match(new RegExp(`^/${name}/(\\d+)import assert from "node:assert/strict";
+import test from "node:test";
+import http from "node:http";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { deflateSync } from "node:zlib";
+
+import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
+import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
+import { WordPressContentService, WordPressRestPublisher } from "../dist/index.js";
+
+function makeServer() {
+  const posts = new Map();
+  const pages = new Map();
+  const books = new Map();
+  const tags = new Map();
+  const categories = new Map();
+  const media = new Map();
+  const users = new Map([
+    [1, { id: 1, name: "Editor", slug: "editor", link: "http://example.test/author/editor", avatar_urls: { "96": "http://example.test/avatar/editor.png" } }],
+  ]);
+  const mediaUploads = [];
+  const termCreateRaces = new Set();
+  let nextPost = 10;
+  let nextTerm = 20;
+  let nextMedia = 30;
+  let postCreates = 0;
+  let postUpdates = 0;
+  let modification = 0;
+  const authorization = `Basic ${Buffer.from("editor:app password").toString("base64")}`;
+  const json = (response, status, body) => {
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+  };
+  const flatten = (post) => ({
+    title: post.title.raw,
+    excerpt: post.excerpt.raw,
+    content: post.content.raw,
+    slug: post.slug,
+    status: post.status,
+    categories: post.categories,
+    tags: post.tags,
+    featured_media: post.featured_media,
+    author: post.author,
+    date_gmt: post.date_gmt,
+  });
+  const toPost = (id, body) => {
+    modification += 1;
+    return {
+      id,
+      author: body.author ?? 1,
+      link: `http://example.test/?p=${id}`,
+      slug: body.slug ?? "",
+      status: body.status ?? "draft",
+      title: { raw: body.title ?? "" },
+      excerpt: { raw: body.excerpt ?? "" },
+      content: { raw: body.content ?? "" },
+      categories: body.categories ?? [],
+      tags: body.tags ?? [],
+      featured_media: body.featured_media ?? 0,
+      date_gmt: body.date_gmt ?? null,
+      modified_gmt: `2026-09-22T18:00:${String(modification).padStart(2, "0")}`,
+    };
+  };
+  const server = http.createServer(async (request, response) => {
+    if (request.headers.authorization !== authorization) {
+      return json(response, 401, {
+        code: "rest_not_logged_in",
+        message: "Unauthorized",
+        data: { status: 401 },
+      });
+    }
+    const url = new URL(request.url, "http://localhost");
+    const path = url.pathname.replace("/wp-json/wp/v2", "");
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const rawBuffer = Buffer.concat(chunks);
+    const raw = rawBuffer.toString("utf8");
+    let body = {};
+    if (raw && (request.headers["content-type"] ?? "").includes("application/json")) {
+      body = JSON.parse(raw);
+    }
+
+    if (request.method === "GET" && path === "/types") {
+      return json(response, 200, {
+        post: {
+          slug: "post",
+          name: "Posts",
+          description: "Blog posts",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "posts",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category", "post_tag"],
+        },
+        page: {
+          slug: "page",
+          name: "Pages",
+          description: "Static pages",
+          hierarchical: true,
+          viewable: true,
+          rest_base: "pages",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+        book: {
+          slug: "book",
+          name: "Books",
+          description: "Custom book entries",
+          hierarchical: false,
+          viewable: true,
+          rest_base: "books",
+          rest_namespace: "wp/v2",
+          taxonomies: ["category"],
+        },
+        attachment: {
+          slug: "attachment",
+          name: "Media",
+          viewable: false,
+          rest_base: "media",
+          rest_namespace: "wp/v2",
+          taxonomies: [],
+        },
+      });
+    }
+    if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
+    if (request.method === "GET" && path === "/users") {
+      const search = url.searchParams.get("search")?.toLowerCase();
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const perPage = Number(url.searchParams.get("per_page") ?? "100");
+      const filtered = [...users.values()]
+        .filter((user) => !search || [user.name, user.slug].some((value) => value.toLowerCase().includes(search)))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      const start = (page - 1) * perPage;
+      return json(response, 200, filtered.slice(start, start + perPage));
+    }
+    const userMatch = path.match(/^\/users\/(\d+)$/);
+    if (userMatch && request.method === "GET") {
+      const user = users.get(Number(userMatch[1]));
+      return user ? json(response, 200, user) : json(response, 404, { code: "not_found", message: "Not found", data: { status: 404 } });
+    }
+    if (request.method === "GET" && path === "/posts") {
+      const slug = url.searchParams.get("slug");
+      return json(response, 200, [...posts.values()].filter((post) => !slug || post.slug === slug));
+    }
+    if (request.method === "POST" && path === "/posts") {
+      postCreates += 1;
+      const id = nextPost++;
+      const post = toPost(id, body);
+      posts.set(id, post);
+      return json(response, 201, post);
+    }
+    const revisionItemMatch = path.match(/^\/posts\/(\d+)\/revisions\/(\d+)$/);
+    if (revisionItemMatch && request.method === "GET") {
+      const id = Number(revisionItemMatch[1]);
+      const revisionId = Number(revisionItemMatch[2]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, {
+        id: revisionId,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: { raw: `Revision ${revisionId}` },
+        excerpt: { raw: "<p>Revision excerpt</p>" },
+        content: { raw: `<h2>Revision ${revisionId}</h2><p>Recovered body.</p>` },
+      });
+    }
+    const revisionMatch = path.match(/^\/posts\/(\d+)\/revisions$/);
+    if (revisionMatch && request.method === "GET") {
+      const id = Number(revisionMatch[1]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      return json(response, 200, [{
+        id: 9000 + id,
+        parent: id,
+        author: current.author,
+        date_gmt: current.date_gmt,
+        modified_gmt: current.modified_gmt,
+        title: current.title,
+        excerpt: current.excerpt,
+        content: current.content,
+      }]);
+    }
+    const postMatch = path.match(/^\/posts\/(\d+)$/);
+    if (postMatch) {
+      const id = Number(postMatch[1]);
+      const current = posts.get(id);
+      if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+      if (request.method === "GET") return json(response, 200, current);
+      if (request.method === "POST") {
+        postUpdates += 1;
+        const post = toPost(id, { ...flatten(current), ...body });
+        posts.set(id, post);
+        return json(response, 200, post);
+      }
+      if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
+        posts.delete(id);
+        return json(response, 200, { deleted: true, previous: current });
+      }
+    }
+
+));
+      if (itemMatch) {
+        const id = Number(itemMatch[1]);
+        const current = collection.get(id);
+        if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+        if (request.method === "GET") return json(response, 200, current);
+        if (request.method === "POST") {
+          const item = toPost(id, { ...flatten(current), ...body });
+          collection.set(id, item);
+          return json(response, 200, item);
+        }
+        if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
+          collection.delete(id);
+          return json(response, 200, { deleted: true, previous: current });
+        }
       }
     }
 
@@ -271,6 +989,8 @@ function makeServer() {
   return {
     server,
     posts,
+    pages,
+    books,
     tags,
     categories,
     media,
