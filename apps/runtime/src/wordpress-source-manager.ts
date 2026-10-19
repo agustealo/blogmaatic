@@ -179,6 +179,10 @@ function sourceRevision(revision: WordPressRevisionView): SourceContentRevision 
   };
 }
 
+function isRecord(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function plainText(value: string): string {
   return value
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
