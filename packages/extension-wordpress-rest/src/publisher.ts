@@ -49,6 +49,25 @@ function variant(route: PublicationRoute): Readonly<Record<string, JsonValue>> {
   return route.variant ?? {};
 }
 
+function requireRestBase(value: string): string {
+  const normalized = value.trim();
+  if (!/^[a-z0-9_-]+$/.test(normalized)) {
+    throw new Error("WordPress content type REST base must contain only lowercase letters, numbers, underscores, or hyphens");
+  }
+  return normalized;
+}
+
+function routeRestBase(
+  channel: string,
+  settings: WordPressSettings,
+): string {
+  const normalized = requireRestBase(channel);
+  if (normalized === "posts" && settings.postTypeRestBase !== "posts") {
+    return settings.postTypeRestBase;
+  }
+  return normalized;
+}
+
 function sourcePublishingState(
   publication: Publication,
   route: PublicationRoute,
@@ -83,10 +102,9 @@ function sourcePublishingState(
 function desiredStatus(publication: Publication, route: PublicationRoute): PostStatus {
   const source = sourcePublishingState(publication, route);
   if (source) return source.status;
-  const fromVariant = getString(variant(route), "status");
-  const candidate = fromVariant ?? (route.destination.channel === "posts" ? "publish" : route.destination.channel);
+  const candidate = getString(variant(route), "status") ?? "publish";
   if (!POST_STATUSES.includes(candidate as PostStatus)) {
-    throw new Error(`Unsupported WordPress destination channel/status: ${candidate}`);
+    throw new Error(`Unsupported WordPress post status: ${candidate}`);
   }
   return candidate as PostStatus;
 }
@@ -150,6 +168,7 @@ function semanticPayload(
   parsedAssets: ReturnType<typeof parsePayload>["assetsParsed"],
 ): unknown {
   return {
+    contentType: payload.contentType,
     title: payload.title,
     excerpt: payload.excerpt,
     slug: payload.slug,
@@ -206,12 +225,12 @@ function remoteIdentity(post: WordPressPostRecord): RemoteIdentity {
 
 async function latestNativeRevision(
   client: WordPressRestClient,
-  settings: WordPressSettings,
+  restBase: string,
   postId: number,
 ): Promise<WordPressRevisionRecord | undefined> {
   try {
     const revisions = await client.requestJson<readonly WordPressRevisionRecord[]>(
-      `/${settings.postTypeRestBase}/${postId}/revisions?context=edit&per_page=1&orderby=modified&order=desc`,
+      `/${restBase}/${postId}/revisions?context=edit&per_page=1&orderby=modified&order=desc`,
     );
     return revisions[0];
   } catch (error) {
@@ -224,22 +243,22 @@ async function latestNativeRevision(
 
 async function findPostBySlug(
   client: WordPressRestClient,
-  settings: WordPressSettings,
+  restBase: string,
   slug: string,
 ): Promise<readonly WordPressPostRecord[]> {
   return client.requestJson<readonly WordPressPostRecord[]>(
-    `/${settings.postTypeRestBase}?context=edit&slug=${encodeURIComponent(slug)}&per_page=100&status=${POST_STATUSES.join(",")}`,
+    `/${restBase}?context=edit&slug=${encodeURIComponent(slug)}&per_page=100&status=${POST_STATUSES.join(",")}`,
   );
 }
 
 async function fetchPost(
   client: WordPressRestClient,
-  settings: WordPressSettings,
+  restBase: string,
   id: string,
 ): Promise<WordPressPostRecord> {
   if (!/^\d+$/.test(id)) throw new Error(`Invalid WordPress remote post id: ${id}`);
   return client.requestJson<WordPressPostRecord>(
-    `/${settings.postTypeRestBase}/${id}?context=edit`,
+    `/${restBase}/${id}?context=edit`,
   );
 }
 
@@ -363,6 +382,9 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       const user = await client.requestJson<{ readonly id: number; readonly name?: string }>(
         "/users/me?context=edit",
       );
+      const types = await client.requestJson<Readonly<Record<string, unknown>>>(
+        "/types?context=edit",
+      );
       await client.requestJson<readonly unknown[]>(
         `/${settings.postTypeRestBase}?context=edit&per_page=1`,
       );
@@ -374,6 +396,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
           siteUrl: settings.siteUrl,
           userId: user.id,
           postTypeRestBase: settings.postTypeRestBase,
+          discoveredTypeCount: Object.keys(types).length,
         },
       };
     } catch (error) {
@@ -397,6 +420,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       route.destination.connectionId,
     );
     const settings = parseSettings(connection);
+    const contentType = routeRestBase(route.destination.channel, settings);
     const status = desiredStatus(publication, route);
     const scheduledAt = desiredSchedule(publication, route, status);
     const imageTransform = variant(route).imageTransform === undefined
@@ -406,6 +430,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const featured = featuredAssetId(publication, route);
     const authorId = sourceAuthorId(publication, route);
     const payload: WordPressProjectionPayload = {
+      contentType,
       title: publication.current.content.title,
       excerpt: publication.current.content.summary ?? "",
       slug: termSlug(getString(variant(route), "slug") ?? publication.slug ?? publication.id),
@@ -449,14 +474,18 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       const settings = parseSettings(connection);
       const client = new WordPressRestClient(connection, settings, this.#secrets);
       const payload = parsePayload(input.projection);
+      const restBase = routeRestBase(input.projection.destination.channel, settings);
+      if (payload.contentType !== restBase) {
+        throw new Error("WordPress projection content type does not match its destination channel");
+      }
       if (input.remote) {
         return inspectRecord(
-          await fetchPost(client, settings, input.remote.id),
+          await fetchPost(client, restBase, input.remote.id),
           input.projection,
           observedAt,
         );
       }
-      const candidates = await findPostBySlug(client, settings, payload.slug);
+      const candidates = await findPostBySlug(client, restBase, payload.slug);
       if (candidates.length === 0) return { state: "missing", observedAt };
       const owned = candidates.filter((candidate) => {
         const marker = parseMarker(sourceBody(candidate));
@@ -494,6 +523,10 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const settings = parseSettings(connection);
     const client = new WordPressRestClient(connection, settings, this.#secrets);
     const payload = parsePayload(request.projection);
+    const restBase = routeRestBase(request.projection.destination.channel, settings);
+    if (payload.contentType !== restBase) {
+      throw new Error("WordPress projection content type does not match its destination channel");
+    }
 
     const publishedMedia: PublishedMedia[] = [];
     for (const asset of payload.assetsParsed) {
@@ -540,14 +573,14 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     });
     const postBody = postRequestBody(payload, markedContent, categories, tags, featuredMedia);
     const endpoint = request.existingRemote
-      ? `/${settings.postTypeRestBase}/${request.existingRemote.id}`
-      : `/${settings.postTypeRestBase}`;
+      ? `/${restBase}/${request.existingRemote.id}`
+      : `/${restBase}`;
     const saved = await client.requestJson<WordPressPostRecord>(endpoint, {
       method: "POST",
       body: JSON.stringify(postBody),
     });
 
-    let current = await fetchPost(client, settings, String(saved.id));
+    let current = await fetchPost(client, restBase, String(saved.id));
     const currentBody = stripMarker(sourceBody(current));
     const actualHash = remoteStateHash(current, currentBody);
     const currentMarker = parseMarker(sourceBody(current));
@@ -563,13 +596,13 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         renderedHash: actualHash,
       });
       current = await client.requestJson<WordPressPostRecord>(
-        `/${settings.postTypeRestBase}/${saved.id}?context=edit`,
+        `/${restBase}/${saved.id}?context=edit`,
         { method: "POST", body: JSON.stringify({ content: normalized }) },
       );
-      current = await fetchPost(client, settings, String(saved.id));
+      current = await fetchPost(client, restBase, String(saved.id));
     }
 
-    const nativeRevision = await latestNativeRevision(client, settings, current.id);
+    const nativeRevision = await latestNativeRevision(client, restBase, current.id);
 
     return {
       remote: remoteIdentity(current),
