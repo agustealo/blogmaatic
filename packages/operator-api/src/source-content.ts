@@ -147,10 +147,9 @@ function parseAuthorAssignBody(body: unknown): SourceAuthorAssignBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["contentType", "publicationId", "expectedVersion"]);
+  const allowed = new Set(["publicationId", "expectedVersion"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
-  const contentType = optionalContentType(input.contentType);
   const publicationId = input.publicationId;
   if (typeof publicationId !== "string" || !publicationId.trim()) {
     throw new OperatorRequestError("publicationId is required");
@@ -159,7 +158,6 @@ function parseAuthorAssignBody(body: unknown): SourceAuthorAssignBody {
     throw new OperatorRequestError("expectedVersion must be a positive integer");
   }
   return {
-    ...(contentType ? { contentType } : {}),
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
   };
@@ -336,9 +334,10 @@ function parseRevisionRestoreBody(body: unknown): SourceRevisionRestoreBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion"]);
+  const allowed = new Set(["contentType", "publicationId", "expectedVersion"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const contentType = optionalContentType(input.contentType);
   const publicationId = input.publicationId;
   if (typeof publicationId !== "string" || !publicationId.trim()) {
     throw new OperatorRequestError("publicationId is required");
@@ -347,6 +346,7 @@ function parseRevisionRestoreBody(body: unknown): SourceRevisionRestoreBody {
     throw new OperatorRequestError("expectedVersion must be a positive integer");
   }
   return {
+    ...(contentType ? { contentType } : {}),
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
   };
