@@ -158,7 +158,30 @@ export interface WordPressRevisionRecord {
   readonly content?: { readonly raw?: string; readonly rendered?: string };
 }
 
+export interface WordPressContentTypeRecord {
+  readonly slug: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly hierarchical?: boolean;
+  readonly viewable?: boolean;
+  readonly rest_base?: string;
+  readonly rest_namespace?: string;
+  readonly taxonomies?: readonly string[];
+}
+
+export interface WordPressContentTypeView {
+  readonly slug: string;
+  readonly name: string;
+  readonly restBase: string;
+  readonly description?: string;
+  readonly hierarchical: boolean;
+  readonly viewable: boolean;
+  readonly restNamespace?: string;
+  readonly taxonomies: readonly string[];
+}
+
 export interface WordPressPostQuery {
+  readonly contentType?: string;
   readonly search?: string;
   readonly status?: string;
   readonly page?: number;
