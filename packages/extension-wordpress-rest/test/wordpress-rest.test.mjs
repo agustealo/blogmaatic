@@ -1084,6 +1084,21 @@ function publication(assetPath) {
   };
 }
 
+function textPublication() {
+  const base = publication("/unused");
+  return {
+    ...base,
+    current: {
+      ...base.current,
+      content: {
+        ...base.current.content,
+        blocks: [{ id: "p1", kind: "paragraph", data: { text: "Publish by content type." } }],
+        assets: [],
+      },
+    },
+  };
+}
+
 function route(extra = {}) {
   return {
     id: "route-1",
@@ -2259,7 +2274,7 @@ test("WordPress route channel selects content type while status remains independ
       destination: { ...route().destination, channel: "pages" },
     };
     const projection = await publisher.compile({
-      publication: publication(undefined),
+      publication: textPublication(),
       route: pageRoute,
     });
     assert.equal(projection.payload.contentType, "pages");
@@ -2298,7 +2313,7 @@ test("legacy custom post type setting remains the fallback for old posts-channel
       new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
     );
     const projection = await publisher.compile({
-      publication: publication(undefined),
+      publication: textPublication(),
       route: route(),
     });
     assert.equal(projection.payload.contentType, "books");
