@@ -14,6 +14,8 @@ import {
 import { WORDPRESS_REST_EXTENSION_ID, parseSettings } from "./settings.js";
 import { findOrCreateTerm } from "./taxonomy.js";
 import type {
+  WordPressContentTypeRecord,
+  WordPressContentTypeView,
   WordPressImportSnapshot,
   WordPressMediaPage,
   WordPressMediaQuery,
@@ -43,6 +45,14 @@ function rawValue(field: { readonly raw?: string; readonly rendered?: string } |
 function requireRemoteId(value: string): string {
   const normalized = value.trim();
   if (!/^\d+$/.test(normalized)) throw new Error(`Invalid WordPress remote post id: ${value}`);
+  return normalized;
+}
+
+function requireRestBase(value: string): string {
+  const normalized = value.trim();
+  if (!/^[a-z0-9_-]+$/.test(normalized)) {
+    throw new Error("WordPress content type REST base must contain only lowercase letters, numbers, underscores, or hyphens");
+  }
   return normalized;
 }
 
@@ -119,6 +129,25 @@ function userView(user: WordPressUserRecord): WordPressUserView {
   };
 }
 
+function contentTypeView(
+  slug: string,
+  type: WordPressContentTypeRecord,
+): WordPressContentTypeView | undefined {
+  const restBase = type.rest_base?.trim();
+  if (!restBase || !/^[a-z0-9_-]+$/.test(restBase)) return undefined;
+  if (type.viewable === false) return undefined;
+  return {
+    slug: type.slug?.trim() || slug,
+    name: type.name?.trim() || slug,
+    restBase,
+    ...(type.description?.trim() ? { description: type.description.trim() } : {}),
+    hierarchical: type.hierarchical === true,
+    viewable: type.viewable !== false,
+    ...(type.rest_namespace?.trim() ? { restNamespace: type.rest_namespace.trim() } : {}),
+    taxonomies: [...(type.taxonomies ?? [])],
+  };
+}
+
 function revisionView(revision: WordPressRevisionRecord): WordPressRevisionView {
   return {
     id: revision.id,
@@ -158,17 +187,40 @@ export class WordPressContentService {
     this.#secrets = secrets;
   }
 
-  #client(connectionId: string): { readonly client: WordPressRestClient; readonly restBase: string } {
+  #client(
+    connectionId: string,
+    contentType?: string,
+  ): {
+    readonly client: WordPressRestClient;
+    readonly restBase: string;
+    readonly defaultRestBase: string;
+  } {
     const connection = this.#connections.requireActive(WORDPRESS_REST_EXTENSION_ID, connectionId);
     const settings = parseSettings(connection);
     return {
       client: new WordPressRestClient(connection, settings, this.#secrets),
-      restBase: settings.postTypeRestBase,
+      restBase: contentType === undefined ? settings.postTypeRestBase : requireRestBase(contentType),
+      defaultRestBase: settings.postTypeRestBase,
     };
   }
 
+  defaultContentType(connectionId: string): string {
+    return this.#client(connectionId).defaultRestBase;
+  }
+
+  async listContentTypes(connectionId: string): Promise<readonly WordPressContentTypeView[]> {
+    const { client } = this.#client(connectionId);
+    const records = await client.requestJson<Readonly<Record<string, WordPressContentTypeRecord>>>(
+      "/types?context=edit",
+    );
+    return Object.entries(records)
+      .map(([slug, record]) => contentTypeView(slug, record))
+      .filter((record): record is WordPressContentTypeView => record !== undefined)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
   async list(connectionId: string, query: WordPressPostQuery = {}): Promise<WordPressPostPage> {
-    const { client, restBase } = this.#client(connectionId);
+    const { client, restBase } = this.#client(connectionId, query.contentType);
     const page = requirePage(query.page);
     const perPage = requirePerPage(query.perPage);
     const params = new URLSearchParams({
@@ -191,13 +243,17 @@ export class WordPressContentService {
     };
   }
 
-  async get(connectionId: string, remoteId: string): Promise<WordPressPostView> {
-    return postView(await this.#getRecord(connectionId, remoteId));
+  async get(connectionId: string, remoteId: string, contentType?: string): Promise<WordPressPostView> {
+    return postView(await this.#getRecord(connectionId, remoteId, contentType));
   }
 
-  async importSnapshot(connectionId: string, remoteId: string): Promise<WordPressImportSnapshot> {
-    const { client } = this.#client(connectionId);
-    const post = await this.#getRecord(connectionId, remoteId);
+  async importSnapshot(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<WordPressImportSnapshot> {
+    const { client } = this.#client(connectionId, contentType);
+    const post = await this.#getRecord(connectionId, remoteId, contentType);
     const categoryNames = await Promise.all((post.categories ?? []).map(async (id) => {
       const term = await client.requestJson<WordPressTermRecord>(`/categories/${id}?context=edit`);
       return term.name;
@@ -388,8 +444,9 @@ export class WordPressContentService {
     connectionId: string,
     remoteId: string,
     remoteRevisionId: string,
+    contentType?: string,
   ): Promise<WordPressRevisionView> {
-    const { client, restBase } = this.#client(connectionId);
+    const { client, restBase } = this.#client(connectionId, contentType);
     const postId = requireRemoteId(remoteId);
     const revisionId = requireRemoteId(remoteRevisionId);
     const revision = await client.requestJson<WordPressRevisionRecord>(
@@ -401,8 +458,12 @@ export class WordPressContentService {
     return revisionView(revision);
   }
 
-  async revisions(connectionId: string, remoteId: string): Promise<readonly WordPressRevisionView[]> {
-    const { client, restBase } = this.#client(connectionId);
+  async revisions(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<readonly WordPressRevisionView[]> {
+    const { client, restBase } = this.#client(connectionId, contentType);
     const id = requireRemoteId(remoteId);
     const revisions = await client.requestJson<readonly WordPressRevisionRecord[]>(
       `/${restBase}/${id}/revisions?context=edit&per_page=100`,
@@ -410,9 +471,13 @@ export class WordPressContentService {
     return revisions.map(revisionView);
   }
 
-  async trash(connectionId: string, remoteId: string): Promise<WordPressPostView> {
-    const { client, restBase } = this.#client(connectionId);
-    const current = await this.#getRecord(connectionId, remoteId);
+  async trash(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<WordPressPostView> {
+    const { client, restBase } = this.#client(connectionId, contentType);
+    const current = await this.#getRecord(connectionId, remoteId, contentType);
     this.#assertManaged(current);
     const saved = await client.requestJson<WordPressPostRecord>(
       `/${restBase}/${requireRemoteId(remoteId)}`,
@@ -421,9 +486,13 @@ export class WordPressContentService {
     return postView(saved);
   }
 
-  async restore(connectionId: string, remoteId: string): Promise<WordPressPostView> {
-    const { client, restBase } = this.#client(connectionId);
-    const current = await this.#getRecord(connectionId, remoteId);
+  async restore(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<WordPressPostView> {
+    const { client, restBase } = this.#client(connectionId, contentType);
+    const current = await this.#getRecord(connectionId, remoteId, contentType);
     this.#assertManaged(current);
     if (current.status !== "trash") throw new Error("Only trashed WordPress posts can be restored");
     const saved = await client.requestJson<WordPressPostRecord>(
@@ -433,9 +502,13 @@ export class WordPressContentService {
     return postView(saved);
   }
 
-  async deletePermanent(connectionId: string, remoteId: string): Promise<WordPressPostView> {
-    const { client, restBase } = this.#client(connectionId);
-    const current = await this.#getRecord(connectionId, remoteId);
+  async deletePermanent(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<WordPressPostView> {
+    const { client, restBase } = this.#client(connectionId, contentType);
+    const current = await this.#getRecord(connectionId, remoteId, contentType);
     this.#assertManaged(current);
     if (current.status !== "trash") {
       throw new Error("WordPress post must be moved to trash before permanent deletion");
@@ -451,6 +524,7 @@ export class WordPressContentService {
     connectionId: string,
     remoteId: string,
     projection: CompiledProjection,
+    contentType?: string,
   ): Promise<WordPressPostView> {
     if (projection.destination.extensionId !== WORDPRESS_REST_EXTENSION_ID) {
       throw new Error("WordPress adoption requires a WordPress projection");
@@ -458,8 +532,8 @@ export class WordPressContentService {
     if (projection.destination.connectionId !== connectionId) {
       throw new Error("WordPress adoption projection belongs to a different connection");
     }
-    const { client, restBase } = this.#client(connectionId);
-    const current = await this.#getRecord(connectionId, remoteId);
+    const { client, restBase } = this.#client(connectionId, contentType);
+    const current = await this.#getRecord(connectionId, remoteId, contentType);
     const currentMarker = parseMarker(rawValue(current.content));
     if (
       currentMarker &&
@@ -489,9 +563,10 @@ export class WordPressContentService {
     publicationId: string,
     routeId: string,
     contentHtml: string,
+    contentType?: string,
   ): Promise<void> {
-    const { client, restBase } = this.#client(connectionId);
-    const current = await this.#getRecord(connectionId, remoteId);
+    const { client, restBase } = this.#client(connectionId, contentType);
+    const current = await this.#getRecord(connectionId, remoteId, contentType);
     const marker = parseMarker(rawValue(current.content));
     if (!marker) return;
     if (marker.publicationId !== publicationId || marker.routeId !== routeId) {
@@ -503,8 +578,12 @@ export class WordPressContentService {
     );
   }
 
-  async #getRecord(connectionId: string, remoteId: string): Promise<WordPressPostRecord> {
-    const { client, restBase } = this.#client(connectionId);
+  async #getRecord(
+    connectionId: string,
+    remoteId: string,
+    contentType?: string,
+  ): Promise<WordPressPostRecord> {
+    const { client, restBase } = this.#client(connectionId, contentType);
     return client.requestJson<WordPressPostRecord>(
       `/${restBase}/${requireRemoteId(remoteId)}?context=edit`,
     );
