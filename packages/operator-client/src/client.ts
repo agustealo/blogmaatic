@@ -72,6 +72,7 @@ import type {
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourceTaxonomyCreateBody,
+  SourceTaxonomyRecord,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SchedulerDispatchResponse,
