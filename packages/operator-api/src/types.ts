@@ -150,7 +150,17 @@ export interface OperatorConnectionManager {
   test(connectionId: string): Promise<OperatorConnectionTestResult>;
 }
 
+export interface SourceContentTypeRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly key: string;
+  readonly label: string;
+  readonly hierarchical: boolean;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
 export interface SourceContentQuery {
+  readonly contentType?: string;
   readonly search?: string;
   readonly status?: string;
   readonly page?: number;
@@ -159,6 +169,7 @@ export interface SourceContentQuery {
 
 export interface SourceContentRecord {
   readonly connectionId: string;
+  readonly contentType: string;
   readonly extensionId: string;
   readonly remoteId: string;
   readonly remoteUrl: string;
@@ -193,6 +204,7 @@ export interface SourceContentRevision {
 }
 
 export interface SourceRevisionRestoreBody {
+  readonly contentType?: string;
   readonly publicationId: string;
   readonly expectedVersion: number;
 }
@@ -203,6 +215,7 @@ export interface SourceRevisionRestoreResult {
 }
 
 export interface SourceContentImportBody {
+  readonly contentType?: string;
   readonly groupId: string;
   readonly routeId: string;
 }
@@ -345,9 +358,10 @@ export interface SourceTaxonomyPage {
 }
 
 export interface OperatorSourceContentManager {
+  listContentTypes(connectionId: string): Promise<readonly SourceContentTypeRecord[]>;
   list(connectionId: string, query?: SourceContentQuery): Promise<SourceContentPage>;
-  get(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
-  revisions(connectionId: string, remoteId: string): Promise<readonly SourceContentRevision[]>;
+  get(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
+  revisions(connectionId: string, remoteId: string, contentType?: string): Promise<readonly SourceContentRevision[]>;
   restoreRevision(
     connectionId: string,
     remoteId: string,
@@ -363,9 +377,9 @@ export interface OperatorSourceContentManager {
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   createTaxonomy(connectionId: string, body: SourceTaxonomyCreateBody): Promise<SourceTaxonomyRecord>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
-  trash(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
-  restore(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
-  deletePermanent(connectionId: string, remoteId: string): Promise<SourceContentRecord>;
+  trash(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
+  restore(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
+  deletePermanent(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
 }
 
 export interface PublicationGroupCreateBody {

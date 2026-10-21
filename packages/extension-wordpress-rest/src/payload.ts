@@ -62,6 +62,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
   }
   const assetsParsed = parseAssets(projection.payload.assets);
   return {
+    contentType: requiredString(projection.payload, "contentType"),
     title: requiredString(projection.payload, "title"),
     excerpt: requiredString(projection.payload, "excerpt"),
     slug: requiredString(projection.payload, "slug"),

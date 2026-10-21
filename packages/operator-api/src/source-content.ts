@@ -94,16 +94,32 @@ function optionalInteger(
   return parsed;
 }
 
+function optionalContentType(value: unknown, label = "contentType"): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") throw new OperatorRequestError(`${label} must be a string`);
+  const normalized = value.trim();
+  if (!/^[a-z0-9_-]+$/.test(normalized)) {
+    throw new OperatorRequestError(`${label} must contain only lowercase letters, numbers, underscores, or hyphens`);
+  }
+  return normalized;
+}
+
+function contentTypeFromQuery(request: FastifyRequest): string | undefined {
+  return optionalContentType(query(request).contentType);
+}
+
 function parseQuery(request: FastifyRequest): SourceContentQuery {
   const input = query(request);
-  const allowed = new Set(["search", "status", "page", "limit"]);
+  const allowed = new Set(["contentType", "search", "status", "page", "limit"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+  const contentType = optionalContentType(input.contentType);
   const search = optionalString(input, "search");
   const status = optionalString(input, "status");
   const page = optionalInteger(input, "page", 1, 1000000);
   const limit = optionalInteger(input, "limit", 1, 100);
   return {
+    ...(contentType ? { contentType } : {}),
     ...(search ? { search } : {}),
     ...(status ? { status } : {}),
     ...(page === undefined ? {} : { page }),
@@ -318,9 +334,10 @@ function parseRevisionRestoreBody(body: unknown): SourceRevisionRestoreBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion"]);
+  const allowed = new Set(["contentType", "publicationId", "expectedVersion"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const contentType = optionalContentType(input.contentType);
   const publicationId = input.publicationId;
   if (typeof publicationId !== "string" || !publicationId.trim()) {
     throw new OperatorRequestError("publicationId is required");
@@ -329,6 +346,7 @@ function parseRevisionRestoreBody(body: unknown): SourceRevisionRestoreBody {
     throw new OperatorRequestError("expectedVersion must be a positive integer");
   }
   return {
+    ...(contentType ? { contentType } : {}),
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
   };
@@ -370,8 +388,10 @@ function parseImportBody(body: unknown): SourceContentImportBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const unknown = Object.keys(input).find((key) => key !== "groupId" && key !== "routeId");
+  const allowed = new Set(["contentType", "groupId", "routeId"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const contentType = optionalContentType(input.contentType);
   const groupId = input.groupId;
   const routeId = input.routeId;
   if (typeof groupId !== "string" || !groupId.trim()) {
@@ -380,7 +400,11 @@ function parseImportBody(body: unknown): SourceContentImportBody {
   if (typeof routeId !== "string" || !routeId.trim()) {
     throw new OperatorRequestError("routeId is required");
   }
-  return { groupId: groupId.trim(), routeId: routeId.trim() };
+  return {
+    ...(contentType ? { contentType } : {}),
+    groupId: groupId.trim(),
+    routeId: routeId.trim(),
+  };
 }
 
 async function authorize(
@@ -573,6 +597,12 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     return reply.code(201).send(result);
   });
 
+  app.get("/v1/connections/:connectionId/content-types", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    return { items: await domainCall(() => manager(options).listContentTypes(connectionId)) };
+  });
+
   app.get("/v1/connections/:connectionId/content", async (request) => {
     await authorize(options, request, "source-content:read");
     const connectionId = requirePathString(params(request).connectionId, "connectionId");
@@ -585,6 +615,7 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     return domainCall(() => manager(options).get(
       requirePathString(values.connectionId, "connectionId"),
       requirePathString(values.remoteId, "remoteId"),
+      contentTypeFromQuery(request),
     ));
   });
 
@@ -595,6 +626,7 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       items: await domainCall(() => manager(options).revisions(
         requirePathString(values.connectionId, "connectionId"),
         requirePathString(values.remoteId, "remoteId"),
+        contentTypeFromQuery(request),
       )),
     };
   });
@@ -649,7 +681,13 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       requestId: request.id,
       action: "source-content.import",
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
-      evidence: { connectionId, remoteId, groupId: body.groupId, routeId: body.routeId },
+      evidence: {
+        connectionId,
+        remoteId,
+        contentType: body.contentType ?? null,
+        groupId: body.groupId,
+        routeId: body.routeId,
+      },
       now: () => clock.now(),
       execute: () => domainCall(() => manager(options).import(connectionId, remoteId, body)),
       success: (value) => ({
@@ -673,9 +711,13 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       requestId: request.id,
       action: "source-content.trash",
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
-      evidence: { connectionId, remoteId },
+      evidence: { connectionId, remoteId, contentType: contentTypeFromQuery(request) ?? null },
       now: () => clock.now(),
-      execute: () => domainCall(() => manager(options).trash(connectionId, remoteId)),
+      execute: () => domainCall(() => manager(options).trash(
+        connectionId,
+        remoteId,
+        contentTypeFromQuery(request),
+      )),
     });
   });
 
@@ -690,9 +732,13 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       requestId: request.id,
       action: "source-content.restore",
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
-      evidence: { connectionId, remoteId },
+      evidence: { connectionId, remoteId, contentType: contentTypeFromQuery(request) ?? null },
       now: () => clock.now(),
-      execute: () => domainCall(() => manager(options).restore(connectionId, remoteId)),
+      execute: () => domainCall(() => manager(options).restore(
+        connectionId,
+        remoteId,
+        contentTypeFromQuery(request),
+      )),
     });
   });
 
@@ -707,9 +753,18 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       requestId: request.id,
       action: "source-content.delete-permanently",
       resource: { type: "source-content", id: `${connectionId}:${remoteId}` },
-      evidence: { connectionId, remoteId, permanent: true },
+      evidence: {
+        connectionId,
+        remoteId,
+        contentType: contentTypeFromQuery(request) ?? null,
+        permanent: true,
+      },
       now: () => clock.now(),
-      execute: () => domainCall(() => manager(options).deletePermanent(connectionId, remoteId)),
+      execute: () => domainCall(() => manager(options).deletePermanent(
+        connectionId,
+        remoteId,
+        contentTypeFromQuery(request),
+      )),
     });
   });
 }

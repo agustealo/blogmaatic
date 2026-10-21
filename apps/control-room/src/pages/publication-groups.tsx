@@ -5,6 +5,7 @@ import type {
   OperatorConnectionType,
   OperatorConnectionView,
   PublicationGroupRegistryEntry,
+  SourceContentTypeRecord,
 } from "@blogmaatic/operator-client";
 
 import {
@@ -30,6 +31,7 @@ interface EditorState {
   readonly policySetId: string;
   readonly selectedConnectionIds: ReadonlySet<string>;
   readonly enabledConnectionIds: ReadonlySet<string>;
+  readonly routeChannels: Readonly<Record<string, string>>;
   readonly existingRoutes: readonly GroupRoute[];
   readonly enabled: boolean;
 }
@@ -61,6 +63,7 @@ function createEditor(policySetId: string): EditorState {
     policySetId,
     selectedConnectionIds: new Set(),
     enabledConnectionIds: new Set(),
+    routeChannels: {},
     existingRoutes: [],
     enabled: true,
   };
@@ -76,6 +79,9 @@ function editEditor(entry: PublicationGroupRegistryEntry): EditorState {
     selectedConnectionIds: new Set(entry.group.routes.map((route) => route.destination.connectionId)),
     enabledConnectionIds: new Set(
       entry.group.routes.filter((route) => route.enabled).map((route) => route.destination.connectionId),
+    ),
+    routeChannels: Object.fromEntries(
+      entry.group.routes.map((route) => [route.destination.connectionId, route.destination.channel]),
     ),
     existingRoutes: entry.group.routes,
     enabled: entry.enabled,
@@ -122,6 +128,9 @@ export function PublicationGroupsPage() {
   const [enabledFilter, setEnabledFilter] = useState<"" | "true" | "false">("");
   const [connections, setConnections] = useState<readonly OperatorConnectionView[]>([]);
   const [types, setTypes] = useState<readonly OperatorConnectionType[]>([]);
+  const [contentTypesByConnection, setContentTypesByConnection] = useState<
+    Readonly<Record<string, readonly SourceContentTypeRecord[]>>
+  >({});
   const [policySetIds, setPolicySetIds] = useState<readonly string[]>([]);
   const [supportLoading, setSupportLoading] = useState(true);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -149,6 +158,18 @@ export function PublicationGroupsPage() {
       setConnections(connectionResponse.items);
       setTypes(typeResponse.items);
       setPolicySetIds(options.policySetIds);
+      const wordpressConnections = connectionResponse.items.filter(
+        (connection) => connection.extensionId === "blogmaatic.wordpress-rest" && connection.status === "active",
+      );
+      const discovered = await Promise.allSettled(
+        wordpressConnections.map(async (connection) => [
+          connection.id,
+          await client.listSourceContentTypes(connection.id),
+        ] as const),
+      );
+      setContentTypesByConnection(Object.fromEntries(
+        discovered.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
+      ));
     } catch (cause) {
       setActionError(cause instanceof Error ? cause : new Error("Publication Group support data could not be loaded"));
     } finally {
@@ -207,6 +228,13 @@ export function PublicationGroupsPage() {
     });
   }, []);
 
+  const setRouteChannel = useCallback((connectionId: string, channel: string) => {
+    setEditor((current) => current ? {
+      ...current,
+      routeChannels: { ...current.routeChannels, [connectionId]: channel },
+    } : current);
+  }, []);
+
   const toggleRoute = useCallback((connectionId: string, checked: boolean) => {
     setEditor((current) => {
       if (!current || !current.selectedConnectionIds.has(connectionId)) return current;
@@ -232,10 +260,23 @@ export function PublicationGroupsPage() {
       const routes = chosen.map((connection) => {
         const enabled = editor.enabledConnectionIds.has(connection.id);
         const existing = existingByConnection.get(connection.id);
-        if (existing) return { ...existing, enabled };
         const type = typeById.get(connection.extensionId);
         if (!type) throw new Error(`Publisher contract is unavailable for ${connection.extensionId}`);
-        return { ...defaultRoute(connection, type), enabled };
+        const fallback = existing?.destination.channel ?? type.connectionContract.defaultRoute.channel;
+        const channel = editor.routeChannels[connection.id] ?? fallback;
+        if (existing) {
+          return {
+            ...existing,
+            enabled,
+            destination: { ...existing.destination, channel },
+          };
+        }
+        const created = defaultRoute(connection, type);
+        return {
+          ...created,
+          enabled,
+          destination: { ...created.destination, channel },
+        };
       });
 
       if (editor.enabled && routes.every((route) => !route.enabled)) {
@@ -403,6 +444,24 @@ export function PublicationGroupsPage() {
                           <small>{type?.manifest.displayName ?? connection.extensionId} · {connection.status}</small>
                         </span>
                       </label>
+                      {selected && connection.extensionId === "blogmaatic.wordpress-rest" ? (
+                        <label className="field publication-group-content-type">
+                          <span>Content type</span>
+                          <select
+                            value={editor.routeChannels[connection.id] ?? editor.existingRoutes.find((route) => route.destination.connectionId === connection.id)?.destination.channel ?? type?.connectionContract.defaultRoute.channel ?? "posts"}
+                            onChange={(event) => setRouteChannel(connection.id, event.target.value)}
+                          >
+                            {(contentTypesByConnection[connection.id] ?? []).length === 0 ? (
+                              <option value={editor.routeChannels[connection.id] ?? type?.connectionContract.defaultRoute.channel ?? "posts"}>
+                                {editor.routeChannels[connection.id] ?? type?.connectionContract.defaultRoute.channel ?? "posts"}
+                              </option>
+                            ) : null}
+                            {(contentTypesByConnection[connection.id] ?? []).map((contentType) => (
+                              <option key={contentType.key} value={contentType.key}>{contentType.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : selected ? <span /> : <span />}
                       {selected ? (
                         <label className="publication-group-route-toggle">
                           <input

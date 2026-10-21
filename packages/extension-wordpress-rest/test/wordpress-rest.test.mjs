@@ -12,6 +12,8 @@ import { WordPressContentService, WordPressRestPublisher } from "../dist/index.j
 
 function makeServer() {
   const posts = new Map();
+  const pages = new Map();
+  const books = new Map();
   const tags = new Map();
   const categories = new Map();
   const media = new Map();
@@ -80,6 +82,14 @@ function makeServer() {
       body = JSON.parse(raw);
     }
 
+    if (request.method === "GET" && path === "/types") {
+      return json(response, 200, {
+        post: { slug: "post", name: "Posts", description: "Blog posts", hierarchical: false, viewable: true, rest_base: "posts", rest_namespace: "wp/v2", taxonomies: ["category", "post_tag"] },
+        page: { slug: "page", name: "Pages", description: "Static pages", hierarchical: true, viewable: true, rest_base: "pages", rest_namespace: "wp/v2", taxonomies: [] },
+        book: { slug: "book", name: "Books", description: "Custom book entries", hierarchical: false, viewable: true, rest_base: "books", rest_namespace: "wp/v2", taxonomies: ["category"] },
+        attachment: { slug: "attachment", name: "Media", viewable: false, rest_base: "media", rest_namespace: "wp/v2", taxonomies: [] },
+      });
+    }
     if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
     if (request.method === "GET" && path === "/users") {
       const search = url.searchParams.get("search")?.toLowerCase();
@@ -155,6 +165,56 @@ function makeServer() {
       if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
         posts.delete(id);
         return json(response, 200, { deleted: true, previous: current });
+      }
+    }
+
+    for (const [name, collection] of [["pages", pages], ["books", books]]) {
+      if (request.method === "GET" && path === "/" + name) {
+        const slug = url.searchParams.get("slug");
+        return json(response, 200, [...collection.values()].filter((item) => !slug || item.slug === slug));
+      }
+      if (request.method === "POST" && path === "/" + name) {
+        const id = nextPost++;
+        const item = toPost(id, body);
+        collection.set(id, item);
+        return json(response, 201, item);
+      }
+      const revisionItem = path.match(new RegExp("^/" + name + "/(\\d+)/revisions/(\\d+)$"));
+      if (revisionItem && request.method === "GET") {
+        const id = Number(revisionItem[1]);
+        const revisionId = Number(revisionItem[2]);
+        const current = collection.get(id);
+        if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+        return json(response, 200, {
+          id: revisionId, parent: id, author: current.author, date_gmt: current.date_gmt, modified_gmt: current.modified_gmt,
+          title: current.title, excerpt: current.excerpt, content: current.content,
+        });
+      }
+      const revisionList = path.match(new RegExp("^/" + name + "/(\\d+)/revisions$"));
+      if (revisionList && request.method === "GET") {
+        const id = Number(revisionList[1]);
+        const current = collection.get(id);
+        if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+        return json(response, 200, [{
+          id: 9000 + id, parent: id, author: current.author, date_gmt: current.date_gmt, modified_gmt: current.modified_gmt,
+          title: current.title, excerpt: current.excerpt, content: current.content,
+        }]);
+      }
+      const itemMatch = path.match(new RegExp("^/" + name + "/(\\d+)$"));
+      if (itemMatch) {
+        const id = Number(itemMatch[1]);
+        const current = collection.get(id);
+        if (!current) return json(response, 404, { code: "rest_post_invalid_id", message: "Not found", data: { status: 404 } });
+        if (request.method === "GET") return json(response, 200, current);
+        if (request.method === "POST") {
+          const item = toPost(id, { ...flatten(current), ...body });
+          collection.set(id, item);
+          return json(response, 200, item);
+        }
+        if (request.method === "DELETE" && url.searchParams.get("force") === "true") {
+          collection.delete(id);
+          return json(response, 200, { deleted: true, previous: current });
+        }
       }
     }
 
@@ -271,6 +331,8 @@ function makeServer() {
   return {
     server,
     posts,
+    pages,
+    books,
     tags,
     categories,
     media,
@@ -361,6 +423,21 @@ function publication(assetPath) {
       },
     },
     provenance: { author: "owner" },
+  };
+}
+
+function textPublication() {
+  const base = publication("/unused");
+  return {
+    ...base,
+    current: {
+      ...base.current,
+      content: {
+        ...base.current.content,
+        blocks: [{ id: "p1", kind: "paragraph", data: { text: "Publish by content type." } }],
+        assets: [],
+      },
+    },
   };
 }
 
@@ -1436,4 +1513,56 @@ test("WordPress canonical source publishing state rejects invalid schedule combi
   } finally {
     api.server.close();
   }
+});
+
+test("WordPress content types are discovered and source browsing is scoped by REST base", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.pages.set(71, { id: 71, author: 1, link: "http://example.test/?page_id=71", slug: "about", status: "publish", title: { raw: "About" }, excerpt: { raw: "" }, content: { raw: "<p>About this site.</p>" }, categories: [], tags: [], featured_media: 0, date_gmt: "2026-10-19T13:00:00", modified_gmt: "2026-10-19T13:30:00" });
+    api.books.set(81, { id: 81, author: 1, link: "http://example.test/?book=81", slug: "systems-thinking", status: "draft", title: { raw: "Systems Thinking" }, excerpt: { raw: "Book excerpt" }, content: { raw: "<p>Book body.</p>" }, categories: [], tags: [], featured_media: 0, date_gmt: null, modified_gmt: "2026-10-19T14:00:00" });
+    const connection = { id: "wp-1", extensionId: "blogmaatic.wordpress-rest", displayName: "Local WordPress", status: "active", settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" }, secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" }, createdAt: "2026-10-19T12:00:00.000Z", updatedAt: "2026-10-19T12:00:00.000Z" };
+    const content = new WordPressContentService(new ConnectionAuthority([connection]), new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]));
+    const types = await content.listContentTypes("wp-1");
+    assert.deepEqual(types.map((type) => [type.name, type.restBase]), [["Books", "books"], ["Pages", "pages"], ["Posts", "posts"]]);
+    assert.equal(types.some((type) => type.restBase === "media"), false);
+    assert.deepEqual((await content.list("wp-1", { contentType: "pages", perPage: 30 })).items.map((item) => item.id), [71]);
+    assert.equal((await content.get("wp-1", "71", "pages")).title, "About");
+    assert.deepEqual((await content.list("wp-1", { contentType: "books", perPage: 30 })).items.map((item) => item.id), [81]);
+    assert.equal((await content.revisions("wp-1", "81", "books"))[0].parent, 81);
+  } finally { api.server.close(); }
+});
+
+test("WordPress route channel selects content type while status remains independent", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = { id: "wp-1", extensionId: "blogmaatic.wordpress-rest", displayName: "Local WordPress", status: "active", settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" }, secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" }, createdAt: "2026-10-19T12:00:00.000Z", updatedAt: "2026-10-19T12:00:00.000Z" };
+    const publisher = new WordPressRestPublisher(new ConnectionAuthority([connection]), new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]));
+    const pageRoute = { ...route(), destination: { ...route().destination, channel: "pages" } };
+    const projection = await publisher.compile({ publication: textPublication(), route: pageRoute });
+    assert.equal(projection.payload.contentType, "pages");
+    assert.equal(projection.payload.status, "publish");
+    const delivered = await publisher.deliver({ idempotencyKey: "page-route", projection });
+    assert.equal(api.pages.has(Number(delivered.remote.id)), true);
+    assert.equal(api.posts.has(Number(delivered.remote.id)), false);
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+  } finally { api.server.close(); }
+});
+
+test("legacy custom post type setting remains the fallback for old posts-channel routes", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = { id: "wp-1", extensionId: "blogmaatic.wordpress-rest", displayName: "Legacy Books", status: "active", settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor", postTypeRestBase: "books" }, secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" }, createdAt: "2026-10-19T12:00:00.000Z", updatedAt: "2026-10-19T12:00:00.000Z" };
+    const publisher = new WordPressRestPublisher(new ConnectionAuthority([connection]), new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]));
+    const projection = await publisher.compile({ publication: textPublication(), route: route() });
+    assert.equal(projection.payload.contentType, "books");
+    assert.equal(projection.payload.status, "publish");
+    const delivered = await publisher.deliver({ idempotencyKey: "legacy-books", projection });
+    assert.equal(api.books.has(Number(delivered.remote.id)), true);
+  } finally { api.server.close(); }
 });
