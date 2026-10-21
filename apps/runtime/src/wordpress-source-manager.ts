@@ -74,6 +74,9 @@ function sourceRecord(
     categoryIds: [...post.categoryIds],
     tagIds: [...post.tagIds],
     featuredMediaId: post.featuredMediaId ?? null,
+    parentRemoteId: post.parentId === undefined ? null : String(post.parentId),
+    template: post.template ?? null,
+    menuOrder: post.menuOrder ?? 0,
   };
   return {
     connectionId,
@@ -818,6 +821,18 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            ...(snapshot.post.parentId !== undefined ||
+                snapshot.post.template !== undefined ||
+                snapshot.post.menuOrder !== undefined ? {
+              sourcePage: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                contentType,
+                parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
+                template: snapshot.post.template ?? null,
+                menuOrder: snapshot.post.menuOrder ?? 0,
+              },
+            } : {}),
             ...(snapshot.post.author === undefined ? {} : {
               sourceAuthor: {
                 extensionId: WORDPRESS_REST_EXTENSION_ID,
@@ -842,6 +857,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
               categoryIds: [...snapshot.post.categoryIds],
               tagIds: [...snapshot.post.tagIds],
               featuredMediaId: snapshot.post.featuredMediaId ?? null,
+              parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
+              template: snapshot.post.template ?? null,
+              menuOrder: snapshot.post.menuOrder ?? 0,
               importedHtml: snapshot.post.contentHtml,
             },
           },
