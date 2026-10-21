@@ -72,6 +72,8 @@ import type {
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourcePageStructureBody,
+  SourcePageStructureResult,
   SourceTaxonomyCreateBody,
   SourceTaxonomyRecord,
   SourceTaxonomyPage,
@@ -254,6 +256,16 @@ export class OperatorClient {
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
+  }
+
+  setSourcePageStructure(
+    connectionId: string,
+    input: SourcePageStructureBody,
+  ): Promise<SourcePageStructureResult> {
+    return this.#request<SourcePageStructureResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/page-structure`,
+      { method: "POST", body: input },
+    );
   }
 
   setSourcePublishingState(
