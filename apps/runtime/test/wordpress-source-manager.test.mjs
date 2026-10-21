@@ -46,6 +46,7 @@ test("WordPress import creates one canonical publication and recovers it on retr
   const ids = ["publication-id", "revision-id", "unused-id"];
 
   const content = {
+    defaultContentType() { return "posts"; },
     async importSnapshot() {
       return currentSnapshot;
     },
@@ -927,6 +928,7 @@ test("WordPress revision recovery is source-bound before remote fetch and maps s
   };
   const manager = new WordPressSourceManager({
     content: {
+      defaultContentType() { return "posts"; },
       async getRevision(connectionId, remoteId, remoteRevisionId) {
         revisionReads += 1;
         assert.equal(connectionId, "wp-main");
