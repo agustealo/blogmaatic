@@ -60,6 +60,24 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
   ) {
     throw new Error("WordPress projection authorId must be a positive integer");
   }
+  const parentIdRaw = projection.payload.parentId;
+  if (
+    parentIdRaw !== undefined &&
+    (typeof parentIdRaw !== "number" || !Number.isSafeInteger(parentIdRaw) || parentIdRaw < 0)
+  ) {
+    throw new Error("WordPress projection parentId must be a non-negative integer");
+  }
+  const templateRaw = projection.payload.template;
+  if (templateRaw !== undefined && typeof templateRaw !== "string") {
+    throw new Error("WordPress projection template must be a string");
+  }
+  const menuOrderRaw = projection.payload.menuOrder;
+  if (
+    menuOrderRaw !== undefined &&
+    (typeof menuOrderRaw !== "number" || !Number.isSafeInteger(menuOrderRaw) || menuOrderRaw < 0)
+  ) {
+    throw new Error("WordPress projection menuOrder must be a non-negative integer");
+  }
   const assetsParsed = parseAssets(projection.payload.assets);
   return {
     contentType: requiredString(projection.payload, "contentType"),
@@ -76,6 +94,9 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     ...(scheduledAt ? { scheduledAt } : {}),
     ...(featuredAssetId ? { featuredAssetId } : {}),
     ...(authorIdRaw === undefined ? {} : { authorId: authorIdRaw }),
+    ...(parentIdRaw === undefined ? {} : { parentId: parentIdRaw }),
+    ...(templateRaw === undefined ? {} : { template: templateRaw }),
+    ...(menuOrderRaw === undefined ? {} : { menuOrder: menuOrderRaw }),
     assetsParsed,
   };
 }
