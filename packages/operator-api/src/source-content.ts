@@ -477,7 +477,6 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         remoteId,
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
-        contentType: body.contentType ?? null,
       },
       now: () => clock.now(),
       execute: () => domainCall(() => manager(options).assignAuthor(connectionId, remoteId, body)),
