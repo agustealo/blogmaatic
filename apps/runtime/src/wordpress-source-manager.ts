@@ -44,6 +44,8 @@ import type {
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourcePageStructureBody,
+  SourcePageStructureResult,
   SourceTaxonomyCreateBody,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
@@ -317,6 +319,61 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
+    };
+  }
+
+  async setPageStructure(
+    connectionId: string,
+    body: SourcePageStructureBody,
+  ): Promise<SourcePageStructureResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source page structure connection does not match the publication source");
+    }
+
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("Source page content type is required");
+
+    if (body.parentRemoteId !== null) {
+      const parentRemoteId = body.parentRemoteId.trim();
+      if (!/^\d+$/.test(parentRemoteId)) {
+        throw new Error("Source page parentRemoteId must be null or a positive integer string");
+      }
+      if (current.publication.provenance.remoteId === parentRemoteId) {
+        throw new Error("A WordPress page cannot be its own parent");
+      }
+      await this.#content.get(connectionId, parentRemoteId, contentType);
+    }
+
+    const publication = await this.#publications.setSourcePageStructure(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType,
+        parentRemoteId: body.parentRemoteId === null ? null : body.parentRemoteId.trim(),
+        template: body.template,
+        menuOrder: body.menuOrder,
+      },
+    );
+    const sourcePage = publication.publication.current.content.attributes.sourcePage;
+    if (!isRecord(sourcePage)) throw new Error("Canonical source page structure was not persisted");
+    return {
+      publication,
+      contentType,
+      parentRemoteId: typeof sourcePage.parentRemoteId === "string" ? sourcePage.parentRemoteId : null,
+      template: typeof sourcePage.template === "string" ? sourcePage.template : null,
+      menuOrder: typeof sourcePage.menuOrder === "number" ? sourcePage.menuOrder : 0,
     };
   }
 
