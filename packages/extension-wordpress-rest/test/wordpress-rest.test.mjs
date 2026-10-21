@@ -205,7 +205,23 @@ function makeServer() {
     for (const [name, collection] of [["pages", pages], ["books", books]]) {
       if (request.method === "GET" && path === `/${name}`) {
         const slug = url.searchParams.get("slug");
-        return json(response, 200, [...collection.values()].filter((item) => !slug || item.slug === slug));
+        const search = url.searchParams.get("search")?.toLowerCase();
+        const page = Number(url.searchParams.get("page") ?? "1");
+        const perPage = Number(url.searchParams.get("per_page") ?? "100");
+        const filtered = [...collection.values()]
+          .filter((item) => {
+            if (slug && item.slug !== slug) return false;
+            if (!search) return true;
+            return [
+              item.title?.raw ?? "",
+              item.excerpt?.raw ?? "",
+              item.content?.raw ?? "",
+              item.slug ?? "",
+            ].some((value) => value.toLowerCase().includes(search));
+          })
+          .sort((left, right) => (right.modified_gmt ?? "").localeCompare(left.modified_gmt ?? ""));
+        const start = (page - 1) * perPage;
+        return json(response, 200, filtered.slice(start, start + perPage));
       }
       if (request.method === "POST" && path === `/${name}`) {
         const id = nextPost++;
