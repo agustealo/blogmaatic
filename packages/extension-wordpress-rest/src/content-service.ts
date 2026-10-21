@@ -142,7 +142,7 @@ function contentTypeView(
     restBase,
     ...(type.description?.trim() ? { description: type.description.trim() } : {}),
     hierarchical: type.hierarchical === true,
-    viewable: type.viewable !== false,
+    viewable: true,
     ...(type.rest_namespace?.trim() ? { restNamespace: type.rest_namespace.trim() } : {}),
     taxonomies: [...(type.taxonomies ?? [])],
   };
