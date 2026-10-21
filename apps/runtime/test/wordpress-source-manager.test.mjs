@@ -1134,3 +1134,117 @@ test("WordPress import rejects an explicit source content type that does not mat
   );
   assert.equal(snapshotReads, 0);
 });
+
+
+test("WordPress page structure verifies parent in the same content type before canonical mutation", async () => {
+  let parentReads = 0;
+  let mutationInput;
+  const current = {
+    publication: {
+      id: "publication-page",
+      createdAt: "2026-10-21T18:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-21T18:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Child Page",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            wordpress: { connectionId: "wp-main", contentType: "pages", remoteId: "55" },
+          },
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-21T18:00:00.000Z",
+    updatedAt: "2026-10-21T18:00:00.000Z",
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async get(connectionId, remoteId, contentType) {
+        parentReads += 1;
+        assert.equal(connectionId, "wp-main");
+        assert.equal(remoteId, "77");
+        assert.equal(contentType, "pages");
+        return {
+          id: 77, title: "Parent", excerpt: "", contentHtml: "", slug: "parent",
+          status: "publish", link: "https://example.test/?page_id=77",
+          categoryIds: [], tagIds: [], ownership: { managed: false },
+        };
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get(id) { return id === "publication-page" ? current : undefined; },
+      async setSourcePageStructure(publicationId, expectedVersion, state) {
+        mutationInput = state;
+        return {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                attributes: {
+                  ...current.publication.current.content.attributes,
+                  sourcePage: state,
+                },
+              },
+            },
+          },
+        };
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.setPageStructure("wp-main", {
+      publicationId: "publication-page",
+      expectedVersion: 4,
+      contentType: "pages",
+      parentRemoteId: "55",
+      template: null,
+      menuOrder: 0,
+    }),
+    /cannot be its own parent/,
+  );
+  assert.equal(parentReads, 0);
+
+  const result = await manager.setPageStructure("wp-main", {
+    publicationId: "publication-page",
+    expectedVersion: 4,
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 3,
+  });
+  assert.equal(parentReads, 1);
+  assert.equal(result.publication.version, 5);
+  assert.deepEqual(mutationInput, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 3,
+  });
+});
