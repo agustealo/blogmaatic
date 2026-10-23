@@ -12,11 +12,20 @@ export function termSlug(name: string): string {
   return slug || `term-${sha256(name).slice(0, 10)}`;
 }
 
+function requireTaxonomyRestBase(value: string): string {
+  const normalized = value.trim();
+  if (!/^[a-z0-9_-]+$/.test(normalized)) {
+    throw new Error("WordPress taxonomy REST base contains unsupported characters");
+  }
+  return normalized;
+}
+
 async function findTerm(
   client: WordPressRestClient,
-  taxonomy: "categories" | "tags",
+  taxonomy: string,
   slug: string,
 ): Promise<WordPressTermRecord | undefined> {
+  taxonomy = requireTaxonomyRestBase(taxonomy);
   const terms = await client.requestJson<readonly WordPressTermRecord[]>(
     `/${taxonomy}?context=edit&slug=${encodeURIComponent(slug)}&per_page=100`,
   );
@@ -25,13 +34,14 @@ async function findTerm(
 
 export async function findOrCreateTerm(
   client: WordPressRestClient,
-  taxonomy: "categories" | "tags",
+  taxonomy: string,
   input: {
     readonly name: string;
     readonly slug?: string;
     readonly description?: string;
   },
 ): Promise<WordPressTermRecord> {
+  taxonomy = requireTaxonomyRestBase(taxonomy);
   const name = input.name.trim();
   if (!name) throw new Error("WordPress taxonomy term name is required");
   const requestedSlug = input.slug?.trim();
@@ -60,10 +70,11 @@ export async function findOrCreateTerm(
 
 export async function resolveTerms(
   client: WordPressRestClient,
-  taxonomy: "categories" | "tags",
+  taxonomy: string,
   names: readonly string[],
   createMissing: boolean,
 ): Promise<readonly number[]> {
+  taxonomy = requireTaxonomyRestBase(taxonomy);
   const ids: number[] = [];
   for (const rawName of [...new Set(names.map((name) => name.trim()).filter(Boolean))]) {
     const slug = termSlug(rawName);
