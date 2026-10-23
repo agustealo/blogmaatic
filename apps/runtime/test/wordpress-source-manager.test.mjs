@@ -1173,6 +1173,27 @@ test("WordPress page structure verifies parent in the same content type before c
   };
   const manager = new WordPressSourceManager({
     content: {
+      async listContentTypes(connectionId) {
+        assert.equal(connectionId, "wp-main");
+        return [
+          {
+            slug: "post",
+            name: "Posts",
+            restBase: "posts",
+            hierarchical: false,
+            viewable: true,
+            taxonomies: ["category", "post_tag"],
+          },
+          {
+            slug: "page",
+            name: "Pages",
+            restBase: "pages",
+            hierarchical: true,
+            viewable: true,
+            taxonomies: [],
+          },
+        ];
+      },
       async get(connectionId, remoteId, contentType) {
         parentReads += 1;
         assert.equal(connectionId, "wp-main");
@@ -1226,6 +1247,30 @@ test("WordPress page structure verifies parent in the same content type before c
       menuOrder: 0,
     }),
     /cannot be its own parent/,
+  );
+  assert.equal(parentReads, 0);
+
+  await assert.rejects(
+    () => manager.setPageStructure("wp-main", {
+      publicationId: "publication-page",
+      expectedVersion: 4,
+      contentType: "posts",
+      parentRemoteId: null,
+      template: null,
+      menuOrder: 0,
+    }),
+    /does not support page hierarchy/,
+  );
+  await assert.rejects(
+    () => manager.setPageStructure("wp-main", {
+      publicationId: "publication-page",
+      expectedVersion: 4,
+      contentType: "missing-type",
+      parentRemoteId: null,
+      template: null,
+      menuOrder: 0,
+    }),
+    /is not available on this connection/,
   );
   assert.equal(parentReads, 0);
 
