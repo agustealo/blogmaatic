@@ -343,6 +343,15 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     const contentType = body.contentType.trim();
     if (!contentType) throw new Error("Source page content type is required");
 
+    const contentTypes = await this.#content.listContentTypes(connectionId);
+    const resolvedType = contentTypes.find((candidate) => candidate.restBase === contentType);
+    if (!resolvedType) {
+      throw new Error(`WordPress content type is not available on this connection: ${contentType}`);
+    }
+    if (!resolvedType.hierarchical) {
+      throw new Error(`WordPress content type does not support page hierarchy: ${contentType}`);
+    }
+
     if (body.parentRemoteId !== null) {
       const parentRemoteId = body.parentRemoteId.trim();
       if (!/^\d+$/.test(parentRemoteId)) {
