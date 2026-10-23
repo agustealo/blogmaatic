@@ -39,6 +39,11 @@ export interface WordPressProjectionPayload {
   readonly parentId?: number;
   readonly template?: string;
   readonly menuOrder?: number;
+  readonly password?: string;
+  readonly commentStatus?: "open" | "closed";
+  readonly pingStatus?: "open" | "closed";
+  readonly sticky?: boolean;
+  readonly format?: string;
 }
 
 export interface WordPressPostRecord {
@@ -58,6 +63,11 @@ export interface WordPressPostRecord {
   readonly parent?: number;
   readonly template?: string;
   readonly menu_order?: number;
+  readonly password?: string;
+  readonly comment_status?: "open" | "closed";
+  readonly ping_status?: "open" | "closed";
+  readonly sticky?: boolean;
+  readonly format?: string;
 }
 
 export interface WordPressMediaRecord {
@@ -174,6 +184,7 @@ export interface WordPressContentTypeRecord {
   readonly rest_base?: string;
   readonly rest_namespace?: string;
   readonly taxonomies?: readonly string[];
+  readonly supports?: Readonly<Record<string, boolean>>;
 }
 
 export interface WordPressContentTypeView {
@@ -185,6 +196,7 @@ export interface WordPressContentTypeView {
   readonly viewable: boolean;
   readonly restNamespace?: string;
   readonly taxonomies: readonly string[];
+  readonly supports: readonly string[];
 }
 
 export interface WordPressPostQuery {
@@ -219,6 +231,11 @@ export interface WordPressPostView {
   readonly parentId?: number;
   readonly template?: string;
   readonly menuOrder?: number;
+  readonly password?: string;
+  readonly commentStatus?: "open" | "closed";
+  readonly pingStatus?: "open" | "closed";
+  readonly sticky?: boolean;
+  readonly format?: string;
   readonly ownership: WordPressManagedOwnership;
 }
 
