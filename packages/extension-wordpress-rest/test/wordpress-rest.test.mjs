@@ -1672,3 +1672,88 @@ test("WordPress Page structure compiles, delivers, clears, and detects remote dr
     api.server.close();
   }
 });
+
+
+test("WordPress Page structure applies only to the matching source connection and content type", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-21T18:00:00.000Z",
+      updatedAt: "2026-10-21T18:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-1", displayName: "WordPress One" },
+        { ...baseConnection, id: "wp-2", displayName: "WordPress Two" },
+      ]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const publication = {
+      id: "publication-page-isolation",
+      createdAt: "2026-10-21T18:00:00.000Z",
+      status: "approved",
+      current: {
+        id: "revision-page-isolation",
+        ordinal: 1,
+        createdAt: "2026-10-21T18:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Page isolation",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            sourcePage: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "pages",
+              parentRemoteId: "77",
+              template: "templates/landing.php",
+              menuOrder: 8,
+            },
+          },
+        },
+      },
+      provenance: { source: "wordpress" },
+    };
+
+    const matching = {
+      ...route(),
+      destination: { ...route().destination, connectionId: "wp-1", channel: "pages" },
+    };
+    const matchingProjection = await publisher.compile({ publication, route: matching });
+    assert.equal(matchingProjection.payload.parentId, 77);
+    assert.equal(matchingProjection.payload.template, "templates/landing.php");
+    assert.equal(matchingProjection.payload.menuOrder, 8);
+
+    const otherConnection = {
+      ...matching,
+      destination: { ...matching.destination, connectionId: "wp-2" },
+    };
+    const otherConnectionProjection = await publisher.compile({ publication, route: otherConnection });
+    assert.equal(otherConnectionProjection.payload.parentId, undefined);
+    assert.equal(otherConnectionProjection.payload.template, undefined);
+    assert.equal(otherConnectionProjection.payload.menuOrder, undefined);
+
+    const otherType = {
+      ...matching,
+      destination: { ...matching.destination, channel: "posts" },
+    };
+    const otherTypeProjection = await publisher.compile({ publication, route: otherType });
+    assert.equal(otherTypeProjection.payload.parentId, undefined);
+    assert.equal(otherTypeProjection.payload.template, undefined);
+    assert.equal(otherTypeProjection.payload.menuOrder, undefined);
+  } finally {
+    api.server.close();
+  }
+});
