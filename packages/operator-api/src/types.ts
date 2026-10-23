@@ -360,6 +360,43 @@ export interface SourceAssetUploadInput {
   readonly title?: string;
 }
 
+export interface SourceTaxonomyDefinition {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly key: string;
+  readonly label: string;
+  readonly hierarchical: boolean;
+  readonly contentTypes: readonly string[];
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceCustomTaxonomyQuery {
+  readonly contentType: string;
+  readonly search?: string;
+  readonly page?: number;
+  readonly limit?: number;
+}
+
+export interface SourceCustomTaxonomyCreateBody {
+  readonly contentType: string;
+  readonly name: string;
+  readonly slug?: string;
+  readonly description?: string;
+}
+
+export interface SourceTaxonomySelectionBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType: string;
+  readonly names: readonly string[];
+}
+
+export interface SourceTaxonomySelectionResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly taxonomyKey: string;
+  readonly names: readonly string[];
+}
+
 export type SourceTaxonomyKind = "category" | "tag";
 
 export interface SourceTaxonomyQuery {
@@ -414,6 +451,22 @@ export interface OperatorSourceContentManager {
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;
+  listTaxonomyDefinitions(connectionId: string, contentType: string): Promise<readonly SourceTaxonomyDefinition[]>;
+  listCustomTaxonomy(
+    connectionId: string,
+    taxonomyKey: string,
+    query: SourceCustomTaxonomyQuery,
+  ): Promise<SourceTaxonomyPage>;
+  createCustomTaxonomyTerm(
+    connectionId: string,
+    taxonomyKey: string,
+    body: SourceCustomTaxonomyCreateBody,
+  ): Promise<SourceTaxonomyRecord>;
+  setTaxonomySelection(
+    connectionId: string,
+    taxonomyKey: string,
+    body: SourceTaxonomySelectionBody,
+  ): Promise<SourceTaxonomySelectionResult>;
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   createTaxonomy(connectionId: string, body: SourceTaxonomyCreateBody): Promise<SourceTaxonomyRecord>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
