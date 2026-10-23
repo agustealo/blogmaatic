@@ -46,6 +46,11 @@ function makeServer() {
     parent: post.parent,
     template: post.template,
     menu_order: post.menu_order,
+    password: post.password,
+    comment_status: post.comment_status,
+    ping_status: post.ping_status,
+    sticky: post.sticky,
+    format: post.format,
     date_gmt: post.date_gmt,
   });
   const toPost = (id, body) => {
@@ -65,6 +70,11 @@ function makeServer() {
       parent: body.parent ?? 0,
       template: body.template ?? "",
       menu_order: body.menu_order ?? 0,
+      password: body.password ?? "",
+      comment_status: body.comment_status ?? "open",
+      ping_status: body.ping_status ?? "open",
+      sticky: body.sticky ?? false,
+      format: body.format ?? "standard",
       date_gmt: body.date_gmt ?? null,
       modified_gmt: `2026-09-22T18:00:${String(modification).padStart(2, "0")}`,
     };
@@ -90,9 +100,9 @@ function makeServer() {
 
     if (request.method === "GET" && path === "/types") {
       return json(response, 200, {
-        post: { slug: "post", name: "Posts", description: "Blog posts", hierarchical: false, viewable: true, rest_base: "posts", rest_namespace: "wp/v2", taxonomies: ["category", "post_tag"] },
-        page: { slug: "page", name: "Pages", description: "Static pages", hierarchical: true, viewable: true, rest_base: "pages", rest_namespace: "wp/v2", taxonomies: [] },
-        book: { slug: "book", name: "Books", description: "Custom book entries", hierarchical: false, viewable: true, rest_base: "books", rest_namespace: "wp/v2", taxonomies: ["category"] },
+        post: { slug: "post", name: "Posts", description: "Blog posts", hierarchical: false, viewable: true, rest_base: "posts", rest_namespace: "wp/v2", taxonomies: ["category", "post_tag"], supports: { title: true, editor: true, comments: true, "post-formats": true } },
+        page: { slug: "page", name: "Pages", description: "Static pages", hierarchical: true, viewable: true, rest_base: "pages", rest_namespace: "wp/v2", taxonomies: [], supports: { title: true, editor: true, comments: true, "page-attributes": true } },
+        book: { slug: "book", name: "Books", description: "Custom book entries", hierarchical: false, viewable: true, rest_base: "books", rest_namespace: "wp/v2", taxonomies: ["category"], supports: { title: true, editor: true } },
         attachment: { slug: "attachment", name: "Media", viewable: false, rest_base: "media", rest_namespace: "wp/v2", taxonomies: [] },
       });
     }
@@ -1753,6 +1763,112 @@ test("WordPress Page structure applies only to the matching source connection an
     assert.equal(otherTypeProjection.payload.parentId, undefined);
     assert.equal(otherTypeProjection.payload.template, undefined);
     assert.equal(otherTypeProjection.payload.menuOrder, undefined);
+  } finally {
+    api.server.close();
+  }
+});
+
+
+test("WordPress native editorial options deliver drift and remain source-isolated", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: { siteUrl: `http://127.0.0.1:${port}`, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-23T15:00:00.000Z",
+      updatedAt: "2026-10-23T15:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-1", displayName: "WordPress One" },
+        { ...baseConnection, id: "wp-2", displayName: "WordPress Two" },
+      ]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const publication = {
+      id: "publication-editorial",
+      createdAt: "2026-10-23T15:00:00.000Z",
+      status: "approved",
+      current: {
+        id: "revision-editorial",
+        ordinal: 1,
+        createdAt: "2026-10-23T15:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Editorial options",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            sourceEditorial: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "posts",
+              password: "",
+              commentStatus: "closed",
+              pingStatus: "open",
+              sticky: true,
+              format: "quote",
+            },
+          },
+        },
+      },
+      provenance: { source: "wordpress" },
+    };
+
+    const projection = await publisher.compile({ publication, route: route() });
+    assert.equal(projection.payload.password, "");
+    assert.equal(projection.payload.commentStatus, "closed");
+    assert.equal(projection.payload.pingStatus, "open");
+    assert.equal(projection.payload.sticky, true);
+    assert.equal(projection.payload.format, "quote");
+
+    const delivered = await publisher.deliver({ idempotencyKey: "editorial-options", projection });
+    const saved = api.posts.get(Number(delivered.remote.id));
+    assert.equal(saved.password, "");
+    assert.equal(saved.comment_status, "closed");
+    assert.equal(saved.ping_status, "open");
+    assert.equal(saved.sticky, true);
+    assert.equal(saved.format, "quote");
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+    saved.comment_status = "open";
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+
+    const otherRoute = { ...route(), destination: { ...route().destination, connectionId: "wp-2" } };
+    const other = await publisher.compile({ publication, route: otherRoute });
+    assert.equal(other.payload.password, undefined);
+    assert.equal(other.payload.sticky, undefined);
+    assert.equal(other.payload.format, undefined);
+
+    const invalid = {
+      ...publication,
+      current: {
+        ...publication.current,
+        id: "revision-editorial-invalid",
+        content: {
+          ...publication.current.content,
+          attributes: {
+            sourceEditorial: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "posts",
+              password: "locked",
+              sticky: true,
+            },
+          },
+        },
+      },
+    };
+    await assert.rejects(
+      publisher.compile({ publication: invalid, route: route() }),
+      /cannot be password protected/,
+    );
   } finally {
     api.server.close();
   }

@@ -331,6 +331,182 @@ function wordpressContentType(entry: PublicationWorkspaceEntry): string | undefi
   return undefined;
 }
 
+function canonicalSourceEditorial(entry: PublicationWorkspaceEntry): {
+  readonly password: string;
+  readonly commentStatus?: "open" | "closed";
+  readonly pingStatus?: "open" | "closed";
+  readonly sticky?: boolean;
+  readonly format?: string;
+} {
+  const value = entry.publication.current.content.attributes.sourceEditorial;
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Readonly<Record<string, unknown>>;
+    return {
+      password: typeof record.password === "string" ? record.password : "",
+      ...(record.commentStatus === "open" || record.commentStatus === "closed" ? { commentStatus: record.commentStatus } : {}),
+      ...(record.pingStatus === "open" || record.pingStatus === "closed" ? { pingStatus: record.pingStatus } : {}),
+      ...(typeof record.sticky === "boolean" ? { sticky: record.sticky } : {}),
+      ...(typeof record.format === "string" ? { format: record.format } : {}),
+    };
+  }
+  return { password: "" };
+}
+
+function sourceTypeSupports(type: SourceContentTypeRecord | null): readonly string[] {
+  const value = type?.metadata.supports;
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function SourceEditorialOptionsPanel({
+  entry,
+  connectionId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const contentType = wordpressContentType(entry);
+  const canonical = canonicalSourceEditorial(entry);
+  const [type, setType] = useState<SourceContentTypeRecord | null>(null);
+  const [password, setPassword] = useState(canonical.password);
+  const [commentStatus, setCommentStatus] = useState<"open" | "closed">(canonical.commentStatus ?? "open");
+  const [pingStatus, setPingStatus] = useState<"open" | "closed">(canonical.pingStatus ?? "open");
+  const [sticky, setSticky] = useState(canonical.sticky ?? false);
+  const [format, setFormat] = useState(canonical.format ?? "standard");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const next = canonicalSourceEditorial(entry);
+    setPassword(next.password);
+    setCommentStatus(next.commentStatus ?? "open");
+    setPingStatus(next.pingStatus ?? "open");
+    setSticky(next.sticky ?? false);
+    setFormat(next.format ?? "standard");
+  }, [entry.publication.current.id]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void client.listSourceContentTypes(connectionId)
+      .then((items) => {
+        if (!active) return;
+        setType(contentType ? items.find((item) => item.key === contentType) ?? null : null);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress content type could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connectionId, contentType]);
+
+  if (!loading && (!type || !contentType)) return null;
+
+  const supports = sourceTypeSupports(type);
+  const supportsDiscussion = supports.includes("comments");
+  const supportsFormats = supports.includes("post-formats");
+  const wordpressTypeSlug = type?.metadata.wordpressTypeSlug;
+  const supportsSticky = wordpressTypeSlug === "post";
+
+  const save = async () => {
+    if (!contentType) return;
+    if (sticky && password.length > 0) {
+      setError(new Error("WordPress does not allow a sticky post to be password protected."));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.setSourceEditorialOptions(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        contentType,
+        password,
+        ...(supportsDiscussion ? { commentStatus, pingStatus } : {}),
+        ...(supportsSticky ? { sticky } : {}),
+        ...(supportsFormats ? { format } : {}),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress editorial options could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dirty =
+    password !== canonical.password ||
+    (supportsDiscussion && (commentStatus !== (canonical.commentStatus ?? "open") || pingStatus !== (canonical.pingStatus ?? "open"))) ||
+    (supportsSticky && sticky !== (canonical.sticky ?? false)) ||
+    (supportsFormats && format !== (canonical.format ?? "standard"));
+
+  return (
+    <Panel title="WordPress editorial options" meta="Native access, discussion, and post presentation" className="source-editorial-panel">
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : (
+        <div className="source-editorial-controls">
+          <label className="field">
+            <span>Post password</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="No password"
+              disabled={busy}
+            />
+            <small>Leave empty for public access. The password is not written to audit logs.</small>
+          </label>
+          {supportsDiscussion ? (
+            <>
+              <label className="field">
+                <span>Comments</span>
+                <select value={commentStatus} onChange={(event) => setCommentStatus(event.target.value as "open" | "closed")} disabled={busy}>
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Pingbacks & trackbacks</span>
+                <select value={pingStatus} onChange={(event) => setPingStatus(event.target.value as "open" | "closed")} disabled={busy}>
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </label>
+            </>
+          ) : null}
+          {supportsFormats ? (
+            <label className="field">
+              <span>Post format</span>
+              <select value={format} onChange={(event) => setFormat(event.target.value)} disabled={busy}>
+                {["standard", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"].map((value) => (
+                  <option value={value} key={value}>{value[0]?.toUpperCase()}{value.slice(1)}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {supportsSticky ? (
+            <label className="source-editorial-toggle">
+              <input type="checkbox" checked={sticky} onChange={(event) => setSticky(event.target.checked)} disabled={busy} />
+              <span><strong>Sticky post</strong><small>Keep this post pinned on the WordPress front page where the theme supports it.</small></span>
+            </label>
+          ) : null}
+          <button className="button button--primary" type="button" onClick={() => void save()} disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save editorial options"}
+          </button>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function canonicalSourcePage(entry: PublicationWorkspaceEntry): {
   readonly parentRemoteId: string | null;
   readonly template: string | null;
@@ -1769,6 +1945,16 @@ export function PublicationsPage() {
           {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
           typeof activeEntry.publication.provenance.connectionId === "string" ? (
             <>
+              <SourceEditorialOptionsPanel
+                entry={activeEntry}
+                connectionId={activeEntry.publication.provenance.connectionId}
+                onUpdated={(next) => {
+                  setActiveEntry(next);
+                  setEditor(editorForEntry(next));
+                  setPendingPublish(false);
+                  setChangeNonce((value) => value + 1);
+                }}
+              />
               <SourcePageStructurePanel
                 entry={activeEntry}
                 connectionId={activeEntry.publication.provenance.connectionId}

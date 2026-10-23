@@ -472,3 +472,75 @@ test("canonical source page structure is immutable idempotent and source/type bo
   );
   assert.equal(current().version, 3);
 });
+
+
+test("canonical source editorial options are immutable idempotent source-bound and reject sticky password conflicts", async () => {
+  const publication = importedPublication();
+  publication.current.content.attributes.wordpress.contentType = "posts";
+  const { manager, current } = managerWith(publication);
+
+  const changed = await manager.setSourceEditorialOptions("publication-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "posts",
+    password: "",
+    commentStatus: "open",
+    pingStatus: "closed",
+    sticky: true,
+    format: "quote",
+  });
+  assert.equal(changed.version, 2);
+  assert.equal(changed.publication.current.ordinal, 2);
+  assert.deepEqual(changed.publication.current.content.attributes.sourceEditorial, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "posts",
+    password: "",
+    commentStatus: "open",
+    pingStatus: "closed",
+    sticky: true,
+    format: "quote",
+  });
+
+  const retry = await manager.setSourceEditorialOptions("publication-wp", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "posts",
+    password: "",
+    commentStatus: "open",
+    pingStatus: "closed",
+    sticky: true,
+    format: "quote",
+  });
+  assert.equal(retry.version, 2);
+
+  await assert.rejects(
+    () => manager.setSourceEditorialOptions("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      contentType: "posts",
+      password: "secret",
+      sticky: true,
+    }),
+    /cannot be password protected/,
+  );
+  await assert.rejects(
+    () => manager.setSourceEditorialOptions("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-other",
+      contentType: "posts",
+      password: "",
+    }),
+    /does not match the publication source/,
+  );
+  await assert.rejects(
+    () => manager.setSourceEditorialOptions("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      contentType: "pages",
+      password: "",
+    }),
+    /content type does not match/,
+  );
+  assert.equal(current().version, 2);
+});

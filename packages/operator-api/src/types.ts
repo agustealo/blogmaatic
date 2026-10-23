@@ -272,6 +272,27 @@ export interface SourcePublishingStateResult {
   readonly scheduledAt?: string;
 }
 
+export interface SourceEditorialOptionsBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType: string;
+  readonly password: string;
+  readonly commentStatus?: "open" | "closed";
+  readonly pingStatus?: "open" | "closed";
+  readonly sticky?: boolean;
+  readonly format?: string;
+}
+
+export interface SourceEditorialOptionsResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly contentType: string;
+  readonly passwordProtected: boolean;
+  readonly commentStatus?: "open" | "closed";
+  readonly pingStatus?: "open" | "closed";
+  readonly sticky?: boolean;
+  readonly format?: string;
+}
+
 export interface SourcePageStructureBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
@@ -388,6 +409,7 @@ export interface OperatorSourceContentManager {
   listAuthors(connectionId: string, query?: SourceAuthorQuery): Promise<SourceAuthorPage>;
   assignAuthor(connectionId: string, remoteId: string, body: SourceAuthorAssignBody): Promise<SourceAuthorAssignResult>;
   setPublishingState(connectionId: string, body: SourcePublishingStateBody): Promise<SourcePublishingStateResult>;
+  setEditorialOptions(connectionId: string, body: SourceEditorialOptionsBody): Promise<SourceEditorialOptionsResult>;
   setPageStructure(connectionId: string, body: SourcePageStructureBody): Promise<SourcePageStructureResult>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;

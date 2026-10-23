@@ -778,3 +778,32 @@ a.data-table__row:hover { background: var(--surface-2); }
   .source-page-parent { grid-column: auto; grid-template-columns: 1fr; }
   .source-page-controls > .button, .source-page-parent > .button { width: 100%; }
 }
+
+
+/* Native WordPress editorial options */
+.source-editorial-controls {
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.source-editorial-controls > .button { min-height: 42px; justify-self: start; }
+.source-editorial-toggle {
+  min-height: 42px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.source-editorial-toggle input { margin-top: 3px; }
+.source-editorial-toggle span { display: grid; gap: 3px; }
+.source-editorial-toggle small { color: var(--muted); font-size: .74rem; line-height: 1.4; }
+
+@media (max-width: 760px) {
+  .source-editorial-controls { grid-template-columns: 1fr; }
+  .source-editorial-controls > .button { width: 100%; }
+}

@@ -92,6 +92,24 @@ Imported WordPress posts preserve their native status. Scheduled imports normali
 
 This state does not replace Blogmaatic Automation schedules. Automation determines when Blogmaatic runs; source-native state determines what WordPress status/date Blogmaatic asks WordPress to store when the matching route is compiled.
 
+## Native WordPress editorial options
+
+WordPress-native access, discussion, and presentation fields are modeled separately from Blogmaatic workflow status. A matching source Publication may carry `PublicationIR.attributes.sourceEditorial` with the WordPress connection, content type, post password, discussion state, sticky state, and post format.
+
+Capability rules come from authenticated WordPress content-type discovery rather than UI assumptions:
+
+- password protection is modeled for the source object
+- comments and pingbacks/trackbacks are exposed only when the type advertises `comments` support
+- post format is exposed only when the type advertises `post-formats`
+- sticky state is limited to WordPress's native `post` type
+- a sticky post with a non-empty password is rejected before delivery
+
+The raw content password is intentionally absent from source-list metadata, audit evidence, and Destination Preview. Source lists expose only `passwordProtected`; the generic preview sanitizer removes password-shaped projection fields. The canonical source revision retains the password because deterministic republishing must be able to reproduce the intended WordPress access state.
+
+Imported WordPress content preserves supported editorial values from canonical revision 1. Saving Editorial options creates a new immutable Publication revision. The source state is applied only when extension, connection, and REST content type match the publishing destination.
+
+The semantic projection fingerprint and verified remote-state hash include password state, comment status, ping status, sticky state, and post format. Out-of-band wp-admin changes to those fields therefore become drift.
+
 ## Native WordPress Page structure
 
 Hierarchical WordPress content types such as Pages may carry source-bound `PublicationIR.attributes.sourcePage` metadata with:
@@ -198,6 +216,11 @@ The verified remote-state hash includes:
 - parent page id
 - page template
 - menu order
+- password state
+- comment status
+- ping status
+- sticky state
+- post format
 
 An out-of-band edit therefore becomes drift even if the post id and ownership marker remain present.
 

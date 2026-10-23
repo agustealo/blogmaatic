@@ -40,6 +40,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceEditorialOptionsBody,
+  SourceEditorialOptionsResult,
   SourceRevisionRestoreBody,
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
@@ -79,6 +81,11 @@ function sourceRecord(
     parentRemoteId: post.parentId === undefined ? null : String(post.parentId),
     template: post.template ?? null,
     menuOrder: post.menuOrder ?? 0,
+    passwordProtected: Boolean(post.password),
+    commentStatus: post.commentStatus ?? null,
+    pingStatus: post.pingStatus ?? null,
+    sticky: post.sticky ?? null,
+    format: post.format ?? null,
   };
   return {
     connectionId,
@@ -114,6 +121,7 @@ function sourceContentTypeRecord(
       wordpressTypeSlug: type.slug,
       restNamespace: type.restNamespace ?? null,
       taxonomies: [...type.taxonomies],
+      ...(type.supports === undefined ? {} : { supports: [...type.supports] }),
     },
   };
 }
@@ -319,6 +327,82 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
+    };
+  }
+
+  async setEditorialOptions(
+    connectionId: string,
+    body: SourceEditorialOptionsBody,
+  ): Promise<SourceEditorialOptionsResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source editorial options connection does not match the publication source");
+    }
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("Source editorial content type is required");
+    const wordpress = current.publication.current.content.attributes.wordpress;
+    if (!isRecord(wordpress) || wordpress.contentType !== contentType) {
+      throw new Error("Source editorial options content type does not match the publication source");
+    }
+
+    const contentTypes = await this.#content.listContentTypes(connectionId);
+    const resolvedType = contentTypes.find((candidate) => candidate.restBase === contentType);
+    if (!resolvedType) throw new Error(`WordPress content type is not available on this connection: ${contentType}`);
+
+    const supportsComments = resolvedType.supports.includes("comments");
+    if (!supportsComments && (body.commentStatus !== undefined || body.pingStatus !== undefined)) {
+      throw new Error(`WordPress content type does not support discussion options: ${contentType}`);
+    }
+    if (body.commentStatus !== undefined && body.commentStatus !== "open" && body.commentStatus !== "closed") {
+      throw new Error("WordPress commentStatus must be open or closed");
+    }
+    if (body.pingStatus !== undefined && body.pingStatus !== "open" && body.pingStatus !== "closed") {
+      throw new Error("WordPress pingStatus must be open or closed");
+    }
+    if (body.sticky !== undefined && resolvedType.slug !== "post") {
+      throw new Error(`WordPress content type does not support sticky state: ${contentType}`);
+    }
+    const formats = new Set(["standard", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"]);
+    const format = body.format?.trim();
+    if (format !== undefined) {
+      if (!resolvedType.supports.includes("post-formats")) {
+        throw new Error(`WordPress content type does not support post formats: ${contentType}`);
+      }
+      if (!formats.has(format)) throw new Error("Unsupported WordPress post format");
+    }
+    if (body.sticky === true && body.password.length > 0) {
+      throw new Error("WordPress sticky posts cannot be password protected");
+    }
+
+    const publication = await this.#publications.setSourceEditorialOptions(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType,
+        password: body.password,
+        ...(body.commentStatus === undefined ? {} : { commentStatus: body.commentStatus }),
+        ...(body.pingStatus === undefined ? {} : { pingStatus: body.pingStatus }),
+        ...(body.sticky === undefined ? {} : { sticky: body.sticky }),
+        ...(format === undefined ? {} : { format }),
+      },
+    );
+    return {
+      publication,
+      contentType,
+      passwordProtected: body.password.length > 0,
+      ...(body.commentStatus === undefined ? {} : { commentStatus: body.commentStatus }),
+      ...(body.pingStatus === undefined ? {} : { pingStatus: body.pingStatus }),
+      ...(body.sticky === undefined ? {} : { sticky: body.sticky }),
+      ...(format === undefined ? {} : { format }),
     };
   }
 
@@ -887,6 +971,22 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            ...(snapshot.post.password !== undefined ||
+                snapshot.post.commentStatus !== undefined ||
+                snapshot.post.pingStatus !== undefined ||
+                snapshot.post.sticky !== undefined ||
+                snapshot.post.format !== undefined ? {
+              sourceEditorial: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                contentType,
+                password: snapshot.post.password ?? "",
+                ...(snapshot.post.commentStatus === undefined ? {} : { commentStatus: snapshot.post.commentStatus }),
+                ...(snapshot.post.pingStatus === undefined ? {} : { pingStatus: snapshot.post.pingStatus }),
+                ...(snapshot.post.sticky === undefined ? {} : { sticky: snapshot.post.sticky }),
+                ...(snapshot.post.format === undefined ? {} : { format: snapshot.post.format }),
+              },
+            } : {}),
             ...(snapshot.post.parentId !== undefined ||
                 snapshot.post.template !== undefined ||
                 snapshot.post.menuOrder !== undefined ? {
@@ -926,6 +1026,11 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
               parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
               template: snapshot.post.template ?? null,
               menuOrder: snapshot.post.menuOrder ?? 0,
+              passwordProtected: Boolean(snapshot.post.password),
+              commentStatus: snapshot.post.commentStatus ?? null,
+              pingStatus: snapshot.post.pingStatus ?? null,
+              sticky: snapshot.post.sticky ?? null,
+              format: snapshot.post.format ?? null,
               importedHtml: snapshot.post.contentHtml,
             },
           },
