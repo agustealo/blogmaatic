@@ -40,6 +40,8 @@ import type {
   SourceContentQuery,
   SourceContentRecord,
   SourceContentRevision,
+  SourceEditorialOptionsBody,
+  SourceEditorialOptionsResult,
   SourceRevisionRestoreBody,
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
