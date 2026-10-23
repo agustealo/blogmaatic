@@ -254,7 +254,7 @@ export interface WordPressPostView {
   readonly modifiedGmt?: string;
   readonly categoryIds: readonly number[];
   readonly tagIds: readonly number[];
-  readonly customTaxonomyIds: Readonly<Record<string, readonly number[]>>;
+  readonly customTaxonomyIds?: Readonly<Record<string, readonly number[]>>;
   readonly featuredMediaId?: number;
   readonly parentId?: number;
   readonly template?: string;
