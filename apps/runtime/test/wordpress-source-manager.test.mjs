@@ -13,6 +13,11 @@ function snapshot(managed = false, publicationId, routeId, native = {}) {
       contentHtml: "<h2>Imported heading</h2><p>Imported body.</p>",
       slug: "existing-wordpress-article",
       status: native.status ?? "publish",
+      ...(native.password === undefined ? {} : { password: native.password }),
+      ...(native.commentStatus === undefined ? {} : { commentStatus: native.commentStatus }),
+      ...(native.pingStatus === undefined ? {} : { pingStatus: native.pingStatus }),
+      ...(native.sticky === undefined ? {} : { sticky: native.sticky }),
+      ...(native.format === undefined ? {} : { format: native.format }),
       link: "https://example.test/?p=55",
       dateGmt: native.dateGmt ?? "2026-10-04T12:00:00",
       modifiedGmt: "2026-10-04T12:30:00",
@@ -36,7 +41,15 @@ function snapshot(managed = false, publicationId, routeId, native = {}) {
 }
 
 test("WordPress import creates one canonical publication and recovers it on retry", async () => {
-  const importedNative = { status: "future", dateGmt: "2026-11-01T18:30:00" };
+  const importedNative = {
+    status: "future",
+    dateGmt: "2026-11-01T18:30:00",
+    password: "",
+    commentStatus: "open",
+    pingStatus: "closed",
+    sticky: true,
+    format: "quote",
+  };
   let currentSnapshot = snapshot(false, undefined, undefined, importedNative);
   let stored;
   let adoptCount = 0;
@@ -157,6 +170,16 @@ test("WordPress import creates one canonical publication and recovers it on retr
     connectionId: "wp-main",
     status: "future",
     scheduledAt: "2026-11-01T18:30:00.000Z",
+  });
+  assert.deepEqual(first.publication.publication.current.content.attributes.sourceEditorial, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "posts",
+    password: "",
+    commentStatus: "open",
+    pingStatus: "closed",
+    sticky: true,
+    format: "quote",
   });
   assert.equal(first.remote.managed, true);
   assert.equal(adoptCount, 1);
@@ -1416,5 +1439,145 @@ test("WordPress Page import preserves native parent template and menu order from
       menuOrder: result.publication.publication.current.content.attributes.wordpress.menuOrder,
     },
     { parentRemoteId: "77", template: "templates/landing.php", menuOrder: 5 },
+  );
+});
+
+
+test("WordPress editorial options validate live type capabilities before canonical mutation", async () => {
+  let mutations = 0;
+  const current = {
+    publication: {
+      id: "publication-wp",
+      createdAt: "2026-10-23T15:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-23T15:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Imported",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: { wordpress: { contentType: "posts" } },
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-23T15:00:00.000Z",
+    updatedAt: "2026-10-23T15:00:00.000Z",
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async listContentTypes() {
+        return [
+          {
+            slug: "post",
+            name: "Posts",
+            restBase: "posts",
+            hierarchical: false,
+            viewable: true,
+            taxonomies: ["category", "post_tag"],
+            supports: ["comments", "post-formats"],
+          },
+          {
+            slug: "book",
+            name: "Books",
+            restBase: "books",
+            hierarchical: false,
+            viewable: true,
+            taxonomies: [],
+            supports: [],
+          },
+        ];
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get() { return current; },
+      async setSourceEditorialOptions(publicationId, expectedVersion, state) {
+        mutations += 1;
+        assert.equal(publicationId, "publication-wp");
+        assert.equal(expectedVersion, 4);
+        return { ...current, version: 5, publication: { ...current.publication, current: { ...current.publication.current, id: "revision-2", ordinal: 2, content: { ...current.publication.current.content, attributes: { ...current.publication.current.content.attributes, sourceEditorial: state } } } } };
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.setEditorialOptions("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "posts",
+      password: "locked",
+      sticky: true,
+    }),
+    /cannot be password protected/,
+  );
+  assert.equal(mutations, 0);
+
+  const result = await manager.setEditorialOptions("wp-main", {
+    publicationId: "publication-wp",
+    expectedVersion: 4,
+    contentType: "posts",
+    password: "",
+    commentStatus: "closed",
+    pingStatus: "open",
+    sticky: true,
+    format: "gallery",
+  });
+  assert.equal(result.publication.version, 5);
+  assert.equal(result.passwordProtected, false);
+  assert.equal(result.sticky, true);
+  assert.equal(result.format, "gallery");
+  assert.equal(mutations, 1);
+
+  const bookCurrent = structuredClone(current);
+  bookCurrent.publication.current.content.attributes.wordpress.contentType = "books";
+  const bookManager = new WordPressSourceManager({
+    content: {
+      async listContentTypes() {
+        return [{ slug: "book", name: "Books", restBase: "books", hierarchical: false, viewable: true, taxonomies: [], supports: [] }];
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get() { return bookCurrent; },
+      async setSourceEditorialOptions() { throw new Error("must not mutate"); },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+  await assert.rejects(
+    () => bookManager.setEditorialOptions("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "books",
+      password: "",
+      commentStatus: "open",
+    }),
+    /does not support discussion options/,
+  );
+  await assert.rejects(
+    () => bookManager.setEditorialOptions("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "books",
+      password: "",
+      sticky: false,
+    }),
+    /does not support sticky state/,
   );
 });
