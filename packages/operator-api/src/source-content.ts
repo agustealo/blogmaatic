@@ -13,6 +13,7 @@ import type {
   SourceContentImportBody,
   SourceRevisionRestoreBody,
   SourcePublishingStateBody,
+  SourcePageStructureBody,
   SourceTaxonomyCreateBody,
   SourceTaxonomyQuery,
   SourceContentQuery,
@@ -352,6 +353,60 @@ function parseRevisionRestoreBody(body: unknown): SourceRevisionRestoreBody {
   };
 }
 
+function parsePageStructureBody(body: unknown): SourcePageStructureBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set([
+    "publicationId",
+    "expectedVersion",
+    "contentType",
+    "parentRemoteId",
+    "template",
+    "menuOrder",
+  ]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+
+  const parentRemoteId = input.parentRemoteId;
+  if (
+    parentRemoteId !== null &&
+    (typeof parentRemoteId !== "string" || !/^\d+$/.test(parentRemoteId.trim()))
+  ) {
+    throw new OperatorRequestError("parentRemoteId must be null or a positive integer string");
+  }
+  const template = input.template;
+  if (template !== null && typeof template !== "string") {
+    throw new OperatorRequestError("template must be null or a string");
+  }
+  if (typeof template === "string" && template.length > 500) {
+    throw new OperatorRequestError("template must not exceed 500 characters");
+  }
+  if (!Number.isSafeInteger(input.menuOrder) || (input.menuOrder as number) < 0) {
+    throw new OperatorRequestError("menuOrder must be a non-negative integer");
+  }
+
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    contentType,
+    parentRemoteId: parentRemoteId === null ? null : (parentRemoteId as string).trim(),
+    template: template === null ? null : (template as string).trim() || null,
+    menuOrder: input.menuOrder as number,
+  };
+}
+
 function parsePublishingStateBody(body: unknown): SourcePublishingStateBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -422,6 +477,41 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     { parseAs: "buffer" },
     (_request, body, done) => done(null, body),
   );
+
+  app.post("/v1/connections/:connectionId/page-structure", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parsePageStructureBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-page-structure.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        parentRemoteId: body.parentRemoteId,
+        template: body.template,
+        menuOrder: body.menuOrder,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setPageStructure(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          contentType: value.contentType,
+          parentRemoteId: value.parentRemoteId,
+          template: value.template,
+          menuOrder: value.menuOrder,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
 
   app.post("/v1/connections/:connectionId/publishing-state", async (request, reply) => {
     const principal = await authorize(options, request, "source-content:write");

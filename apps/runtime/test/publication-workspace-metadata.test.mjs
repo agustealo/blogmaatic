@@ -394,3 +394,81 @@ test("source revision recovery can clear an empty remote excerpt without deletin
   assert.deepEqual(restored.publication.current.content.blocks, []);
   assert.equal(restored.publication.current.content.assets.length, 3);
 });
+
+
+test("canonical source page structure is immutable idempotent and source/type bound", async () => {
+  const publication = importedPublication();
+  publication.current.content.attributes.wordpress.contentType = "pages";
+  const { manager, current } = managerWith(publication);
+
+  const changed = await manager.setSourcePageStructure("publication-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 4,
+  });
+  assert.equal(changed.version, 2);
+  assert.equal(changed.publication.current.ordinal, 2);
+  assert.deepEqual(changed.publication.current.content.attributes.sourcePage, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 4,
+  });
+
+  const retry = await manager.setSourcePageStructure("publication-wp", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 4,
+  });
+  assert.equal(retry.version, 2);
+
+  const cleared = await manager.setSourcePageStructure("publication-wp", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: null,
+    template: null,
+    menuOrder: 0,
+  });
+  assert.equal(cleared.version, 3);
+  assert.deepEqual(cleared.publication.current.content.attributes.sourcePage, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: null,
+    template: null,
+    menuOrder: 0,
+  });
+
+  await assert.rejects(
+    () => manager.setSourcePageStructure("publication-wp", 3, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      contentType: "posts",
+      parentRemoteId: null,
+      template: null,
+      menuOrder: 0,
+    }),
+    /content type does not match/,
+  );
+  await assert.rejects(
+    () => manager.setSourcePageStructure("publication-wp", 3, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      contentType: "pages",
+      parentRemoteId: "55",
+      template: null,
+      menuOrder: 0,
+    }),
+    /cannot be its own parent/,
+  );
+  assert.equal(current().version, 3);
+});

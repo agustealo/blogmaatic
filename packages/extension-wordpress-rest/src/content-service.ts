@@ -98,6 +98,11 @@ function postView(post: WordPressPostRecord): WordPressPostView {
     ...(typeof post.featured_media === "number" && post.featured_media > 0
       ? { featuredMediaId: post.featured_media }
       : {}),
+    ...(typeof post.parent === "number" && post.parent > 0 ? { parentId: post.parent } : {}),
+    ...(typeof post.template === "string" && post.template.trim() ? { template: post.template.trim() } : {}),
+    ...(typeof post.menu_order === "number" && Number.isSafeInteger(post.menu_order) && post.menu_order >= 0
+      ? { menuOrder: post.menu_order }
+      : {}),
     ownership: ownership(post),
   };
 }

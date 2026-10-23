@@ -92,6 +92,27 @@ Imported WordPress posts preserve their native status. Scheduled imports normali
 
 This state does not replace Blogmaatic Automation schedules. Automation determines when Blogmaatic runs; source-native state determines what WordPress status/date Blogmaatic asks WordPress to store when the matching route is compiled.
 
+## Native WordPress Page structure
+
+Hierarchical WordPress content types such as Pages may carry source-bound `PublicationIR.attributes.sourcePage` metadata with:
+
+- extension id
+- connection id
+- WordPress REST content type
+- optional parent remote id
+- optional page template
+- non-negative menu order
+
+These fields are editorial properties of the matching WordPress destination. They do not alter Blogmaatic workflow status or publication-group routing.
+
+The source-content manager validates the requested content type against live WordPress `/types?context=edit` discovery and rejects types that are unavailable or non-hierarchical. Parent selection is resolved against the same WordPress connection and REST content type. A publication cannot select its own remote object as its parent.
+
+Imported hierarchical content preserves `parent`, `template`, and `menu_order` from canonical revision 1. Page-structure updates create immutable Publication revisions and are scoped to the exact source connection and content type.
+
+During compile, matching source Page structure becomes WordPress `parent`, `template`, and `menu_order`. Source Page metadata is ignored for other WordPress connections or other content types. Those fields participate in the semantic projection fingerprint and verified remote-state hash, so out-of-band hierarchy, template, or ordering edits become drift.
+
+Control Room discovers WordPress content-type capabilities and only renders the Page settings panel for hierarchical types. Parent lookup is performed through the provider-neutral source-content API, never directly from the browser to WordPress.
+
 ## Taxonomy
 
 Tags come from Publication IR tags plus optional route tags. Categories come from `PublicationIR.attributes.categories` plus optional route categories.
@@ -174,6 +195,9 @@ The verified remote-state hash includes:
 - tag ids
 - featured media id
 - post author id
+- parent page id
+- page template
+- menu order
 
 An out-of-band edit therefore becomes drift even if the post id and ownership marker remain present.
 

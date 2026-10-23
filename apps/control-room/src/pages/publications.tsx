@@ -12,7 +12,9 @@ import type {
   PublicationWorkspaceUpdateBody,
   SourceAssetRecord,
   SourceAuthorRecord,
+  SourceContentRecord,
   SourceContentRevision,
+  SourceContentTypeRecord,
   SourceTaxonomyKind,
   SourceTaxonomyRecord,
   WorkspacePublicationStatus,
@@ -316,6 +318,198 @@ function SourceAuthorPanel({
           <button className="button button--quiet" type="button" onClick={() => void load(page + 1, true)} disabled={loading}>Load more</button>
         </div>
       ) : null}
+    </Panel>
+  );
+}
+
+function wordpressContentType(entry: PublicationWorkspaceEntry): string | undefined {
+  const value = entry.publication.current.content.attributes.wordpress;
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const contentType = (value as Readonly<Record<string, unknown>>).contentType;
+    return typeof contentType === "string" && contentType.trim() ? contentType : undefined;
+  }
+  return undefined;
+}
+
+function canonicalSourcePage(entry: PublicationWorkspaceEntry): {
+  readonly parentRemoteId: string | null;
+  readonly template: string | null;
+  readonly menuOrder: number;
+} {
+  const value = entry.publication.current.content.attributes.sourcePage;
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Readonly<Record<string, unknown>>;
+    return {
+      parentRemoteId: typeof record.parentRemoteId === "string" ? record.parentRemoteId : null,
+      template: typeof record.template === "string" ? record.template : null,
+      menuOrder: typeof record.menuOrder === "number" && Number.isSafeInteger(record.menuOrder) && record.menuOrder >= 0
+        ? record.menuOrder
+        : 0,
+    };
+  }
+  return { parentRemoteId: null, template: null, menuOrder: 0 };
+}
+
+function SourcePageStructurePanel({
+  entry,
+  connectionId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const contentType = wordpressContentType(entry);
+  const canonical = canonicalSourcePage(entry);
+  const [type, setType] = useState<SourceContentTypeRecord | null>(null);
+  const [parents, setParents] = useState<readonly SourceContentRecord[]>([]);
+  const [parentSearch, setParentSearch] = useState("");
+  const [parentRemoteId, setParentRemoteId] = useState<string>(canonical.parentRemoteId ?? "");
+  const [template, setTemplate] = useState(canonical.template ?? "");
+  const [menuOrder, setMenuOrder] = useState(String(canonical.menuOrder));
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const next = canonicalSourcePage(entry);
+    setParentRemoteId(next.parentRemoteId ?? "");
+    setTemplate(next.template ?? "");
+    setMenuOrder(String(next.menuOrder));
+  }, [entry.publication.current.id]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void client.listSourceContentTypes(connectionId)
+      .then((items) => {
+        if (!active) return;
+        setType(contentType ? items.find((item) => item.key === contentType) ?? null : null);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress content type could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connectionId, contentType]);
+
+  const searchParents = useCallback(async () => {
+    if (!contentType) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const page = await client.listSourceContent(connectionId, {
+        contentType,
+        limit: 50,
+        ...(parentSearch.trim() ? { search: parentSearch.trim() } : {}),
+      });
+      const selfId = entry.publication.provenance.remoteId;
+      setParents(page.items.filter((item) => item.remoteId !== selfId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress parent pages could not be loaded"));
+    } finally {
+      setSearching(false);
+    }
+  }, [client, connectionId, contentType, entry.publication.provenance.remoteId, parentSearch]);
+
+  useEffect(() => {
+    if (type?.hierarchical) void searchParents();
+  }, [type?.hierarchical, contentType]);
+
+  if (!loading && (!type || !type.hierarchical || !contentType)) return null;
+
+  const save = async () => {
+    if (!contentType) return;
+    const parsedOrder = Number(menuOrder);
+    if (!Number.isSafeInteger(parsedOrder) || parsedOrder < 0) {
+      setError(new Error("Menu order must be a non-negative integer."));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.setSourcePageStructure(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        contentType,
+        parentRemoteId: parentRemoteId || null,
+        template: template.trim() || null,
+        menuOrder: parsedOrder,
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress Page settings could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dirty =
+    parentRemoteId !== (canonical.parentRemoteId ?? "") ||
+    template !== (canonical.template ?? "") ||
+    menuOrder !== String(canonical.menuOrder);
+
+  return (
+    <Panel title="WordPress Page settings" meta="Hierarchy and native page structure" className="source-page-panel">
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : (
+        <div className="source-page-controls">
+          <div className="source-page-parent">
+            <label className="field">
+              <span>Find parent page</span>
+              <input
+                type="search"
+                value={parentSearch}
+                onChange={(event) => setParentSearch(event.target.value)}
+                placeholder="Search this WordPress content type"
+                disabled={busy || searching}
+              />
+            </label>
+            <button className="button button--quiet" type="button" onClick={() => void searchParents()} disabled={busy || searching}>
+              {searching ? "Searching…" : "Search"}
+            </button>
+          </div>
+          <label className="field">
+            <span>Parent</span>
+            <select value={parentRemoteId} onChange={(event) => setParentRemoteId(event.target.value)} disabled={busy}>
+              <option value="">No parent</option>
+              {parentRemoteId && !parents.some((item) => item.remoteId === parentRemoteId)
+                ? <option value={parentRemoteId}>Current parent #{parentRemoteId}</option>
+                : null}
+              {parents.map((item) => <option key={item.remoteId} value={item.remoteId}>{item.title || item.slug} · #{item.remoteId}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Template</span>
+            <input
+              value={template}
+              onChange={(event) => setTemplate(event.target.value)}
+              placeholder="Default template"
+              disabled={busy}
+            />
+          </label>
+          <label className="field">
+            <span>Menu order</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={menuOrder}
+              onChange={(event) => setMenuOrder(event.target.value)}
+              disabled={busy}
+            />
+          </label>
+          <button className="button button--primary" type="button" onClick={() => void save()} disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save Page settings"}
+          </button>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -1575,6 +1769,16 @@ export function PublicationsPage() {
           {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
           typeof activeEntry.publication.provenance.connectionId === "string" ? (
             <>
+              <SourcePageStructurePanel
+                entry={activeEntry}
+                connectionId={activeEntry.publication.provenance.connectionId}
+                onUpdated={(next) => {
+                  setActiveEntry(next);
+                  setEditor(editorForEntry(next));
+                  setPendingPublish(false);
+                  setChangeNonce((value) => value + 1);
+                }}
+              />
               <SourcePublishingStatePanel
                 entry={activeEntry}
                 connectionId={activeEntry.publication.provenance.connectionId}

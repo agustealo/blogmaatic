@@ -155,6 +155,50 @@ function sourceAuthorId(publication: Publication, route: PublicationRoute): numb
   return parsed;
 }
 
+function sourcePageStructure(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+): { readonly parentId: number; readonly template: string; readonly menuOrder: number } | undefined {
+  const sourcePage = publication.current.content.attributes.sourcePage;
+  if (!isRecord(sourcePage)) return undefined;
+  if (
+    sourcePage.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    sourcePage.connectionId !== route.destination.connectionId ||
+    sourcePage.contentType !== contentType
+  ) {
+    return undefined;
+  }
+
+  let parentId = 0;
+  if (sourcePage.parentRemoteId !== null && sourcePage.parentRemoteId !== undefined) {
+    if (typeof sourcePage.parentRemoteId !== "string" || !/^\d+$/.test(sourcePage.parentRemoteId)) {
+      throw new Error("Canonical WordPress page parentRemoteId must be null or a positive integer string");
+    }
+    parentId = Number(sourcePage.parentRemoteId);
+    if (!Number.isSafeInteger(parentId) || parentId < 1) {
+      throw new Error("Canonical WordPress page parentRemoteId must be null or a positive integer string");
+    }
+  }
+
+  const templateValue = sourcePage.template;
+  if (templateValue !== null && templateValue !== undefined && typeof templateValue !== "string") {
+    throw new Error("Canonical WordPress page template must be null or a string");
+  }
+  const template = typeof templateValue === "string" ? templateValue.trim() : "";
+
+  const menuOrderValue = sourcePage.menuOrder;
+  if (
+    typeof menuOrderValue !== "number" ||
+    !Number.isSafeInteger(menuOrderValue) ||
+    menuOrderValue < 0
+  ) {
+    throw new Error("Canonical WordPress page menuOrder must be a non-negative integer");
+  }
+
+  return { parentId, template, menuOrder: menuOrderValue };
+}
+
 function featuredAssetId(publication: Publication, route: PublicationRoute): string | undefined {
   const explicit = getString(variant(route), "featuredAssetId");
   if (explicit) return explicit;
@@ -179,6 +223,9 @@ function semanticPayload(
     categories: [...payload.categories].sort(),
     featuredAssetId: payload.featuredAssetId ?? null,
     authorId: payload.authorId ?? null,
+    parentId: payload.parentId ?? null,
+    template: payload.template ?? null,
+    menuOrder: payload.menuOrder ?? null,
     assets: parsedAssets.map((asset) => ({
       assetId: asset.assetId,
       source: asset.localPath ? "managed-local" : asset.source,
@@ -211,6 +258,9 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       tags: [...(post.tags ?? [])].sort((left, right) => left - right),
       featuredMedia: post.featured_media ?? 0,
       author: post.author ?? null,
+      parent: post.parent ?? 0,
+      template: post.template ?? "",
+      menuOrder: post.menu_order ?? 0,
     }),
   );
 }
@@ -325,6 +375,9 @@ function postRequestBody(
     tags,
     featured_media: featuredMedia,
     ...(payload.authorId === undefined ? {} : { author: payload.authorId }),
+    ...(payload.parentId === undefined ? {} : { parent: payload.parentId }),
+    ...(payload.template === undefined ? {} : { template: payload.template }),
+    ...(payload.menuOrder === undefined ? {} : { menu_order: payload.menuOrder }),
     ...(payload.status === "future" && payload.scheduledAt
       ? { date_gmt: payload.scheduledAt.replace(/\.\d{3}Z$/, "") }
       : {}),
@@ -429,6 +482,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const assets = await compileAssets(publication, settings, imageTransform);
     const featured = featuredAssetId(publication, route);
     const authorId = sourceAuthorId(publication, route);
+    const pageStructure = sourcePageStructure(publication, route, contentType);
     const payload: WordPressProjectionPayload = {
       contentType,
       title: publication.current.content.title,
@@ -451,6 +505,11 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       ...(scheduledAt ? { scheduledAt } : {}),
       ...(featured ? { featuredAssetId: featured } : {}),
       ...(authorId === undefined ? {} : { authorId }),
+      ...(pageStructure === undefined ? {} : {
+        parentId: pageStructure.parentId,
+        template: pageStructure.template,
+        menuOrder: pageStructure.menuOrder,
+      }),
     };
     const fingerprint = projectionFingerprint(semanticPayload(payload, assets));
     return {
@@ -562,6 +621,9 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         tags: [...tags].sort((left, right) => left - right),
         featuredMedia,
         author: payload.authorId ?? null,
+        parent: payload.parentId ?? 0,
+        template: payload.template ?? "",
+        menuOrder: payload.menuOrder ?? 0,
       }),
     );
     const markedContent = documentWithMarker(body, {

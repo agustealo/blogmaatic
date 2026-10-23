@@ -272,6 +272,23 @@ export interface SourcePublishingStateResult {
   readonly scheduledAt?: string;
 }
 
+export interface SourcePageStructureBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType: string;
+  readonly parentRemoteId: string | null;
+  readonly template: string | null;
+  readonly menuOrder: number;
+}
+
+export interface SourcePageStructureResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly contentType: string;
+  readonly parentRemoteId: string | null;
+  readonly template: string | null;
+  readonly menuOrder: number;
+}
+
 export interface SourceAssetQuery {
   readonly search?: string;
   readonly page?: number;
@@ -371,6 +388,7 @@ export interface OperatorSourceContentManager {
   listAuthors(connectionId: string, query?: SourceAuthorQuery): Promise<SourceAuthorPage>;
   assignAuthor(connectionId: string, remoteId: string, body: SourceAuthorAssignBody): Promise<SourceAuthorAssignResult>;
   setPublishingState(connectionId: string, body: SourcePublishingStateBody): Promise<SourcePublishingStateResult>;
+  setPageStructure(connectionId: string, body: SourcePageStructureBody): Promise<SourcePageStructureResult>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;

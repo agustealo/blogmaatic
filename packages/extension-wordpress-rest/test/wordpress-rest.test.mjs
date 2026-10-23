@@ -43,6 +43,9 @@ function makeServer() {
     tags: post.tags,
     featured_media: post.featured_media,
     author: post.author,
+    parent: post.parent,
+    template: post.template,
+    menu_order: post.menu_order,
     date_gmt: post.date_gmt,
   });
   const toPost = (id, body) => {
@@ -59,6 +62,9 @@ function makeServer() {
       categories: body.categories ?? [],
       tags: body.tags ?? [],
       featured_media: body.featured_media ?? 0,
+      parent: body.parent ?? 0,
+      template: body.template ?? "",
+      menu_order: body.menu_order ?? 0,
       date_gmt: body.date_gmt ?? null,
       modified_gmt: `2026-09-22T18:00:${String(modification).padStart(2, "0")}`,
     };
@@ -1565,4 +1571,189 @@ test("legacy custom post type setting remains the fallback for old posts-channel
     const delivered = await publisher.deliver({ idempotencyKey: "legacy-books", projection });
     assert.equal(api.books.has(Number(delivered.remote.id)), true);
   } finally { api.server.close(); }
+});
+
+
+test("WordPress Page structure compiles, delivers, clears, and detects remote drift", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-21T18:00:00.000Z",
+      updatedAt: "2026-10-21T18:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = textPublication();
+    const publication = {
+      ...base,
+      current: {
+        ...base.current,
+        content: {
+          ...base.current.content,
+          attributes: {
+            ...base.current.content.attributes,
+            sourcePage: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "pages",
+              parentRemoteId: "77",
+              template: "templates/landing.php",
+              menuOrder: 6,
+            },
+          },
+        },
+      },
+    };
+    const pageRoute = { ...route(), destination: { ...route().destination, channel: "pages" } };
+    const projection = await publisher.compile({ publication, route: pageRoute });
+    assert.equal(projection.payload.parentId, 77);
+    assert.equal(projection.payload.template, "templates/landing.php");
+    assert.equal(projection.payload.menuOrder, 6);
+
+    const delivered = await publisher.deliver({ idempotencyKey: "page-structure", projection });
+    const post = api.pages.get(Number(delivered.remote.id));
+    assert.equal(post.parent, 77);
+    assert.equal(post.template, "templates/landing.php");
+    assert.equal(post.menu_order, 6);
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+    post.parent = 0;
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+    post.parent = 77;
+    post.template = "other.php";
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+    post.template = "templates/landing.php";
+    post.menu_order = 9;
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+
+    const clearedPublication = {
+      ...publication,
+      current: {
+        ...publication.current,
+        id: "rev-cleared",
+        ordinal: publication.current.ordinal + 1,
+        content: {
+          ...publication.current.content,
+          attributes: {
+            ...publication.current.content.attributes,
+            sourcePage: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "pages",
+              parentRemoteId: null,
+              template: null,
+              menuOrder: 0,
+            },
+          },
+        },
+      },
+    };
+    const clearedProjection = await publisher.compile({ publication: clearedPublication, route: pageRoute });
+    await publisher.deliver({
+      idempotencyKey: "page-structure-clear",
+      projection: clearedProjection,
+      existingRemote: delivered.remote,
+    });
+    const cleared = api.pages.get(Number(delivered.remote.id));
+    assert.equal(cleared.parent, 0);
+    assert.equal(cleared.template, "");
+    assert.equal(cleared.menu_order, 0);
+  } finally {
+    api.server.close();
+  }
+});
+
+
+test("WordPress Page structure applies only to the matching source connection and content type", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-21T18:00:00.000Z",
+      updatedAt: "2026-10-21T18:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-1", displayName: "WordPress One" },
+        { ...baseConnection, id: "wp-2", displayName: "WordPress Two" },
+      ]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const publication = {
+      id: "publication-page-isolation",
+      createdAt: "2026-10-21T18:00:00.000Z",
+      status: "approved",
+      current: {
+        id: "revision-page-isolation",
+        ordinal: 1,
+        createdAt: "2026-10-21T18:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Page isolation",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            sourcePage: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "pages",
+              parentRemoteId: "77",
+              template: "templates/landing.php",
+              menuOrder: 8,
+            },
+          },
+        },
+      },
+      provenance: { source: "wordpress" },
+    };
+
+    const matching = {
+      ...route(),
+      destination: { ...route().destination, connectionId: "wp-1", channel: "pages" },
+    };
+    const matchingProjection = await publisher.compile({ publication, route: matching });
+    assert.equal(matchingProjection.payload.parentId, 77);
+    assert.equal(matchingProjection.payload.template, "templates/landing.php");
+    assert.equal(matchingProjection.payload.menuOrder, 8);
+
+    const otherConnection = {
+      ...matching,
+      destination: { ...matching.destination, connectionId: "wp-2" },
+    };
+    const otherConnectionProjection = await publisher.compile({ publication, route: otherConnection });
+    assert.equal(otherConnectionProjection.payload.parentId, undefined);
+    assert.equal(otherConnectionProjection.payload.template, undefined);
+    assert.equal(otherConnectionProjection.payload.menuOrder, undefined);
+
+    const otherType = {
+      ...matching,
+      destination: { ...matching.destination, channel: "posts" },
+    };
+    const otherTypeProjection = await publisher.compile({ publication, route: otherType });
+    assert.equal(otherTypeProjection.payload.parentId, undefined);
+    assert.equal(otherTypeProjection.payload.template, undefined);
+    assert.equal(otherTypeProjection.payload.menuOrder, undefined);
+  } finally {
+    api.server.close();
+  }
 });

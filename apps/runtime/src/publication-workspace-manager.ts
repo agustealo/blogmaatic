@@ -379,6 +379,93 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, expectedVersion, now);
   }
 
+  async setSourcePageStructure(
+    publicationId: string,
+    expectedVersion: number,
+    state: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly contentType: string;
+      readonly parentRemoteId: string | null;
+      readonly template: string | null;
+      readonly menuOrder: number;
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== state.extensionId ||
+      current.publication.provenance.connectionId !== state.connectionId
+    ) {
+      throw new Error("Source page structure connection does not match the publication source");
+    }
+
+    const wordpress = current.publication.current.content.attributes.wordpress;
+    if (
+      wordpress === null ||
+      typeof wordpress !== "object" ||
+      Array.isArray(wordpress) ||
+      wordpress.contentType !== state.contentType
+    ) {
+      throw new Error("Source page structure content type does not match the publication source");
+    }
+
+    const contentType = state.contentType.trim();
+    if (!contentType) throw new Error("Source page content type is required");
+
+    let parentRemoteId: string | null = null;
+    if (state.parentRemoteId !== null) {
+      parentRemoteId = state.parentRemoteId.trim();
+      if (!/^\d+$/.test(parentRemoteId)) {
+        throw new Error("Source page parentRemoteId must be null or a positive integer string");
+      }
+      const parent = Number(parentRemoteId);
+      if (!Number.isSafeInteger(parent) || parent < 1) {
+        throw new Error("Source page parentRemoteId must be null or a positive integer string");
+      }
+      if (current.publication.provenance.remoteId === parentRemoteId) {
+        throw new Error("A WordPress page cannot be its own parent");
+      }
+    }
+
+    const template = state.template === null ? null : state.template.trim() || null;
+    if (!Number.isSafeInteger(state.menuOrder) || state.menuOrder < 0) {
+      throw new Error("Source page menuOrder must be a non-negative integer");
+    }
+
+    const nextState: JsonValue = {
+      extensionId: state.extensionId,
+      connectionId: state.connectionId,
+      contentType,
+      parentRemoteId,
+      template,
+      menuOrder: state.menuOrder,
+    };
+    const existing = current.publication.current.content.attributes.sourcePage;
+    if (JSON.stringify(existing) === JSON.stringify(nextState)) return current;
+
+    const now = this.#now();
+    const publication: Publication = {
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...current.publication.current.content,
+          attributes: {
+            ...current.publication.current.content.attributes,
+            sourcePage: nextState,
+          },
+        },
+      },
+    };
+    return this.#store.update(publication, expectedVersion, now);
+  }
+
   async setSourcePublishingState(
     publicationId: string,
     expectedVersion: number,

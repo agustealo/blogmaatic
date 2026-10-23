@@ -767,3 +767,14 @@ a.data-table__row:hover { background: var(--surface-2); }
 @media (max-width: 900px) {
   .publication-group-destination-row { grid-template-columns: 1fr; align-items: stretch; }
 }
+
+
+/* WordPress native page structure */
+.source-page-controls { padding: 14px 16px; display: grid; grid-template-columns: minmax(200px, 1fr) minmax(180px, .8fr) minmax(120px, .45fr); gap: 12px; align-items: end; }
+.source-page-parent { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(240px, 1fr) auto; gap: 10px; align-items: end; }
+.source-page-controls > .button { min-height: 42px; }
+@media (max-width: 760px) {
+  .source-page-controls { grid-template-columns: 1fr; }
+  .source-page-parent { grid-column: auto; grid-template-columns: 1fr; }
+  .source-page-controls > .button, .source-page-parent > .button { width: 100%; }
+}

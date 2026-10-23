@@ -44,6 +44,8 @@ import type {
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourcePageStructureBody,
+  SourcePageStructureResult,
   SourceTaxonomyCreateBody,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
@@ -74,6 +76,9 @@ function sourceRecord(
     categoryIds: [...post.categoryIds],
     tagIds: [...post.tagIds],
     featuredMediaId: post.featuredMediaId ?? null,
+    parentRemoteId: post.parentId === undefined ? null : String(post.parentId),
+    template: post.template ?? null,
+    menuOrder: post.menuOrder ?? 0,
   };
   return {
     connectionId,
@@ -314,6 +319,70 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
+    };
+  }
+
+  async setPageStructure(
+    connectionId: string,
+    body: SourcePageStructureBody,
+  ): Promise<SourcePageStructureResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source page structure connection does not match the publication source");
+    }
+
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("Source page content type is required");
+
+    const contentTypes = await this.#content.listContentTypes(connectionId);
+    const resolvedType = contentTypes.find((candidate) => candidate.restBase === contentType);
+    if (!resolvedType) {
+      throw new Error(`WordPress content type is not available on this connection: ${contentType}`);
+    }
+    if (!resolvedType.hierarchical) {
+      throw new Error(`WordPress content type does not support page hierarchy: ${contentType}`);
+    }
+
+    if (body.parentRemoteId !== null) {
+      const parentRemoteId = body.parentRemoteId.trim();
+      if (!/^\d+$/.test(parentRemoteId)) {
+        throw new Error("Source page parentRemoteId must be null or a positive integer string");
+      }
+      if (current.publication.provenance.remoteId === parentRemoteId) {
+        throw new Error("A WordPress page cannot be its own parent");
+      }
+      await this.#content.get(connectionId, parentRemoteId, contentType);
+    }
+
+    const publication = await this.#publications.setSourcePageStructure(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType,
+        parentRemoteId: body.parentRemoteId === null ? null : body.parentRemoteId.trim(),
+        template: body.template,
+        menuOrder: body.menuOrder,
+      },
+    );
+    const sourcePage = publication.publication.current.content.attributes.sourcePage;
+    if (!isRecord(sourcePage)) throw new Error("Canonical source page structure was not persisted");
+    return {
+      publication,
+      contentType,
+      parentRemoteId: typeof sourcePage.parentRemoteId === "string" ? sourcePage.parentRemoteId : null,
+      template: typeof sourcePage.template === "string" ? sourcePage.template : null,
+      menuOrder: typeof sourcePage.menuOrder === "number" ? sourcePage.menuOrder : 0,
     };
   }
 
@@ -818,6 +887,18 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            ...(snapshot.post.parentId !== undefined ||
+                snapshot.post.template !== undefined ||
+                snapshot.post.menuOrder !== undefined ? {
+              sourcePage: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                contentType,
+                parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
+                template: snapshot.post.template ?? null,
+                menuOrder: snapshot.post.menuOrder ?? 0,
+              },
+            } : {}),
             ...(snapshot.post.author === undefined ? {} : {
               sourceAuthor: {
                 extensionId: WORDPRESS_REST_EXTENSION_ID,
@@ -842,6 +923,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
               categoryIds: [...snapshot.post.categoryIds],
               tagIds: [...snapshot.post.tagIds],
               featuredMediaId: snapshot.post.featuredMediaId ?? null,
+              parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
+              template: snapshot.post.template ?? null,
+              menuOrder: snapshot.post.menuOrder ?? 0,
               importedHtml: snapshot.post.contentHtml,
             },
           },

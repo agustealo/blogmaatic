@@ -1134,3 +1134,287 @@ test("WordPress import rejects an explicit source content type that does not mat
   );
   assert.equal(snapshotReads, 0);
 });
+
+
+test("WordPress page structure verifies parent in the same content type before canonical mutation", async () => {
+  let parentReads = 0;
+  let mutationInput;
+  const current = {
+    publication: {
+      id: "publication-page",
+      createdAt: "2026-10-21T18:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-21T18:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Child Page",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            wordpress: { connectionId: "wp-main", contentType: "pages", remoteId: "55" },
+          },
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-21T18:00:00.000Z",
+    updatedAt: "2026-10-21T18:00:00.000Z",
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async listContentTypes(connectionId) {
+        assert.equal(connectionId, "wp-main");
+        return [
+          {
+            slug: "post",
+            name: "Posts",
+            restBase: "posts",
+            hierarchical: false,
+            viewable: true,
+            taxonomies: ["category", "post_tag"],
+          },
+          {
+            slug: "page",
+            name: "Pages",
+            restBase: "pages",
+            hierarchical: true,
+            viewable: true,
+            taxonomies: [],
+          },
+        ];
+      },
+      async get(connectionId, remoteId, contentType) {
+        parentReads += 1;
+        assert.equal(connectionId, "wp-main");
+        assert.equal(remoteId, "77");
+        assert.equal(contentType, "pages");
+        return {
+          id: 77, title: "Parent", excerpt: "", contentHtml: "", slug: "parent",
+          status: "publish", link: "https://example.test/?page_id=77",
+          categoryIds: [], tagIds: [], ownership: { managed: false },
+        };
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get(id) { return id === "publication-page" ? current : undefined; },
+      async setSourcePageStructure(publicationId, expectedVersion, state) {
+        mutationInput = state;
+        return {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                attributes: {
+                  ...current.publication.current.content.attributes,
+                  sourcePage: state,
+                },
+              },
+            },
+          },
+        };
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.setPageStructure("wp-main", {
+      publicationId: "publication-page",
+      expectedVersion: 4,
+      contentType: "pages",
+      parentRemoteId: "55",
+      template: null,
+      menuOrder: 0,
+    }),
+    /cannot be its own parent/,
+  );
+  assert.equal(parentReads, 0);
+
+  await assert.rejects(
+    () => manager.setPageStructure("wp-main", {
+      publicationId: "publication-page",
+      expectedVersion: 4,
+      contentType: "posts",
+      parentRemoteId: null,
+      template: null,
+      menuOrder: 0,
+    }),
+    /does not support page hierarchy/,
+  );
+  await assert.rejects(
+    () => manager.setPageStructure("wp-main", {
+      publicationId: "publication-page",
+      expectedVersion: 4,
+      contentType: "missing-type",
+      parentRemoteId: null,
+      template: null,
+      menuOrder: 0,
+    }),
+    /is not available on this connection/,
+  );
+  assert.equal(parentReads, 0);
+
+  const result = await manager.setPageStructure("wp-main", {
+    publicationId: "publication-page",
+    expectedVersion: 4,
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 3,
+  });
+  assert.equal(parentReads, 1);
+  assert.equal(result.publication.version, 5);
+  assert.deepEqual(mutationInput, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 3,
+  });
+});
+
+
+test("WordPress Page import preserves native parent template and menu order from revision one", async () => {
+  let stored;
+  const snapshot = {
+    post: {
+      id: 55,
+      author: 7,
+      title: "Child Page",
+      excerpt: "",
+      contentHtml: "<p>Child body.</p>",
+      slug: "child-page",
+      status: "publish",
+      link: "https://example.test/?page_id=55",
+      dateGmt: "2026-10-21T17:00:00",
+      modifiedGmt: "2026-10-21T17:30:00",
+      categoryIds: [],
+      tagIds: [],
+      parentId: 77,
+      template: "templates/landing.php",
+      menuOrder: 5,
+      ownership: { managed: false },
+    },
+    categoryNames: [],
+    tagNames: [],
+  };
+  const group = {
+    id: "group-pages",
+    name: "Pages",
+    policySetId: "default",
+    routes: [{
+      id: "route-pages",
+      enabled: true,
+      desiredState: "present",
+      destination: {
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        channel: "pages",
+      },
+      requiredCapabilities: ["article.create", "article.inspect"],
+    }],
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { return "posts"; },
+      async importSnapshot(connectionId, remoteId, contentType) {
+        assert.equal(connectionId, "wp-main");
+        assert.equal(remoteId, "55");
+        assert.equal(contentType, "pages");
+        return snapshot;
+      },
+      async adopt(_connectionId, _remoteId, projection) {
+        return {
+          ...snapshot.post,
+          ownership: {
+            managed: true,
+            publicationId: projection.publicationId,
+            routeId: projection.routeId,
+          },
+        };
+      },
+    },
+    publisher: {
+      async compile({ publication, route }) {
+        return {
+          projectionId: publication.id + ":" + route.id,
+          publicationId: publication.id,
+          sourceRevisionId: publication.current.id,
+          routeId: route.id,
+          destination: route.destination,
+          payload: {},
+          fingerprint: "page-import-fingerprint",
+        };
+      },
+    },
+    publicationGroups: {
+      async get(id) {
+        assert.equal(id, "group-pages");
+        return { group, version: 1, enabled: true, recordedAt: "2026-10-21T18:00:00.000Z" };
+      },
+    },
+    publications: {
+      async findImportedSource() { return stored; },
+      async registerImported(publication) {
+        stored = {
+          publication,
+          version: 1,
+          recordedAt: "2026-10-21T18:00:00.000Z",
+          updatedAt: "2026-10-21T18:00:00.000Z",
+        };
+        return stored;
+      },
+    },
+    projectionState: { async put() {} },
+    distributionHistory: { async append() {} },
+    now: () => "2026-10-21T18:00:00.000Z",
+    id: (() => {
+      const ids = ["page-publication", "page-revision"];
+      let index = 0;
+      return () => ids[index++] ?? "page-extra";
+    })(),
+  });
+
+  const result = await manager.import("wp-main", "55", {
+    groupId: "group-pages",
+    routeId: "route-pages",
+    contentType: "pages",
+  });
+  assert.deepEqual(result.publication.publication.current.content.attributes.sourcePage, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "pages",
+    parentRemoteId: "77",
+    template: "templates/landing.php",
+    menuOrder: 5,
+  });
+  assert.deepEqual(
+    {
+      parentRemoteId: result.publication.publication.current.content.attributes.wordpress.parentRemoteId,
+      template: result.publication.publication.current.content.attributes.wordpress.template,
+      menuOrder: result.publication.publication.current.content.attributes.wordpress.menuOrder,
+    },
+    { parentRemoteId: "77", template: "templates/landing.php", menuOrder: 5 },
+  );
+});
