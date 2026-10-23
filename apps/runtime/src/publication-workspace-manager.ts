@@ -379,6 +379,93 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, expectedVersion, now);
   }
 
+  async setSourceTaxonomySelection(
+    publicationId: string,
+    expectedVersion: number,
+    state: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly contentType: string;
+      readonly taxonomyKey: string;
+      readonly restBase: string;
+      readonly names: readonly string[];
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== state.extensionId ||
+      current.publication.provenance.connectionId !== state.connectionId
+    ) {
+      throw new Error("Source taxonomy connection does not match the publication source");
+    }
+
+    const wordpress = current.publication.current.content.attributes.wordpress;
+    if (
+      wordpress === null ||
+      typeof wordpress !== "object" ||
+      Array.isArray(wordpress) ||
+      wordpress.contentType !== state.contentType
+    ) {
+      throw new Error("Source taxonomy content type does not match the publication source");
+    }
+
+    const contentType = state.contentType.trim();
+    const taxonomyKey = state.taxonomyKey.trim();
+    const restBase = state.restBase.trim();
+    if (!contentType) throw new Error("Source taxonomy content type is required");
+    if (!/^[a-z0-9_-]+$/.test(taxonomyKey)) throw new Error("Source taxonomy key is invalid");
+    if (!/^[a-z0-9_-]+$/.test(restBase)) throw new Error("Source taxonomy REST base is invalid");
+    if (taxonomyKey === "category" || taxonomyKey === "post_tag") {
+      throw new Error("Core WordPress categories and tags use their canonical Blogmaatic fields");
+    }
+    const names = [...new Set(state.names.map((name) => name.trim()).filter(Boolean))];
+
+    const oldContent = current.publication.current.content;
+    const existing = oldContent.attributes.sourceTaxonomies;
+    const selections: Record<string, JsonValue> =
+      existing !== null &&
+      typeof existing === "object" &&
+      !Array.isArray(existing) &&
+      existing.selections !== null &&
+      typeof existing.selections === "object" &&
+      !Array.isArray(existing.selections)
+        ? { ...(existing.selections as Readonly<Record<string, JsonValue>>) }
+        : {};
+
+    if (names.length === 0) delete selections[taxonomyKey];
+    else selections[taxonomyKey] = { restBase, names };
+
+    const nextState: JsonValue = {
+      extensionId: state.extensionId,
+      connectionId: state.connectionId,
+      contentType,
+      selections,
+    };
+    if (JSON.stringify(existing) === JSON.stringify(nextState)) return current;
+
+    const now = this.#now();
+    const publication: Publication = {
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...oldContent,
+          attributes: {
+            ...oldContent.attributes,
+            sourceTaxonomies: nextState,
+          },
+        },
+      },
+    };
+    return this.#store.update(publication, expectedVersion, now);
+  }
+
   async setSourceEditorialOptions(
     publicationId: string,
     expectedVersion: number,
