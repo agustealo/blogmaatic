@@ -11,6 +11,7 @@ import type {
   SourceAuthorAssignBody,
   SourceAuthorQuery,
   SourceContentImportBody,
+  SourceEditorialOptionsBody,
   SourceRevisionRestoreBody,
   SourcePublishingStateBody,
   SourcePageStructureBody,
@@ -407,6 +408,56 @@ function parsePageStructureBody(body: unknown): SourcePageStructureBody {
   };
 }
 
+function parseEditorialOptionsBody(body: unknown): SourceEditorialOptionsBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set([
+    "publicationId", "expectedVersion", "contentType", "password",
+    "commentStatus", "pingStatus", "sticky", "format",
+  ]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  if (typeof input.publicationId !== "string" || !input.publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  if (typeof input.contentType !== "string" || !input.contentType.trim()) {
+    throw new OperatorRequestError("contentType is required");
+  }
+  if (typeof input.password !== "string") throw new OperatorRequestError("password must be a string");
+  if (input.password.length > 255) throw new OperatorRequestError("password must not exceed 255 characters");
+  if (input.commentStatus !== undefined && input.commentStatus !== "open" && input.commentStatus !== "closed") {
+    throw new OperatorRequestError("commentStatus must be open or closed");
+  }
+  if (input.pingStatus !== undefined && input.pingStatus !== "open" && input.pingStatus !== "closed") {
+    throw new OperatorRequestError("pingStatus must be open or closed");
+  }
+  if (input.sticky !== undefined && typeof input.sticky !== "boolean") {
+    throw new OperatorRequestError("sticky must be a boolean");
+  }
+  const formats = new Set(["standard", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"]);
+  if (input.format !== undefined && (typeof input.format !== "string" || !formats.has(input.format))) {
+    throw new OperatorRequestError("format is not a supported WordPress post format");
+  }
+  if (input.sticky === true && input.password.length > 0) {
+    throw new OperatorRequestError("sticky posts cannot be password protected");
+  }
+  return {
+    publicationId: input.publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    contentType: input.contentType.trim(),
+    password: input.password,
+    ...(input.commentStatus === undefined ? {} : { commentStatus: input.commentStatus }),
+    ...(input.pingStatus === undefined ? {} : { pingStatus: input.pingStatus }),
+    ...(input.sticky === undefined ? {} : { sticky: input.sticky }),
+    ...(input.format === undefined ? {} : { format: input.format }),
+  };
+}
+
 function parsePublishingStateBody(body: unknown): SourcePublishingStateBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -507,6 +558,44 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           parentRemoteId: value.parentRemoteId,
           template: value.template,
           menuOrder: value.menuOrder,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.post("/v1/connections/:connectionId/editorial-options", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseEditorialOptionsBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-editorial-options.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        passwordProtected: body.password.length > 0,
+        commentStatus: body.commentStatus ?? null,
+        pingStatus: body.pingStatus ?? null,
+        sticky: body.sticky ?? null,
+        format: body.format ?? null,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setEditorialOptions(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          passwordProtected: value.passwordProtected,
+          commentStatus: value.commentStatus ?? null,
+          pingStatus: value.pingStatus ?? null,
+          sticky: value.sticky ?? null,
+          format: value.format ?? null,
         },
       }),
     });
