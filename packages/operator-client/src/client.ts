@@ -76,6 +76,13 @@ import type {
   SourcePublishingStateResult,
   SourcePageStructureBody,
   SourcePageStructureResult,
+  SourceCustomTaxonomyCreateBody,
+  SourceCustomTaxonomyPage,
+  SourceCustomTaxonomyQuery,
+  SourceCustomTaxonomyTermRecord,
+  SourceTaxonomyDefinition,
+  SourceTaxonomySelectionBody,
+  SourceTaxonomySelectionResult,
   SourceTaxonomyCreateBody,
   SourceTaxonomyRecord,
   SourceTaxonomyPage,
@@ -307,6 +314,52 @@ export class OperatorClient {
   ): Promise<SourceAuthorAssignResult> {
     return this.#request<SourceAuthorAssignResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/authors/${encodeURIComponent(remoteId)}/assign`,
+      { method: "POST", body: input },
+    );
+  }
+
+  async listSourceTaxonomyDefinitions(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceTaxonomyDefinition[]> {
+    const response = await this.#request<{ readonly items: readonly SourceTaxonomyDefinition[] }>(
+      pathWithQuery(
+        `/v1/connections/${encodeURIComponent(connectionId)}/taxonomies`,
+        { contentType },
+      ),
+    );
+    return response.items;
+  }
+
+  listSourceCustomTaxonomy(
+    connectionId: string,
+    taxonomyKey: string,
+    query: SourceCustomTaxonomyQuery,
+  ): Promise<SourceCustomTaxonomyPage> {
+    return this.#request<SourceCustomTaxonomyPage>(pathWithQuery(
+      `/v1/connections/${encodeURIComponent(connectionId)}/taxonomies/${encodeURIComponent(taxonomyKey)}/terms`,
+      query,
+    ));
+  }
+
+  createSourceCustomTaxonomyTerm(
+    connectionId: string,
+    taxonomyKey: string,
+    input: SourceCustomTaxonomyCreateBody,
+  ): Promise<SourceCustomTaxonomyTermRecord> {
+    return this.#request<SourceCustomTaxonomyTermRecord>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/taxonomies/${encodeURIComponent(taxonomyKey)}/terms`,
+      { method: "POST", body: input },
+    );
+  }
+
+  setSourceTaxonomySelection(
+    connectionId: string,
+    taxonomyKey: string,
+    input: SourceTaxonomySelectionBody,
+  ): Promise<SourceTaxonomySelectionResult> {
+    return this.#request<SourceTaxonomySelectionResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/taxonomies/${encodeURIComponent(taxonomyKey)}/selection`,
       { method: "POST", body: input },
     );
   }
