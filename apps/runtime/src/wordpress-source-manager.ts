@@ -1123,6 +1123,24 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            ...(snapshot.customTaxonomies.some((taxonomy) => taxonomy.names.length > 0) ? {
+              sourceTaxonomies: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                contentType,
+                selections: Object.fromEntries(
+                  snapshot.customTaxonomies
+                    .filter((taxonomy) => taxonomy.names.length > 0)
+                    .map((taxonomy) => [
+                      taxonomy.taxonomyKey,
+                      {
+                        restBase: taxonomy.restBase,
+                        names: [...taxonomy.names],
+                      },
+                    ]),
+                ),
+              },
+            } : {}),
             ...(snapshot.post.password !== undefined ||
                 snapshot.post.commentStatus !== undefined ||
                 snapshot.post.pingStatus !== undefined ||
@@ -1174,6 +1192,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
               authorId: snapshot.post.author ?? null,
               categoryIds: [...snapshot.post.categoryIds],
               tagIds: [...snapshot.post.tagIds],
+              customTaxonomyIds: Object.fromEntries(
+                snapshot.customTaxonomies.map((taxonomy) => [taxonomy.taxonomyKey, [...taxonomy.ids]]),
+              ),
               featuredMediaId: snapshot.post.featuredMediaId ?? null,
               parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
               template: snapshot.post.template ?? null,
