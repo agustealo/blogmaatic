@@ -68,6 +68,8 @@ import type {
   SourceContentRecord,
   SourceContentRevision,
   SourceContentTypeRecord,
+  SourceEditorialOptionsBody,
+  SourceEditorialOptionsResult,
   SourceRevisionRestoreBody,
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
@@ -256,6 +258,16 @@ export class OperatorClient {
 
   testConnection(connectionId: string): Promise<OperatorConnectionTestResult> {
     return this.#request<OperatorConnectionTestResult>(`/v1/connections/${encodeURIComponent(connectionId)}/test`, { method: "POST" });
+  }
+
+  setSourceEditorialOptions(
+    connectionId: string,
+    input: SourceEditorialOptionsBody,
+  ): Promise<SourceEditorialOptionsResult> {
+    return this.#request<SourceEditorialOptionsResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/editorial-options`,
+      { method: "POST", body: input },
+    );
   }
 
   setSourcePageStructure(
