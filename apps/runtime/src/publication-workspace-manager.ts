@@ -379,6 +379,88 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, expectedVersion, now);
   }
 
+  async setSourceEditorialOptions(
+    publicationId: string,
+    expectedVersion: number,
+    state: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly contentType: string;
+      readonly password: string;
+      readonly commentStatus?: "open" | "closed";
+      readonly pingStatus?: "open" | "closed";
+      readonly sticky?: boolean;
+      readonly format?: string;
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== state.extensionId ||
+      current.publication.provenance.connectionId !== state.connectionId
+    ) {
+      throw new Error("Source editorial options connection does not match the publication source");
+    }
+    const wordpress = current.publication.current.content.attributes.wordpress;
+    if (
+      wordpress === null ||
+      typeof wordpress !== "object" ||
+      Array.isArray(wordpress) ||
+      wordpress.contentType !== state.contentType
+    ) {
+      throw new Error("Source editorial options content type does not match the publication source");
+    }
+    const contentType = state.contentType.trim();
+    if (!contentType) throw new Error("Source editorial content type is required");
+    const password = state.password;
+    if (state.commentStatus !== undefined && state.commentStatus !== "open" && state.commentStatus !== "closed") {
+      throw new Error("Source editorial commentStatus must be open or closed");
+    }
+    if (state.pingStatus !== undefined && state.pingStatus !== "open" && state.pingStatus !== "closed") {
+      throw new Error("Source editorial pingStatus must be open or closed");
+    }
+    const formats = new Set(["standard", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"]);
+    const format = state.format?.trim();
+    if (format !== undefined && !formats.has(format)) throw new Error("Unsupported WordPress post format");
+    if (state.sticky === true && password.length > 0) {
+      throw new Error("WordPress sticky posts cannot be password protected");
+    }
+
+    const nextState: JsonValue = {
+      extensionId: state.extensionId,
+      connectionId: state.connectionId,
+      contentType,
+      password,
+      ...(state.commentStatus === undefined ? {} : { commentStatus: state.commentStatus }),
+      ...(state.pingStatus === undefined ? {} : { pingStatus: state.pingStatus }),
+      ...(state.sticky === undefined ? {} : { sticky: state.sticky }),
+      ...(format === undefined ? {} : { format }),
+    };
+    if (JSON.stringify(current.publication.current.content.attributes.sourceEditorial) === JSON.stringify(nextState)) {
+      return current;
+    }
+    const now = this.#now();
+    const publication: Publication = {
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...current.publication.current.content,
+          attributes: {
+            ...current.publication.current.content.attributes,
+            sourceEditorial: nextState,
+          },
+        },
+      },
+    };
+    return this.#store.update(publication, expectedVersion, now);
+  }
+
   async setSourcePageStructure(
     publicationId: string,
     expectedVersion: number,
