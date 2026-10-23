@@ -103,6 +103,15 @@ function postView(post: WordPressPostRecord): WordPressPostView {
     ...(typeof post.menu_order === "number" && Number.isSafeInteger(post.menu_order) && post.menu_order >= 0
       ? { menuOrder: post.menu_order }
       : {}),
+    ...(typeof post.password === "string" ? { password: post.password } : {}),
+    ...(post.comment_status === "open" || post.comment_status === "closed"
+      ? { commentStatus: post.comment_status }
+      : {}),
+    ...(post.ping_status === "open" || post.ping_status === "closed"
+      ? { pingStatus: post.ping_status }
+      : {}),
+    ...(typeof post.sticky === "boolean" ? { sticky: post.sticky } : {}),
+    ...(typeof post.format === "string" && post.format.trim() ? { format: post.format.trim() } : {}),
     ownership: ownership(post),
   };
 }
@@ -150,6 +159,10 @@ function contentTypeView(
     viewable: true,
     ...(type.rest_namespace?.trim() ? { restNamespace: type.rest_namespace.trim() } : {}),
     taxonomies: [...(type.taxonomies ?? [])],
+    supports: Object.entries(type.supports ?? {})
+      .filter(([, enabled]) => enabled === true)
+      .map(([name]) => name)
+      .sort(),
   };
 }
 
