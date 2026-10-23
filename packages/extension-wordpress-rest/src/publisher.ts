@@ -355,7 +355,19 @@ function rawValue(field: { readonly raw?: string; readonly rendered?: string } |
   return field?.raw ?? field?.rendered ?? "";
 }
 
-function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): string {
+function postTaxonomyIds(post: WordPressPostRecord, restBase: string): readonly number[] {
+  const raw = post[restBase];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+    .sort((left, right) => left - right);
+}
+
+function remoteStateHash(
+  post: WordPressPostRecord,
+  bodyWithoutMarker: string,
+  customTaxonomies: WordPressProjectionPayload["customTaxonomies"] = [],
+): string {
   return sha256(
     stableJson({
       title: rawValue(post.title),
@@ -366,6 +378,13 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       content: bodyWithoutMarker,
       categories: [...(post.categories ?? [])].sort((left, right) => left - right),
       tags: [...(post.tags ?? [])].sort((left, right) => left - right),
+      customTaxonomies: customTaxonomies
+        .map((taxonomy) => ({
+          taxonomyKey: taxonomy.taxonomyKey,
+          restBase: taxonomy.restBase,
+          ids: postTaxonomyIds(post, taxonomy.restBase),
+        }))
+        .sort((left, right) => left.taxonomyKey.localeCompare(right.taxonomyKey)),
       featuredMedia: post.featured_media ?? 0,
       author: post.author ?? null,
       parent: post.parent ?? 0,
@@ -376,6 +395,45 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       pingStatus: post.ping_status ?? null,
       sticky: post.sticky ?? null,
       format: post.format ?? null,
+    }),
+  );
+}
+
+function desiredRemoteStateHash(
+  payload: ReturnType<typeof parsePayload>,
+  content: string,
+  categories: readonly number[],
+  tags: readonly number[],
+  customTaxonomyIds: Readonly<Record<string, readonly number[]>>,
+  featuredMedia: number,
+): string {
+  return sha256(
+    stableJson({
+      title: payload.title,
+      excerpt: payload.excerpt,
+      slug: payload.slug,
+      status: payload.status,
+      dateGmt: payload.scheduledAt ?? null,
+      content,
+      categories: [...categories].sort((left, right) => left - right),
+      tags: [...tags].sort((left, right) => left - right),
+      customTaxonomies: payload.customTaxonomies
+        .map((taxonomy) => ({
+          taxonomyKey: taxonomy.taxonomyKey,
+          restBase: taxonomy.restBase,
+          ids: [...(customTaxonomyIds[taxonomy.restBase] ?? [])].sort((left, right) => left - right),
+        }))
+        .sort((left, right) => left.taxonomyKey.localeCompare(right.taxonomyKey)),
+      featuredMedia,
+      author: payload.authorId ?? null,
+      parent: payload.parentId ?? 0,
+      template: payload.template ?? "",
+      menuOrder: payload.menuOrder ?? 0,
+      password: payload.password ?? "",
+      commentStatus: payload.commentStatus ?? null,
+      pingStatus: payload.pingStatus ?? null,
+      sticky: payload.sticky ?? null,
+      format: payload.format ?? null,
     }),
   );
 }
@@ -458,7 +516,8 @@ function inspectRecord(
       detail: "WordPress object ownership marker belongs to a different publication or route",
     };
   }
-  const actualRemoteHash = remoteStateHash(post, stripMarker(raw));
+  const payload = parsePayload(projection);
+  const actualRemoteHash = remoteStateHash(post, stripMarker(raw), payload.customTaxonomies);
   const synchronized =
     marker.projectionFingerprint === projection.fingerprint &&
     marker.renderedHash === actualRemoteHash;
@@ -478,6 +537,7 @@ function postRequestBody(
   content: string,
   categories: readonly number[],
   tags: readonly number[],
+  customTaxonomyIds: Readonly<Record<string, readonly number[]>>,
   featuredMedia: number,
 ): Readonly<Record<string, unknown>> {
   return {
@@ -488,6 +548,12 @@ function postRequestBody(
     status: payload.status,
     categories,
     tags,
+    ...Object.fromEntries(
+      payload.customTaxonomies.map((taxonomy) => [
+        taxonomy.restBase,
+        [...(customTaxonomyIds[taxonomy.restBase] ?? [])],
+      ]),
+    ),
     featured_media: featuredMedia,
     ...(payload.authorId === undefined ? {} : { author: payload.authorId }),
     ...(payload.parentId === undefined ? {} : { parent: payload.parentId }),
@@ -724,6 +790,15 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       settings.createMissingTerms,
     );
     const tags = await resolveTerms(client, "tags", payload.tags, settings.createMissingTerms);
+    const customTaxonomyIds: Record<string, readonly number[]> = {};
+    for (const taxonomy of payload.customTaxonomies) {
+      customTaxonomyIds[taxonomy.restBase] = await resolveTerms(
+        client,
+        taxonomy.restBase,
+        taxonomy.names,
+        settings.createMissingTerms,
+      );
+    }
     let featuredMedia = 0;
     if (payload.featuredAssetId) {
       const media = publishedMedia.find((candidate) => candidate.assetId === payload.featuredAssetId);
@@ -733,22 +808,13 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       featuredMedia = media.mediaId;
     }
 
-    const preliminaryHash = sha256(
-      stableJson({
-        title: payload.title,
-        excerpt: payload.excerpt,
-        slug: payload.slug,
-        status: payload.status,
-        dateGmt: payload.scheduledAt ?? null,
-        content: body,
-        categories: [...categories].sort((left, right) => left - right),
-        tags: [...tags].sort((left, right) => left - right),
-        featuredMedia,
-        author: payload.authorId ?? null,
-        parent: payload.parentId ?? 0,
-        template: payload.template ?? "",
-        menuOrder: payload.menuOrder ?? 0,
-      }),
+    const preliminaryHash = desiredRemoteStateHash(
+      payload,
+      body,
+      categories,
+      tags,
+      customTaxonomyIds,
+      featuredMedia,
     );
     const markedContent = documentWithMarker(body, {
       version: 1,
@@ -757,7 +823,14 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       projectionFingerprint: request.projection.fingerprint,
       renderedHash: preliminaryHash,
     });
-    const postBody = postRequestBody(payload, markedContent, categories, tags, featuredMedia);
+    const postBody = postRequestBody(
+      payload,
+      markedContent,
+      categories,
+      tags,
+      customTaxonomyIds,
+      featuredMedia,
+    );
     const endpoint = request.existingRemote
       ? `/${restBase}/${request.existingRemote.id}`
       : `/${restBase}`;
@@ -768,7 +841,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
 
     let current = await fetchPost(client, restBase, String(saved.id));
     const currentBody = stripMarker(sourceBody(current));
-    const actualHash = remoteStateHash(current, currentBody);
+    const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies);
     const currentMarker = parseMarker(sourceBody(current));
     if (
       currentMarker?.projectionFingerprint !== request.projection.fingerprint ||
@@ -814,6 +887,12 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
           })) as unknown as JsonValue,
         categoryIds: [...categories],
         tagIds: [...tags],
+        customTaxonomyIds: Object.fromEntries(
+          payload.customTaxonomies.map((taxonomy) => [
+            taxonomy.taxonomyKey,
+            [...(customTaxonomyIds[taxonomy.restBase] ?? [])],
+          ]),
+        ) as unknown as JsonValue,
         idempotencyKey: request.idempotencyKey,
         serverNormalized: actualHash !== preliminaryHash,
         wordpressRevisionId: nativeRevision?.id ?? null,
