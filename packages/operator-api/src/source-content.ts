@@ -15,8 +15,11 @@ import type {
   SourceRevisionRestoreBody,
   SourcePublishingStateBody,
   SourcePageStructureBody,
+  SourceCustomTaxonomyCreateBody,
+  SourceCustomTaxonomyQuery,
   SourceTaxonomyCreateBody,
   SourceTaxonomyQuery,
+  SourceTaxonomySelectionBody,
   SourceContentQuery,
 } from "./types.js";
 import { OperatorRequestError, requirePathString } from "./validation.js";
@@ -177,6 +180,94 @@ function parseAssetQuery(request: FastifyRequest): SourceAssetQuery {
     ...(search ? { search } : {}),
     ...(page === undefined ? {} : { page }),
     ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseCustomTaxonomyQuery(request: FastifyRequest): SourceCustomTaxonomyQuery {
+  const input = query(request);
+  const allowed = new Set(["contentType", "search", "page", "limit"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+  const search = optionalString(input, "search");
+  const page = optionalInteger(input, "page", 1, 1000000);
+  const limit = optionalInteger(input, "limit", 1, 100);
+  return {
+    contentType,
+    ...(search ? { search } : {}),
+    ...(page === undefined ? {} : { page }),
+    ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseCustomTaxonomyCreateBody(body: unknown): SourceCustomTaxonomyCreateBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["contentType", "name", "slug", "description"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+  const name = input.name;
+  if (typeof name !== "string" || !name.trim()) throw new OperatorRequestError("name is required");
+  if (name.trim().length > 200) throw new OperatorRequestError("name must not exceed 200 characters");
+  const slug = input.slug;
+  if (slug !== undefined && (typeof slug !== "string" || !slug.trim())) {
+    throw new OperatorRequestError("slug must be a non-empty string when provided");
+  }
+  if (typeof slug === "string" && slug.trim().length > 200) {
+    throw new OperatorRequestError("slug must not exceed 200 characters");
+  }
+  const description = input.description;
+  if (description !== undefined && typeof description !== "string") {
+    throw new OperatorRequestError("description must be a string when provided");
+  }
+  if (typeof description === "string" && description.length > 2000) {
+    throw new OperatorRequestError("description must not exceed 2000 characters");
+  }
+  return {
+    contentType,
+    name: name.trim(),
+    ...(typeof slug === "string" ? { slug: slug.trim() } : {}),
+    ...(typeof description === "string" ? { description: description.trim() } : {}),
+  };
+}
+
+function parseTaxonomySelectionBody(body: unknown): SourceTaxonomySelectionBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "names"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+  if (!Array.isArray(input.names)) throw new OperatorRequestError("names must be an array");
+  const names = input.names.map((name) => {
+    if (typeof name !== "string" || !name.trim()) {
+      throw new OperatorRequestError("names must contain non-empty strings");
+    }
+    if (name.trim().length > 200) {
+      throw new OperatorRequestError("taxonomy names must not exceed 200 characters");
+    }
+    return name.trim();
+  });
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    contentType,
+    names: [...new Set(names)],
   };
 }
 
@@ -664,6 +755,105 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           revisionId: value.publication.publication.current.id,
           version: value.publication.version,
           authorRemoteId: value.author.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.get("/v1/connections/:connectionId/taxonomies", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const input = query(request);
+    const unknown = Object.keys(input).find((key) => key !== "contentType");
+    if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+    const contentType = optionalContentType(input.contentType);
+    if (!contentType) throw new OperatorRequestError("contentType is required");
+    return {
+      items: await domainCall(() => manager(options).listTaxonomyDefinitions(connectionId, contentType)),
+    };
+  });
+
+  app.get("/v1/connections/:connectionId/taxonomies/:taxonomyKey/terms", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const taxonomyKey = requirePathString(values.taxonomyKey, "taxonomyKey");
+    return domainCall(() => manager(options).listCustomTaxonomy(
+      connectionId,
+      taxonomyKey,
+      parseCustomTaxonomyQuery(request),
+    ));
+  });
+
+  app.post("/v1/connections/:connectionId/taxonomies/:taxonomyKey/terms", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const taxonomyKey = requirePathString(values.taxonomyKey, "taxonomyKey");
+    const body = parseCustomTaxonomyCreateBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-custom-taxonomy.create",
+      resource: { type: "source-taxonomy", id: `${connectionId}:${taxonomyKey}:${body.slug ?? body.name}` },
+      evidence: {
+        connectionId,
+        taxonomyKey,
+        contentType: body.contentType,
+        name: body.name,
+        requestedSlug: body.slug ?? null,
+        descriptionPresent: Boolean(body.description),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).createCustomTaxonomyTerm(
+        connectionId,
+        taxonomyKey,
+        body,
+      )),
+      success: (value) => ({
+        evidence: {
+          remoteId: value.remoteId,
+          name: value.name,
+          slug: value.slug,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.post("/v1/connections/:connectionId/taxonomies/:taxonomyKey/selection", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const taxonomyKey = requirePathString(values.taxonomyKey, "taxonomyKey");
+    const body = parseTaxonomySelectionBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-custom-taxonomy.selection.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        taxonomyKey,
+        contentType: body.contentType,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        selectedCount: body.names.length,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setTaxonomySelection(
+        connectionId,
+        taxonomyKey,
+        body,
+      )),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          selectedCount: value.names.length,
         },
       }),
     });
