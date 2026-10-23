@@ -41,6 +41,44 @@ function parseAssets(value: JsonValue | undefined): readonly CompiledWordPressAs
   });
 }
 
+function parseCustomTaxonomies(
+  value: JsonValue | undefined,
+): WordPressProjectionPayload["customTaxonomies"] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("WordPress projection customTaxonomies must be an array");
+  const seenKeys = new Set<string>();
+  const seenRestBases = new Set<string>();
+  return value.map((entry) => {
+    if (!isRecord(entry)) throw new Error("WordPress projection custom taxonomy must be an object");
+    const taxonomyKey = requiredString(entry, "taxonomyKey").trim();
+    const restBase = requiredString(entry, "restBase").trim();
+    if (!/^[a-z0-9_-]+$/.test(taxonomyKey)) {
+      throw new Error("WordPress projection custom taxonomy key is invalid");
+    }
+    if (!/^[a-z0-9_-]+$/.test(restBase)) {
+      throw new Error("WordPress projection custom taxonomy REST base is invalid");
+    }
+    if (taxonomyKey === "category" || taxonomyKey === "post_tag") {
+      throw new Error("WordPress core categories and tags must not use customTaxonomies");
+    }
+    if (["categories", "tags", "featured_media", "author", "parent", "template", "menu_order"].includes(restBase)) {
+      throw new Error(`WordPress custom taxonomy REST base collides with a reserved post field: ${restBase}`);
+    }
+    if (seenKeys.has(taxonomyKey)) throw new Error(`Duplicate WordPress custom taxonomy key: ${taxonomyKey}`);
+    if (seenRestBases.has(restBase)) throw new Error(`Duplicate WordPress custom taxonomy REST base: ${restBase}`);
+    seenKeys.add(taxonomyKey);
+    seenRestBases.add(restBase);
+    const names = stringArray(entry.names)
+      .map((name) => name.trim())
+      .filter(Boolean);
+    return {
+      taxonomyKey,
+      restBase,
+      names: [...new Set(names)].sort(),
+    };
+  });
+}
+
 export interface ParsedWordPressPayload extends WordPressProjectionPayload {
   readonly assetsParsed: readonly CompiledWordPressAsset[];
 }
@@ -112,6 +150,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     bodyTemplate: requiredString(projection.payload, "bodyTemplate"),
     tags: stringArray(projection.payload.tags),
     categories: stringArray(projection.payload.categories),
+    customTaxonomies: parseCustomTaxonomies(projection.payload.customTaxonomies),
     assets: projection.payload.assets && Array.isArray(projection.payload.assets)
       ? projection.payload.assets.filter(isRecord)
       : [],
