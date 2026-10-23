@@ -11,6 +11,7 @@ import {
   stableJson,
   stripMarker,
 } from "./fingerprint.js";
+import { parsePayload } from "./payload.js";
 import { WORDPRESS_REST_EXTENSION_ID, parseSettings } from "./settings.js";
 import { findOrCreateTerm } from "./taxonomy.js";
 import type {
@@ -222,7 +223,30 @@ function revisionView(revision: WordPressRevisionRecord): WordPressRevisionView 
   };
 }
 
-function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): string {
+function remoteStateHash(
+  post: WordPressPostRecord,
+  bodyWithoutMarker: string,
+  customTaxonomies: readonly { readonly taxonomyKey: string; readonly restBase: string }[] = [],
+): string {
+  const dynamicTaxonomies = customTaxonomies
+    .map((taxonomy) => {
+      const raw = post[taxonomy.restBase];
+      const ids = Array.isArray(raw)
+        ? raw
+            .filter(
+              (value): value is number =>
+                typeof value === "number" && Number.isSafeInteger(value) && value > 0,
+            )
+            .sort((left, right) => left - right)
+        : [];
+      return {
+        taxonomyKey: taxonomy.taxonomyKey,
+        restBase: taxonomy.restBase,
+        ids,
+      };
+    })
+    .sort((left, right) => left.taxonomyKey.localeCompare(right.taxonomyKey));
+
   return sha256(
     stableJson({
       title: rawValue(post.title),
@@ -233,8 +257,17 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       content: bodyWithoutMarker,
       categories: [...(post.categories ?? [])].sort((left, right) => left - right),
       tags: [...(post.tags ?? [])].sort((left, right) => left - right),
+      customTaxonomies: dynamicTaxonomies,
       featuredMedia: post.featured_media ?? 0,
       author: post.author ?? null,
+      parent: post.parent ?? 0,
+      template: post.template ?? "",
+      menuOrder: post.menu_order ?? 0,
+      password: post.password ?? "",
+      commentStatus: post.comment_status ?? null,
+      pingStatus: post.ping_status ?? null,
+      sticky: post.sticky ?? null,
+      format: post.format ?? null,
     }),
   );
 }
@@ -724,12 +757,13 @@ export class WordPressContentService {
       throw new Error("WordPress post is already owned by a different Blogmaatic publication or route");
     }
     const raw = stripMarker(rawValue(current.content));
+    const payload = parsePayload(projection);
     const marked = documentWithMarker(raw, {
       version: 1,
       publicationId: projection.publicationId,
       routeId: projection.routeId,
       projectionFingerprint: projection.fingerprint,
-      renderedHash: remoteStateHash(current, raw),
+      renderedHash: remoteStateHash(current, raw, payload.customTaxonomies),
     });
     const saved = await client.requestJson<WordPressPostRecord>(
       `/${restBase}/${requireRemoteId(remoteId)}`,
