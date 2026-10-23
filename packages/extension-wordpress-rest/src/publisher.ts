@@ -199,6 +199,56 @@ function sourcePageStructure(
   return { parentId, template, menuOrder: menuOrderValue };
 }
 
+function sourceEditorialOptions(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+): {
+  readonly password: string;
+  readonly commentStatus?: "open" | "closed";
+  readonly pingStatus?: "open" | "closed";
+  readonly sticky?: boolean;
+  readonly format?: string;
+} | undefined {
+  const source = publication.current.content.attributes.sourceEditorial;
+  if (!isRecord(source)) return undefined;
+  if (
+    source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    source.connectionId !== route.destination.connectionId ||
+    source.contentType !== contentType
+  ) {
+    return undefined;
+  }
+  if (typeof source.password !== "string") throw new Error("Canonical WordPress editorial password must be a string");
+  const commentStatus = source.commentStatus;
+  if (commentStatus !== undefined && commentStatus !== "open" && commentStatus !== "closed") {
+    throw new Error("Canonical WordPress editorial commentStatus must be open or closed");
+  }
+  const pingStatus = source.pingStatus;
+  if (pingStatus !== undefined && pingStatus !== "open" && pingStatus !== "closed") {
+    throw new Error("Canonical WordPress editorial pingStatus must be open or closed");
+  }
+  const sticky = source.sticky;
+  if (sticky !== undefined && typeof sticky !== "boolean") {
+    throw new Error("Canonical WordPress editorial sticky must be a boolean");
+  }
+  const format = source.format;
+  const formats = new Set(["standard", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"]);
+  if (format !== undefined && (typeof format !== "string" || !formats.has(format))) {
+    throw new Error("Unsupported canonical WordPress post format");
+  }
+  if (sticky === true && source.password.length > 0) {
+    throw new Error("WordPress sticky posts cannot be password protected");
+  }
+  return {
+    password: source.password,
+    ...(commentStatus === undefined ? {} : { commentStatus }),
+    ...(pingStatus === undefined ? {} : { pingStatus }),
+    ...(sticky === undefined ? {} : { sticky }),
+    ...(format === undefined ? {} : { format }),
+  };
+}
+
 function featuredAssetId(publication: Publication, route: PublicationRoute): string | undefined {
   const explicit = getString(variant(route), "featuredAssetId");
   if (explicit) return explicit;
@@ -226,6 +276,11 @@ function semanticPayload(
     parentId: payload.parentId ?? null,
     template: payload.template ?? null,
     menuOrder: payload.menuOrder ?? null,
+    password: payload.password ?? null,
+    commentStatus: payload.commentStatus ?? null,
+    pingStatus: payload.pingStatus ?? null,
+    sticky: payload.sticky ?? null,
+    format: payload.format ?? null,
     assets: parsedAssets.map((asset) => ({
       assetId: asset.assetId,
       source: asset.localPath ? "managed-local" : asset.source,
@@ -261,6 +316,11 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       parent: post.parent ?? 0,
       template: post.template ?? "",
       menuOrder: post.menu_order ?? 0,
+      password: post.password ?? "",
+      commentStatus: post.comment_status ?? null,
+      pingStatus: post.ping_status ?? null,
+      sticky: post.sticky ?? null,
+      format: post.format ?? null,
     }),
   );
 }
@@ -378,6 +438,11 @@ function postRequestBody(
     ...(payload.parentId === undefined ? {} : { parent: payload.parentId }),
     ...(payload.template === undefined ? {} : { template: payload.template }),
     ...(payload.menuOrder === undefined ? {} : { menu_order: payload.menuOrder }),
+    ...(payload.password === undefined ? {} : { password: payload.password }),
+    ...(payload.commentStatus === undefined ? {} : { comment_status: payload.commentStatus }),
+    ...(payload.pingStatus === undefined ? {} : { ping_status: payload.pingStatus }),
+    ...(payload.sticky === undefined ? {} : { sticky: payload.sticky }),
+    ...(payload.format === undefined ? {} : { format: payload.format }),
     ...(payload.status === "future" && payload.scheduledAt
       ? { date_gmt: payload.scheduledAt.replace(/\.\d{3}Z$/, "") }
       : {}),
@@ -483,6 +548,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const featured = featuredAssetId(publication, route);
     const authorId = sourceAuthorId(publication, route);
     const pageStructure = sourcePageStructure(publication, route, contentType);
+    const editorial = sourceEditorialOptions(publication, route, contentType);
     const payload: WordPressProjectionPayload = {
       contentType,
       title: publication.current.content.title,
@@ -510,6 +576,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         template: pageStructure.template,
         menuOrder: pageStructure.menuOrder,
       }),
+      ...(editorial === undefined ? {} : editorial),
     };
     const fingerprint = projectionFingerprint(semanticPayload(payload, assets));
     return {
