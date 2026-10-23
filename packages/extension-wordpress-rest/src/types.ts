@@ -33,6 +33,11 @@ export interface WordPressProjectionPayload {
   readonly bodyTemplate: string;
   readonly tags: readonly string[];
   readonly categories: readonly string[];
+  readonly customTaxonomies: readonly {
+    readonly taxonomyKey: string;
+    readonly restBase: string;
+    readonly names: readonly string[];
+  }[];
   readonly assets: readonly Readonly<Record<string, JsonValue>>[];
   readonly featuredAssetId?: string;
   readonly authorId?: number;
@@ -47,6 +52,7 @@ export interface WordPressProjectionPayload {
 }
 
 export interface WordPressPostRecord {
+  readonly [key: string]: unknown;
   readonly id: number;
   readonly author?: number;
   readonly date_gmt?: string | null;
@@ -142,6 +148,27 @@ export interface WordPressUserPage {
   readonly hasMore: boolean;
 }
 
+export interface WordPressTaxonomyRecord {
+  readonly slug?: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly hierarchical?: boolean;
+  readonly types?: readonly string[];
+  readonly rest_base?: string;
+  readonly rest_namespace?: string;
+  readonly visibility?: Readonly<Record<string, boolean>>;
+}
+
+export interface WordPressTaxonomyView {
+  readonly key: string;
+  readonly name: string;
+  readonly restBase: string;
+  readonly hierarchical: boolean;
+  readonly types: readonly string[];
+  readonly description?: string;
+  readonly restNamespace?: string;
+}
+
 export interface WordPressTermRecord {
   readonly id: number;
   readonly name: string;
@@ -227,6 +254,7 @@ export interface WordPressPostView {
   readonly modifiedGmt?: string;
   readonly categoryIds: readonly number[];
   readonly tagIds: readonly number[];
+  readonly customTaxonomyIds: Readonly<Record<string, readonly number[]>>;
   readonly featuredMediaId?: number;
   readonly parentId?: number;
   readonly template?: string;
@@ -261,5 +289,12 @@ export interface WordPressImportSnapshot {
   readonly post: WordPressPostView;
   readonly categoryNames: readonly string[];
   readonly tagNames: readonly string[];
+  readonly customTaxonomies: readonly {
+    readonly taxonomyKey: string;
+    readonly restBase: string;
+    readonly hierarchical: boolean;
+    readonly ids: readonly number[];
+    readonly names: readonly string[];
+  }[];
   readonly featuredMedia?: WordPressMediaRecord;
 }
