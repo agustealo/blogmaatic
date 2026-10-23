@@ -135,6 +135,54 @@ function tagNames(publication: Publication, route: PublicationRoute): readonly s
   return [...new Set([...publication.current.content.tags, ...extra].map((value) => value.trim()).filter(Boolean))].sort();
 }
 
+function sourceCustomTaxonomies(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+): WordPressProjectionPayload["customTaxonomies"] {
+  const source = publication.current.content.attributes.sourceTaxonomies;
+  if (!isRecord(source)) return [];
+  if (
+    source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    source.connectionId !== route.destination.connectionId ||
+    source.contentType !== contentType
+  ) {
+    return [];
+  }
+  if (!isRecord(source.selections)) {
+    throw new Error("Canonical WordPress sourceTaxonomies selections must be an object");
+  }
+
+  const result: WordPressProjectionPayload["customTaxonomies"][number][] = [];
+  const restBases = new Set<string>();
+  for (const [taxonomyKey, selection] of Object.entries(source.selections)) {
+    if (!/^[a-z0-9_-]+$/.test(taxonomyKey) || taxonomyKey === "category" || taxonomyKey === "post_tag") {
+      throw new Error(`Invalid canonical WordPress custom taxonomy key: ${taxonomyKey}`);
+    }
+    if (!isRecord(selection)) {
+      throw new Error(`Canonical WordPress custom taxonomy selection must be an object: ${taxonomyKey}`);
+    }
+    const restBase = selection.restBase;
+    if (typeof restBase !== "string" || !/^[a-z0-9_-]+$/.test(restBase)) {
+      throw new Error(`Invalid canonical WordPress custom taxonomy REST base: ${taxonomyKey}`);
+    }
+    if (restBases.has(restBase)) {
+      throw new Error(`Duplicate canonical WordPress custom taxonomy REST base: ${restBase}`);
+    }
+    restBases.add(restBase);
+    const names = stringArray(selection.names)
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (names.length === 0) continue;
+    result.push({
+      taxonomyKey,
+      restBase,
+      names: [...new Set(names)].sort(),
+    });
+  }
+  return result.sort((left, right) => left.taxonomyKey.localeCompare(right.taxonomyKey));
+}
+
 function sourceAuthorId(publication: Publication, route: PublicationRoute): number | undefined {
   const sourceAuthor = publication.current.content.attributes.sourceAuthor;
   if (!isRecord(sourceAuthor)) return undefined;
@@ -271,6 +319,13 @@ function semanticPayload(
     bodyTemplate: payload.bodyTemplate,
     tags: [...payload.tags].sort(),
     categories: [...payload.categories].sort(),
+    customTaxonomies: payload.customTaxonomies
+      .map((taxonomy) => ({
+        taxonomyKey: taxonomy.taxonomyKey,
+        restBase: taxonomy.restBase,
+        names: [...taxonomy.names].sort(),
+      }))
+      .sort((left, right) => left.taxonomyKey.localeCompare(right.taxonomyKey)),
     featuredAssetId: payload.featuredAssetId ?? null,
     authorId: payload.authorId ?? null,
     parentId: payload.parentId ?? null,
@@ -549,6 +604,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const authorId = sourceAuthorId(publication, route);
     const pageStructure = sourcePageStructure(publication, route, contentType);
     const editorial = sourceEditorialOptions(publication, route, contentType);
+    const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType);
     const payload: WordPressProjectionPayload = {
       contentType,
       title: publication.current.content.title,
@@ -558,6 +614,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       bodyTemplate: htmlBody(publication),
       tags: tagNames(publication, route),
       categories: categoryNames(publication, route),
+      customTaxonomies,
       assets: assets.map((asset) => ({
         assetId: asset.assetId,
         source: asset.source,
