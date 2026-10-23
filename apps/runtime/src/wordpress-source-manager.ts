@@ -121,7 +121,7 @@ function sourceContentTypeRecord(
       wordpressTypeSlug: type.slug,
       restNamespace: type.restNamespace ?? null,
       taxonomies: [...type.taxonomies],
-      supports: [...(type.supports ?? [])],
+      ...(type.supports === undefined ? {} : { supports: [...type.supports] }),
     },
   };
 }
