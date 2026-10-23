@@ -78,6 +78,30 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
   ) {
     throw new Error("WordPress projection menuOrder must be a non-negative integer");
   }
+  const passwordRaw = projection.payload.password;
+  if (passwordRaw !== undefined && typeof passwordRaw !== "string") {
+    throw new Error("WordPress projection password must be a string");
+  }
+  const commentStatusRaw = projection.payload.commentStatus;
+  if (commentStatusRaw !== undefined && commentStatusRaw !== "open" && commentStatusRaw !== "closed") {
+    throw new Error("WordPress projection commentStatus must be open or closed");
+  }
+  const pingStatusRaw = projection.payload.pingStatus;
+  if (pingStatusRaw !== undefined && pingStatusRaw !== "open" && pingStatusRaw !== "closed") {
+    throw new Error("WordPress projection pingStatus must be open or closed");
+  }
+  const stickyRaw = projection.payload.sticky;
+  if (stickyRaw !== undefined && typeof stickyRaw !== "boolean") {
+    throw new Error("WordPress projection sticky must be a boolean");
+  }
+  const formatRaw = projection.payload.format;
+  const formats = new Set(["standard", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"]);
+  if (formatRaw !== undefined && (typeof formatRaw !== "string" || !formats.has(formatRaw))) {
+    throw new Error("Unsupported WordPress post format");
+  }
+  if (stickyRaw === true && typeof passwordRaw === "string" && passwordRaw.length > 0) {
+    throw new Error("WordPress sticky posts cannot be password protected");
+  }
   const assetsParsed = parseAssets(projection.payload.assets);
   return {
     contentType: requiredString(projection.payload, "contentType"),
@@ -97,6 +121,11 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     ...(parentIdRaw === undefined ? {} : { parentId: parentIdRaw }),
     ...(templateRaw === undefined ? {} : { template: templateRaw }),
     ...(menuOrderRaw === undefined ? {} : { menuOrder: menuOrderRaw }),
+    ...(passwordRaw === undefined ? {} : { password: passwordRaw }),
+    ...(commentStatusRaw === undefined ? {} : { commentStatus: commentStatusRaw }),
+    ...(pingStatusRaw === undefined ? {} : { pingStatus: pingStatusRaw }),
+    ...(stickyRaw === undefined ? {} : { sticky: stickyRaw }),
+    ...(formatRaw === undefined ? {} : { format: formatRaw }),
     assetsParsed,
   };
 }
