@@ -368,9 +368,7 @@ export class WordPressContentService {
   }
 
   async list(connectionId: string, query: WordPressPostQuery = {}): Promise<WordPressPostPage> {
-    const { client, restBase, defaultRestBase } = this.#client(connectionId, query.contentType);
-    const resolvedContentType = query.contentType ?? defaultRestBase;
-    const taxonomies = await this.listTaxonomies(connectionId, resolvedContentType);
+    const { client, restBase } = this.#client(connectionId, query.contentType);
     const page = requirePage(query.page);
     const perPage = requirePerPage(query.perPage);
     const params = new URLSearchParams({
@@ -386,7 +384,7 @@ export class WordPressContentService {
       `/${restBase}?${params.toString()}`,
     );
     return {
-      items: records.map((record) => postView(record, taxonomies)),
+      items: records.map((record) => postView(record)),
       page,
       perPage,
       hasMore: records.length === perPage,
@@ -394,9 +392,7 @@ export class WordPressContentService {
   }
 
   async get(connectionId: string, remoteId: string, contentType?: string): Promise<WordPressPostView> {
-    const resolved = contentType ?? this.defaultContentType(connectionId);
-    const taxonomies = await this.listTaxonomies(connectionId, resolved);
-    return postView(await this.#getRecord(connectionId, remoteId, contentType), taxonomies);
+    return postView(await this.#getRecord(connectionId, remoteId, contentType));
   }
 
   async importSnapshot(
