@@ -384,6 +384,25 @@ export interface SourceCustomTaxonomyCreateBody {
   readonly description?: string;
 }
 
+export interface SourceCustomTaxonomyTermRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly taxonomyKey: string;
+  readonly remoteId: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly description?: string;
+  readonly count?: number;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceCustomTaxonomyPage {
+  readonly items: readonly SourceCustomTaxonomyTermRecord[];
+  readonly page: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
 export interface SourceTaxonomySelectionBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
@@ -456,12 +475,12 @@ export interface OperatorSourceContentManager {
     connectionId: string,
     taxonomyKey: string,
     query: SourceCustomTaxonomyQuery,
-  ): Promise<SourceTaxonomyPage>;
+  ): Promise<SourceCustomTaxonomyPage>;
   createCustomTaxonomyTerm(
     connectionId: string,
     taxonomyKey: string,
     body: SourceCustomTaxonomyCreateBody,
-  ): Promise<SourceTaxonomyRecord>;
+  ): Promise<SourceCustomTaxonomyTermRecord>;
   setTaxonomySelection(
     connectionId: string,
     taxonomyKey: string,
