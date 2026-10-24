@@ -135,6 +135,61 @@ function tagNames(publication: Publication, route: PublicationRoute): readonly s
   return [...new Set([...publication.current.content.tags, ...extra].map((value) => value.trim()).filter(Boolean))].sort();
 }
 
+function sourceCustomTaxonomies(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+): Readonly<Record<string, {
+  readonly restBase: string;
+  readonly restNamespace?: string;
+  readonly names: readonly string[];
+}>> {
+  const source = publication.current.content.attributes.sourceTaxonomies;
+  if (!isRecord(source)) return {};
+  if (
+    source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    source.connectionId !== route.destination.connectionId ||
+    source.contentType !== contentType
+  ) {
+    return {};
+  }
+  if (!isRecord(source.taxonomies)) {
+    throw new Error("Canonical WordPress source taxonomies must be an object");
+  }
+  const reserved = new Set([
+    "title", "content", "excerpt", "slug", "status", "categories", "tags",
+    "featured_media", "author", "parent", "template", "menu_order", "password",
+    "comment_status", "ping_status", "sticky", "format", "date_gmt",
+  ]);
+  const result: Record<string, {
+    readonly restBase: string;
+    readonly restNamespace?: string;
+    readonly names: readonly string[];
+  }> = {};
+  for (const [rawKey, rawValue] of Object.entries(source.taxonomies)) {
+    const taxonomyKey = rawKey.trim();
+    if (!taxonomyKey || taxonomyKey === "category" || taxonomyKey === "post_tag") {
+      throw new Error("Canonical custom taxonomy key must not overlap categories or tags");
+    }
+    if (!isRecord(rawValue)) throw new Error(`Canonical custom taxonomy ${taxonomyKey} must be an object`);
+    const restBase = rawValue.restBase;
+    if (typeof restBase !== "string" || !/^[a-zA-Z0-9._-]+$/.test(restBase) || reserved.has(restBase)) {
+      throw new Error(`Canonical custom taxonomy ${taxonomyKey} has invalid or reserved restBase`);
+    }
+    const restNamespace = rawValue.restNamespace;
+    if (restNamespace !== undefined && typeof restNamespace !== "string") {
+      throw new Error(`Canonical custom taxonomy ${taxonomyKey} restNamespace must be a string`);
+    }
+    const names = stringArray(rawValue.names);
+    result[taxonomyKey] = {
+      restBase,
+      ...(typeof restNamespace === "string" && restNamespace.trim() ? { restNamespace: restNamespace.trim() } : {}),
+      names: [...new Set(names.map((name) => name.trim()).filter(Boolean))].sort(),
+    };
+  }
+  return result;
+}
+
 function sourceAuthorId(publication: Publication, route: PublicationRoute): number | undefined {
   const sourceAuthor = publication.current.content.attributes.sourceAuthor;
   if (!isRecord(sourceAuthor)) return undefined;
@@ -271,6 +326,15 @@ function semanticPayload(
     bodyTemplate: payload.bodyTemplate,
     tags: [...payload.tags].sort(),
     categories: [...payload.categories].sort(),
+    customTaxonomies: Object.fromEntries(
+      Object.entries(payload.customTaxonomies ?? {})
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => [key, {
+          restBase: value.restBase,
+          restNamespace: value.restNamespace ?? null,
+          names: [...value.names].sort(),
+        }]),
+    ),
     featuredAssetId: payload.featuredAssetId ?? null,
     authorId: payload.authorId ?? null,
     parentId: payload.parentId ?? null,
@@ -300,7 +364,26 @@ function rawValue(field: { readonly raw?: string; readonly rendered?: string } |
   return field?.raw ?? field?.rendered ?? "";
 }
 
-function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): string {
+function remoteStateHash(
+  post: WordPressPostRecord,
+  bodyWithoutMarker: string,
+  customTaxonomies: Readonly<Record<string, {
+    readonly restBase: string;
+    readonly names: readonly string[];
+  }>> = {},
+): string {
+  const customState = Object.fromEntries(
+    Object.entries(customTaxonomies)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([taxonomyKey, definition]) => {
+        const raw = post[definition.restBase];
+        const ids = Array.isArray(raw)
+          ? raw.filter((value): value is number =>
+              typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+          : [];
+        return [taxonomyKey, [...ids].sort((left, right) => left - right)];
+      }),
+  );
   return sha256(
     stableJson({
       title: rawValue(post.title),
@@ -311,6 +394,7 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       content: bodyWithoutMarker,
       categories: [...(post.categories ?? [])].sort((left, right) => left - right),
       tags: [...(post.tags ?? [])].sort((left, right) => left - right),
+      customTaxonomies: customState,
       featuredMedia: post.featured_media ?? 0,
       author: post.author ?? null,
       parent: post.parent ?? 0,
@@ -403,7 +487,8 @@ function inspectRecord(
       detail: "WordPress object ownership marker belongs to a different publication or route",
     };
   }
-  const actualRemoteHash = remoteStateHash(post, stripMarker(raw));
+  const payload = parsePayload(projection);
+  const actualRemoteHash = remoteStateHash(post, stripMarker(raw), payload.customTaxonomies);
   const synchronized =
     marker.projectionFingerprint === projection.fingerprint &&
     marker.renderedHash === actualRemoteHash;
@@ -423,6 +508,7 @@ function postRequestBody(
   content: string,
   categories: readonly number[],
   tags: readonly number[],
+  customTaxonomyIds: Readonly<Record<string, readonly number[]>>,
   featuredMedia: number,
 ): Readonly<Record<string, unknown>> {
   return {
@@ -433,6 +519,7 @@ function postRequestBody(
     status: payload.status,
     categories,
     tags,
+    ...customTaxonomyIds,
     featured_media: featuredMedia,
     ...(payload.authorId === undefined ? {} : { author: payload.authorId }),
     ...(payload.parentId === undefined ? {} : { parent: payload.parentId }),
@@ -549,6 +636,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const authorId = sourceAuthorId(publication, route);
     const pageStructure = sourcePageStructure(publication, route, contentType);
     const editorial = sourceEditorialOptions(publication, route, contentType);
+    const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType);
     const payload: WordPressProjectionPayload = {
       contentType,
       title: publication.current.content.title,
@@ -558,6 +646,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       bodyTemplate: htmlBody(publication),
       tags: tagNames(publication, route),
       categories: categoryNames(publication, route),
+      ...(Object.keys(customTaxonomies).length === 0 ? {} : { customTaxonomies }),
       assets: assets.map((asset) => ({
         assetId: asset.assetId,
         source: asset.source,
@@ -667,6 +756,19 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       settings.createMissingTerms,
     );
     const tags = await resolveTerms(client, "tags", payload.tags, settings.createMissingTerms);
+    const customTaxonomyIds: Record<string, readonly number[]> = {};
+    for (const [taxonomyKey, definition] of Object.entries(payload.customTaxonomies)) {
+      if (customTaxonomyIds[definition.restBase] !== undefined) {
+        throw new Error(`Multiple WordPress taxonomies resolve to the same REST base: ${definition.restBase}`);
+      }
+      customTaxonomyIds[definition.restBase] = await resolveTerms(
+        client,
+        definition.restBase,
+        definition.names,
+        settings.createMissingTerms,
+        definition.restNamespace,
+      );
+    }
     let featuredMedia = 0;
     if (payload.featuredAssetId) {
       const media = publishedMedia.find((candidate) => candidate.assetId === payload.featuredAssetId);
@@ -686,6 +788,14 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         content: body,
         categories: [...categories].sort((left, right) => left - right),
         tags: [...tags].sort((left, right) => left - right),
+        customTaxonomies: Object.fromEntries(
+          Object.entries(payload.customTaxonomies)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, definition]) => [
+              key,
+              [...(customTaxonomyIds[definition.restBase] ?? [])].sort((left, right) => left - right),
+            ]),
+        ),
         featuredMedia,
         author: payload.authorId ?? null,
         parent: payload.parentId ?? 0,
@@ -700,7 +810,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       projectionFingerprint: request.projection.fingerprint,
       renderedHash: preliminaryHash,
     });
-    const postBody = postRequestBody(payload, markedContent, categories, tags, featuredMedia);
+    const postBody = postRequestBody(payload, markedContent, categories, tags, customTaxonomyIds, featuredMedia);
     const endpoint = request.existingRemote
       ? `/${restBase}/${request.existingRemote.id}`
       : `/${restBase}`;
@@ -711,7 +821,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
 
     let current = await fetchPost(client, restBase, String(saved.id));
     const currentBody = stripMarker(sourceBody(current));
-    const actualHash = remoteStateHash(current, currentBody);
+    const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies);
     const currentMarker = parseMarker(sourceBody(current));
     if (
       currentMarker?.projectionFingerprint !== request.projection.fingerprint ||
@@ -757,6 +867,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
           })) as unknown as JsonValue,
         categoryIds: [...categories],
         tagIds: [...tags],
+        customTaxonomyIds: customTaxonomyIds as unknown as JsonValue,
         idempotencyKey: request.idempotencyKey,
         serverNormalized: actualHash !== preliminaryHash,
         wordpressRevisionId: nativeRevision?.id ?? null,
