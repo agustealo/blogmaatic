@@ -41,6 +41,24 @@ function parseAssets(value: JsonValue | undefined): readonly CompiledWordPressAs
   });
 }
 
+function secretLikeMetaKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return /(^|_)(password|passwd|secret|token|credential|credentials|api_key|apikey|access_key|private_key|auth_token)($|_)/.test(normalized);
+}
+
+function parseRestMeta(value: JsonValue | undefined): Readonly<Record<string, JsonValue>> {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new Error("WordPress restMeta must be an object");
+  const result: Record<string, JsonValue> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = rawKey.trim();
+    if (!key) throw new Error("WordPress REST meta key must be non-empty");
+    if (secretLikeMetaKey(key)) throw new Error(`WordPress REST meta key is not allowed: ${key}`);
+    result[key] = rawValue;
+  }
+  return result;
+}
+
 function parseCustomTaxonomies(
   value: JsonValue | undefined,
 ): Readonly<Record<string, { readonly restBase: string; readonly restNamespace?: string; readonly names: readonly string[] }>> {
@@ -74,6 +92,7 @@ export interface ParsedWordPressPayload extends WordPressProjectionPayload {
     readonly restNamespace?: string;
     readonly names: readonly string[];
   }>>;
+  readonly restMeta: Readonly<Record<string, JsonValue>>;
   readonly assetsParsed: readonly CompiledWordPressAsset[];
 }
 
@@ -136,6 +155,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
   }
   const assetsParsed = parseAssets(projection.payload.assets);
   const customTaxonomies = parseCustomTaxonomies(projection.payload.customTaxonomies);
+  const restMeta = parseRestMeta(projection.payload.restMeta);
   return {
     contentType: requiredString(projection.payload, "contentType"),
     title: requiredString(projection.payload, "title"),
@@ -146,6 +166,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     tags: stringArray(projection.payload.tags),
     categories: stringArray(projection.payload.categories),
     customTaxonomies,
+    restMeta,
     assets: projection.payload.assets && Array.isArray(projection.payload.assets)
       ? projection.payload.assets.filter(isRecord)
       : [],
