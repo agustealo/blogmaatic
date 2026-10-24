@@ -473,6 +473,8 @@ export interface OperatorSourceContentManager {
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   createTaxonomy(connectionId: string, body: SourceTaxonomyCreateBody): Promise<SourceTaxonomyRecord>;
   setTaxonomySelections(connectionId: string, body: SourceTaxonomySelectionBody): Promise<SourceTaxonomySelectionResult>;
+  listMetaFields(connectionId: string, contentType: string): Promise<readonly SourceMetaFieldDefinition[]>;
+  setMetaValues(connectionId: string, body: SourceMetaValuesBody): Promise<SourceMetaValuesResult>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
   restore(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
