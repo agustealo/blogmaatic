@@ -4,6 +4,8 @@ import { Link, useNavigate, useParams } from "react-router";
 import type {
   OperatorClientError,
   OperatorDistributionHistoryPage,
+  PublicationDestinationMatrix,
+  PublicationDestinationMatrixItem,
   PublicationGroupRegistryEntry,
   PublicationProjectionPreview,
   PublicationWorkspaceCreateBody,
@@ -1599,44 +1601,62 @@ function VersionsPanel({ publicationId, nonce }: { readonly publicationId: strin
   );
 }
 
+function destinationMatrixTone(state: PublicationDestinationMatrixItem["state"]): "good" | "warn" | "bad" | undefined {
+  if (state === "current") return "good";
+  if (state === "not_sent" || state === "update_available") return "warn";
+  return "bad";
+}
+
+function destinationMatrixLabel(state: PublicationDestinationMatrixItem["state"]): string {
+  switch (state) {
+    case "not_sent": return "Not sent";
+    case "current": return "Current";
+    case "update_available": return "Update available";
+    case "drifted": return "Drifted";
+    case "failed": return "Needs attention";
+  }
+}
+
 function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationWorkspaceEntry; readonly nonce: number }) {
   const { session } = useConnection();
   const client = session!.client;
-  const [records, setRecords] = useState<OperatorDistributionHistoryPage["items"]>([]);
+  const [matrix, setMatrix] = useState<PublicationDestinationMatrix | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    let active = true;
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    void client.listPublicationDistributions(entry.publication.id, { limit: 50 })
-      .then((page) => {
-        if (active) setRecords(page.items);
-      })
-      .catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause : new Error("Publishing state could not be loaded"));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
-  }, [client, entry.publication.id, nonce]);
-
-  const latestByRoute = useMemo(() => {
-    const map = new Map<string, (typeof records)[number]>();
-    for (const record of records) {
-      if (!map.has(record.routeId)) map.set(record.routeId, record);
+    try {
+      setMatrix(await client.getPublicationDestinations(entry.publication.id));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Destination state could not be loaded"));
+    } finally {
+      setLoading(false);
     }
-    return [...map.values()];
-  }, [records]);
+  }, [client, entry.publication.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load, entry.publication.current.id, nonce]);
+
+  const counts = useMemo(() => {
+    const summary = { current: 0, update: 0, unsent: 0, attention: 0 };
+    for (const item of matrix?.items ?? []) {
+      if (item.state === "current") summary.current += 1;
+      else if (item.state === "update_available") summary.update += 1;
+      else if (item.state === "not_sent") summary.unsent += 1;
+      else summary.attention += 1;
+    }
+    return summary;
+  }, [matrix]);
 
   return (
-    <Panel title="Publishing" meta="Current publication state" className="publication-publishing-panel">
+    <Panel title="Publishing" meta="Destination matrix for the current canonical revision" className="publication-publishing-panel">
       <ErrorBanner error={error} />
       <div className="publication-publishing-summary">
         <div>
-          <small>Status</small>
+          <small>Workflow</small>
           <StatusPill value={entry.publication.status} tone={statusTone(entry.publication.status)} />
         </div>
         <div>
@@ -1644,43 +1664,76 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
           <strong>r{entry.publication.current.ordinal}</strong>
         </div>
         <div>
-          <small>Source</small>
-          <strong>{provenanceSource(entry)}</strong>
+          <small>Destinations</small>
+          <strong>{loading ? "…" : matrix?.items.length ?? 0}</strong>
         </div>
         <div>
-          <small>Published routes</small>
-          <strong>{loading ? "…" : latestByRoute.length}</strong>
+          <small>Current</small>
+          <strong>{loading ? "…" : counts.current}</strong>
         </div>
       </div>
 
-      {latestByRoute.length ? (
-        <div className="publication-destination-summary">
-          {latestByRoute.slice(0, 6).map((record) => {
-            const current = record.revisionId === entry.publication.current.id;
-            return (
-              <div className="publication-destination-summary__row" key={record.routeId}>
-                <span>
-                  <strong>{destinationLabel(record.destination.extensionId)}</strong>
-                  <small>{record.destination.connectionId}</small>
-                </span>
-                <span>
+      {loading ? <LoadingBlock /> : null}
+      {!loading && matrix && matrix.items.length ? (
+        <>
+          {(counts.update || counts.unsent || counts.attention) ? (
+            <div className="publication-destination-alerts">
+              {counts.update ? <span><strong>{counts.update}</strong> update available</span> : null}
+              {counts.unsent ? <span><strong>{counts.unsent}</strong> not sent</span> : null}
+              {counts.attention ? <span className="publication-destination-alerts__bad"><strong>{counts.attention}</strong> need attention</span> : null}
+            </div>
+          ) : null}
+          <div className="publication-destination-matrix">
+            {matrix.items.map((item) => (
+              <article className="publication-destination-matrix__row" key={item.key}>
+                <div className="publication-destination-matrix__identity">
+                  <strong>{item.destination.extensionName}</strong>
+                  <small>{item.destination.connectionName} · {item.destination.channel}</small>
+                  <small>{item.groupName} · route {item.routeId}</small>
+                </div>
+                <div className="publication-destination-matrix__state">
+                  <StatusPill value={destinationMatrixLabel(item.state)} tone={destinationMatrixTone(item.state)} />
+                  <small>
+                    {item.latestRevisionId
+                      ? item.latestRevisionId === matrix.currentRevisionId
+                        ? `r${matrix.currentRevisionOrdinal} delivered`
+                        : "Earlier revision delivered"
+                      : "No delivery yet"}
+                  </small>
+                </div>
+                <div className="publication-destination-matrix__compile">
+                  <small>Current payload</small>
                   <StatusPill
-                    value={current ? record.receipt.status : "update available"}
-                    tone={current && record.receipt.status === "verified" ? "good" : "warn"}
+                    value={item.preview.status === "ready" ? "Compiles" : "Cannot compile"}
+                    tone={item.preview.status === "ready" ? "good" : "bad"}
                   />
-                  {record.receipt.remote?.url ? <a href={record.receipt.remote.url} target="_blank" rel="noreferrer">Open remote</a> : null}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      ) : !loading ? (
+                  {item.preview.status === "error" ? <small title={item.preview.error}>{item.preview.error}</small> : null}
+                </div>
+                <div className="publication-destination-matrix__remote">
+                  <small>Remote</small>
+                  {item.remote?.url ? (
+                    <a href={item.remote.url} target="_blank" rel="noreferrer">Open published item</a>
+                  ) : item.remote?.id ? <strong>{item.remote.id}</strong> : <span>Not created</span>}
+                  <small>{item.deliveryCount} deliver{item.deliveryCount === 1 ? "y" : "ies"}</small>
+                </div>
+                <div className="publication-destination-matrix__when">
+                  <small>Latest evidence</small>
+                  <strong>{item.latestRecordedAt ? formatInstant(item.latestRecordedAt) : "—"}</strong>
+                  {item.latestReceiptStatus ? <small>{item.latestReceiptStatus}</small> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : null}
+      {!loading && matrix && matrix.items.length === 0 ? (
         <div className="publication-publishing-empty">
-          <span>This publication has not been sent to a destination yet.</span>
+          <span>No enabled publishing routes are configured. Add or enable a Publication Group destination to distribute this content.</span>
         </div>
       ) : null}
 
       <div className="publication-publishing-actions">
+        <button className="button button--quiet" type="button" onClick={() => void load()} disabled={loading}>Refresh destinations</button>
         {entry.publication.status === "approved" ? (
           <Link className="button button--primary" to={`/schedules?create=1&publication=${encodeURIComponent(entry.publication.id)}`}>Schedule</Link>
         ) : (
@@ -1699,6 +1752,7 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
           <div><dt>Publication ID</dt><dd>{entry.publication.id}</dd></div>
           <div><dt>Revision ID</dt><dd>{entry.publication.current.id}</dd></div>
           <div><dt>Workspace version</dt><dd>v{entry.version}</dd></div>
+          {matrix ? <div><dt>Matrix generated</dt><dd>{formatInstant(matrix.generatedAt)}</dd></div> : null}
         </dl>
       </details>
     </Panel>
