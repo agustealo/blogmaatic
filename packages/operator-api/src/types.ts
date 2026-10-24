@@ -505,6 +505,7 @@ export interface PublicationWorkspaceCreateBody {
   readonly language?: string;
   readonly tags?: readonly string[];
   readonly categories?: readonly string[];
+  readonly targetGroupIds?: readonly string[];
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
@@ -519,6 +520,7 @@ export interface PublicationWorkspaceUpdateBody {
   readonly language?: string;
   readonly tags?: readonly string[];
   readonly categories?: readonly string[];
+  readonly targetGroupIds?: readonly string[];
   readonly featuredAssetId?: string | null;
   readonly slug?: string;
   readonly canonicalUrl?: string;
@@ -659,6 +661,8 @@ export interface PublicationDestinationMatrix {
   readonly currentRevisionId: string;
   readonly currentRevisionOrdinal: number;
   readonly generatedAt: string;
+  readonly targetGroupIds: readonly string[];
+  readonly unavailableTargetGroupIds: readonly string[];
   readonly items: readonly PublicationDestinationMatrixItem[];
 }
 
