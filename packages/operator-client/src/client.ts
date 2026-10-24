@@ -72,6 +72,9 @@ import type {
   SourceEditorialOptionsResult,
   SourceRevisionRestoreBody,
   SourceRevisionRestoreResult,
+  SourceMetaFieldDefinition,
+  SourceMetaValuesBody,
+  SourceMetaValuesResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourcePageStructureBody,
@@ -310,6 +313,26 @@ export class OperatorClient {
   ): Promise<SourceAuthorAssignResult> {
     return this.#request<SourceAuthorAssignResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/authors/${encodeURIComponent(remoteId)}/assign`,
+      { method: "POST", body: input },
+    );
+  }
+
+  async listSourceMetaFields(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceMetaFieldDefinition[]> {
+    const response = await this.#request<{ readonly items: readonly SourceMetaFieldDefinition[] }>(
+      pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/meta-fields`, { contentType }),
+    );
+    return response.items;
+  }
+
+  setSourceMetaValues(
+    connectionId: string,
+    input: SourceMetaValuesBody,
+  ): Promise<SourceMetaValuesResult> {
+    return this.#request<SourceMetaValuesResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/meta-values`,
       { method: "POST", body: input },
     );
   }
