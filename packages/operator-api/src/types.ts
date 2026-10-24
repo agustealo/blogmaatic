@@ -394,7 +394,7 @@ export interface SourceTaxonomyCreateBody {
 export interface SourceTaxonomyRecord {
   readonly connectionId: string;
   readonly extensionId: string;
-  readonly taxonomyKey: string;
+  readonly taxonomyKey?: string;
   readonly kind: SourceTaxonomyKind;
   readonly remoteId: string;
   readonly name: string;
