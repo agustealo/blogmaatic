@@ -39,6 +39,7 @@ export interface PublicationWorkspaceUpdateInput {
   readonly tags?: readonly string[];
   readonly categories?: readonly string[];
   readonly featuredAssetId?: string | null;
+  readonly publishingTargetGroupIds?: readonly string[];
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
@@ -115,6 +116,35 @@ function withFeaturedAsset(
   });
 }
 
+function normalizePublishingTargetGroupIds(groupIds: readonly string[] | undefined): readonly string[] {
+  if (!groupIds) return [];
+  return [...new Set(groupIds.map((groupId) => groupId.trim()).filter(Boolean))].sort();
+}
+
+export function publicationTargetGroupIds(publication: Publication): readonly string[] {
+  const value = publication.current.content.attributes.publishingTargets;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  const groupIds = (value as Readonly<Record<string, unknown>>).groupIds;
+  if (!Array.isArray(groupIds)) return [];
+  return normalizePublishingTargetGroupIds(
+    groupIds.filter((groupId): groupId is string => typeof groupId === "string"),
+  );
+}
+
+function withPublishingTargets(
+  attributes: Readonly<Record<string, JsonValue>>,
+  groupIds: readonly string[],
+): Readonly<Record<string, JsonValue>> {
+  const next: Record<string, JsonValue> = { ...attributes };
+  const normalized = normalizePublishingTargetGroupIds(groupIds);
+  if (normalized.length) {
+    next.publishingTargets = { groupIds: [...normalized] };
+  } else {
+    delete next.publishingTargets;
+  }
+  return next;
+}
+
 function withCategories(
   attributes: Readonly<Record<string, JsonValue>>,
   categories: readonly string[],
@@ -156,7 +186,8 @@ function contentChanged(input: PublicationWorkspaceUpdateInput): boolean {
     input.language !== undefined ||
     input.tags !== undefined ||
     input.categories !== undefined ||
-    input.featuredAssetId !== undefined;
+    input.featuredAssetId !== undefined ||
+    input.publishingTargetGroupIds !== undefined;
 }
 
 export class PublicationWorkspaceManager {
@@ -286,9 +317,14 @@ export class PublicationWorkspaceManager {
           ? oldContent.assets
           : withFeaturedAsset(oldContent.assets, input.featuredAssetId),
         tags: input.tags === undefined ? oldContent.tags : normalizeTags(input.tags),
-        attributes: input.categories === undefined
-          ? oldContent.attributes
-          : withCategories(oldContent.attributes, normalizeCategories(input.categories)),
+        attributes: (() => {
+          const withCategoryState = input.categories === undefined
+            ? oldContent.attributes
+            : withCategories(oldContent.attributes, normalizeCategories(input.categories));
+          return input.publishingTargetGroupIds === undefined
+            ? withCategoryState
+            : withPublishingTargets(withCategoryState, input.publishingTargetGroupIds);
+        })(),
       },
     } : current.publication.current;
 
@@ -848,17 +884,26 @@ export class PublicationWorkspaceManager {
       throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${entry.version}`);
     }
     if (entry.publication.status === "archived") throw new Error("Archived publications cannot be dispatched");
-    if (entry.publication.status !== "approved") {
-      entry = await this.update(publicationId, { expectedVersion, status: "approved" });
+
+    const targetGroupIds = publicationTargetGroupIds(entry.publication);
+    if (targetGroupIds.length === 0) {
+      throw new Error("Publication has no publishing targets. Select at least one Publication Group before publishing.");
     }
 
     const groups: PublicationGroup[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await this.#publicationGroups.list({ enabled: true, limit: 100, ...(cursor ? { cursor } : {}) });
-      groups.push(...page.items.map((groupEntry) => groupEntry.group));
-      cursor = page.nextCursor;
-    } while (cursor);
+    for (const groupId of targetGroupIds) {
+      const groupEntry = await this.#publicationGroups.get(groupId);
+      if (!groupEntry) throw new Error(`Publishing target is not registered: ${groupId}`);
+      if (!groupEntry.enabled) throw new Error(`Publishing target is disabled: ${groupId}`);
+      if (!groupEntry.group.routes.some((route) => route.enabled)) {
+        throw new Error(`Publishing target has no enabled routes: ${groupId}`);
+      }
+      groups.push(groupEntry.group);
+    }
+
+    if (entry.publication.status !== "approved") {
+      entry = await this.update(publicationId, { expectedVersion, status: "approved" });
+    }
 
     const runs = await this.#controlPlane.routeEvent({
       id: `approved:${entry.publication.id}:${entry.publication.current.id}`,
