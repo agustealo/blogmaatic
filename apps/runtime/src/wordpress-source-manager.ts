@@ -59,7 +59,7 @@ import type {
 } from "@blogmaatic/operator-api";
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
-import type { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
+import { publicationTargetGroupIds, type PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 
 export interface WordPressSourceManagerOptions {
   readonly content: WordPressContentService;
@@ -953,8 +953,16 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     }
 
     if (!workspace) {
-      const publication = this.#importedPublication(connectionId, contentType, snapshot);
+      const publication = this.#importedPublication(connectionId, contentType, body.groupId, snapshot);
       workspace = await this.#publications.registerImported(publication);
+    } else {
+      const targetGroupIds = publicationTargetGroupIds(workspace.publication);
+      if (!targetGroupIds.includes(body.groupId)) {
+        workspace = await this.#publications.update(workspace.publication.id, {
+          expectedVersion: workspace.version,
+          targetGroupIds: [...targetGroupIds, body.groupId],
+        });
+      }
     }
 
     const projection = await this.#publisher.compile({
@@ -1085,6 +1093,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   #importedPublication(
     connectionId: string,
     contentType: string,
+    groupId: string,
     snapshot: Awaited<ReturnType<WordPressContentService["importSnapshot"]>>,
   ): Publication {
     const now = this.#now();
@@ -1127,6 +1136,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            distributionGroupIds: [groupId],
             ...(snapshot.post.password !== undefined ||
                 snapshot.post.commentStatus !== undefined ||
                 snapshot.post.pingStatus !== undefined ||
