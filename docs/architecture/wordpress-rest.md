@@ -143,6 +143,23 @@ Creation is idempotent by stable slug. Blogmaatic first reuses an existing match
 
 Creating a remote term does not itself create a canonical Publication revision. Control Room immediately adds the returned term name to the current editor draft; the user's normal Publication Save remains the immutable canonical content boundary.
 
+### Custom taxonomies
+
+WordPress REST-enabled custom taxonomies are discovered dynamically instead of being hard-coded by plugin name. Blogmaatic combines the selected content type's taxonomy keys from `/types?context=edit` with definitions from `/taxonomies?context=edit`.
+
+Each discovered taxonomy keeps two identities:
+
+- `taxonomyKey`: semantic WordPress taxonomy identity used by canonical Blogmaatic state
+- `restBase`: transport field and term endpoint used by the WordPress REST API
+
+The discovered `rest_namespace`, hierarchy flag, associated content types, and display label are retained as source metadata. Only taxonomies attached to the selected content type are exposed. Categories and tags remain on their existing canonical fields for backward compatibility; arbitrary custom taxonomies are stored under source-bound `PublicationIR.attributes.sourceTaxonomies`.
+
+Saving custom taxonomy selections creates an immutable Publication revision. The stored state includes extension id, connection id, content type, taxonomy key, REST base/namespace, and canonical term names. Compile uses that canonical transport metadata without requiring live discovery, while the runtime validates selections against current discovery before they enter canonical history.
+
+During import, Blogmaatic resolves the remote term ids for each REST-enabled custom taxonomy into canonical names and preserves their taxonomy identity from revision 1. During delivery, those names are resolved through the same slug and `term_exists` recovery path used by categories and tags, then written to the dynamic WordPress post field identified by the taxonomy's REST base.
+
+Custom taxonomy term ids participate in both the projection fingerprint and verified remote-state hash. An out-of-band taxonomy change therefore becomes drift. REST-base collisions with reserved WordPress post fields are rejected before delivery. Custom REST namespaces are supported through an authenticated namespace-aware request path rather than assuming every taxonomy lives under `wp/v2`.
+
 ## Ownership and collision protection
 
 A stable slug is useful for rediscovery after restart, but a matching slug alone is not proof that Blogmaatic owns the remote object.
