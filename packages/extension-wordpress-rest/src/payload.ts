@@ -69,6 +69,11 @@ function parseCustomTaxonomies(
 }
 
 export interface ParsedWordPressPayload extends WordPressProjectionPayload {
+  readonly customTaxonomies: Readonly<Record<string, {
+    readonly restBase: string;
+    readonly restNamespace?: string;
+    readonly names: readonly string[];
+  }>>;
   readonly assetsParsed: readonly CompiledWordPressAsset[];
 }
 
