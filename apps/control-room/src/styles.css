@@ -858,3 +858,88 @@ a.data-table__row:hover { background: var(--surface-2); }
   .source-custom-taxonomy-toolbar { grid-template-columns: 1fr; }
   .source-custom-taxonomy-toolbar > .button { width: 100%; }
 }
+
+
+/* Publication destination matrix */
+.publication-destination-alerts {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: .78rem;
+}
+.publication-destination-alerts strong { color: var(--text); }
+.publication-destination-alerts__bad,
+.publication-destination-alerts__bad strong { color: var(--danger, #b42318); }
+
+.publication-destination-matrix { display: grid; }
+.publication-destination-matrix__row {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(180px, 1.35fr) minmax(130px, .8fr) minmax(140px, .9fr) minmax(150px, 1fr) minmax(150px, .9fr);
+  gap: 16px;
+  align-items: center;
+}
+.publication-destination-matrix__row:last-child { border-bottom: 0; }
+.publication-destination-matrix__identity,
+.publication-destination-matrix__state,
+.publication-destination-matrix__compile,
+.publication-destination-matrix__remote,
+.publication-destination-matrix__when {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+}
+.publication-destination-matrix__identity strong,
+.publication-destination-matrix__identity small,
+.publication-destination-matrix__compile small,
+.publication-destination-matrix__when strong,
+.publication-destination-matrix__when small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.publication-destination-matrix small {
+  color: var(--muted);
+  font-size: .71rem;
+}
+.publication-destination-matrix__remote a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.publication-destination-matrix__compile > small[title] {
+  max-width: 240px;
+}
+
+@media (max-width: 1100px) {
+  .publication-destination-matrix__row {
+    grid-template-columns: minmax(180px, 1.25fr) minmax(130px, .8fr) minmax(150px, 1fr);
+  }
+  .publication-destination-matrix__remote,
+  .publication-destination-matrix__when {
+    padding-top: 2px;
+  }
+}
+@media (max-width: 700px) {
+  .publication-destination-matrix__row {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .publication-destination-matrix__identity {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 480px) {
+  .publication-destination-matrix__row {
+    grid-template-columns: 1fr;
+  }
+  .publication-destination-matrix__identity {
+    grid-column: auto;
+  }
+}
