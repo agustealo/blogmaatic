@@ -1,4 +1,4 @@
-import type { CompiledProjection } from "@blogmaatic/core";
+import type { CompiledProjection, JsonValue } from "@blogmaatic/core";
 import { inspectImageBytes } from "@blogmaatic/media";
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { SecretAuthority } from "@blogmaatic/secrets";
@@ -28,6 +28,9 @@ import type {
   WordPressPostView,
   WordPressRevisionRecord,
   WordPressRevisionView,
+  WordPressRestMetaFieldDefinition,
+  WordPressRestMetaSnapshot,
+  WordPressRestMetaType,
   WordPressTaxonomyRecord,
   WordPressTaxonomyView,
   WordPressTermPage,
@@ -71,6 +74,78 @@ function requirePerPage(value: number | undefined): number {
     throw new Error("WordPress perPage must be an integer from 1 through 100");
   }
   return value;
+}
+
+const REST_META_TYPES = new Set<WordPressRestMetaType>([
+  "string",
+  "integer",
+  "number",
+  "boolean",
+  "array",
+  "object",
+]);
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value as Readonly<Record<string, unknown>>).every(isJsonValue);
+}
+
+function secretLikeMetaKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return /(^|_)(password|passwd|secret|token|credential|credentials|api_key|apikey|access_key|private_key|auth_token)($|_)/.test(normalized);
+}
+
+function metaType(schema: Readonly<Record<string, unknown>>): {
+  readonly type?: WordPressRestMetaType;
+  readonly nullable: boolean;
+} {
+  const raw = schema.type;
+  if (typeof raw === "string") {
+    return {
+      type: REST_META_TYPES.has(raw as WordPressRestMetaType) ? raw as WordPressRestMetaType : undefined,
+      nullable: raw === "null",
+    };
+  }
+  if (!Array.isArray(raw)) return { nullable: false };
+  const nullable = raw.includes("null");
+  const supported = raw.find((value): value is WordPressRestMetaType =>
+    typeof value === "string" && REST_META_TYPES.has(value as WordPressRestMetaType));
+  return { ...(supported ? { type: supported } : {}), nullable };
+}
+
+function restMetaField(
+  key: string,
+  value: unknown,
+): WordPressRestMetaFieldDefinition | undefined {
+  if (secretLikeMetaKey(key) || value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const schema = value as Readonly<Record<string, unknown>>;
+  if (schema.readOnly === true || schema.readonly === true) return undefined;
+  const parsed = metaType(schema);
+  if (!parsed.type) return undefined;
+  const enumValues = Array.isArray(schema.enum)
+    ? schema.enum.filter(isJsonValue)
+    : undefined;
+  const defaultValue = isJsonValue(schema.default) ? schema.default : undefined;
+  return {
+    key,
+    type: parsed.type,
+    nullable: parsed.nullable,
+    ...(typeof schema.title === "string" && schema.title.trim() ? { title: schema.title.trim() } : {}),
+    ...(typeof schema.description === "string" && schema.description.trim()
+      ? { description: schema.description.trim() }
+      : {}),
+    ...(enumValues && enumValues.length > 0 ? { enum: enumValues } : {}),
+    ...(defaultValue === undefined ? {} : { defaultValue }),
+  };
 }
 
 function ownership(post: WordPressPostRecord): WordPressPostView["ownership"] {
@@ -290,6 +365,49 @@ export class WordPressContentService {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  async listRestMetaFields(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly WordPressRestMetaFieldDefinition[]> {
+    const types = await this.listContentTypes(connectionId);
+    const type = types.find((candidate) => candidate.restBase === contentType);
+    if (!type) throw new Error(`WordPress content type is not available: ${contentType}`);
+
+    const { client } = this.#client(connectionId);
+    const options = type.restNamespace && type.restNamespace !== "wp/v2"
+      ? await client.requestNamespaceJson<unknown>(type.restNamespace, `/${type.restBase}`, { method: "OPTIONS" })
+      : await client.requestJson<unknown>(`/${type.restBase}`, { method: "OPTIONS" });
+    if (options === null || typeof options !== "object" || Array.isArray(options)) return [];
+    const schema = (options as Readonly<Record<string, unknown>>).schema;
+    if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return [];
+    const properties = (schema as Readonly<Record<string, unknown>>).properties;
+    if (properties === null || typeof properties !== "object" || Array.isArray(properties)) return [];
+    const meta = (properties as Readonly<Record<string, unknown>>).meta;
+    if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return [];
+    const metaProperties = (meta as Readonly<Record<string, unknown>>).properties;
+    if (metaProperties === null || typeof metaProperties !== "object" || Array.isArray(metaProperties)) return [];
+
+    return Object.entries(metaProperties as Readonly<Record<string, unknown>>)
+      .map(([key, value]) => restMetaField(key, value))
+      .filter((field): field is WordPressRestMetaFieldDefinition => field !== undefined)
+      .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  async restMetaSnapshot(
+    connectionId: string,
+    post: WordPressPostRecord,
+    contentType: string,
+  ): Promise<WordPressRestMetaSnapshot> {
+    const fields = await this.listRestMetaFields(connectionId, contentType);
+    const raw = post.meta ?? {};
+    const values: Record<string, JsonValue> = {};
+    for (const field of fields) {
+      const value = raw[field.key];
+      if (isJsonValue(value)) values[field.key] = value;
+    }
+    return { fields, values };
+  }
+
   async listTaxonomies(
     connectionId: string,
     contentType?: string,
@@ -420,6 +538,7 @@ export class WordPressContentService {
         `/media/${post.featured_media}?context=edit`,
       );
     }
+    const restMeta = await this.restMetaSnapshot(connectionId, post, restBase);
     const customTaxonomies = await Promise.all(
       taxonomies
         .filter((taxonomy) => taxonomy.key !== "category" && taxonomy.key !== "post_tag")
@@ -449,6 +568,7 @@ export class WordPressContentService {
       categoryNames,
       tagNames,
       customTaxonomies,
+      restMeta,
       ...(featuredMedia ? { featuredMedia } : {}),
     };
   }
