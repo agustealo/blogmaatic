@@ -38,6 +38,35 @@ Preview evidence is not remote acceptance evidence. Only delivery followed by pr
 
 Sanitization removes credential-shaped fields and local source filesystem paths before payloads cross the Operator API boundary.
 
+### Destination matrix
+
+Content exposes a derived Publication Destination Matrix for the current canonical revision.
+
+The matrix is not a new source of truth. It composes existing authorities:
+
+- active Publication Workspace revision
+- every enabled route in every enabled Publication Group
+- complete durable distribution history
+- current extension compilation/preview results
+
+A matrix row is identified by the full configured destination identity:
+
+`groupId + routeId + extensionId + connectionId + channel`
+
+Using the full identity prevents historical evidence from a rewired route from being attributed to a new destination that happens to reuse the same route id.
+
+Derived delivery state is intentionally conservative:
+
+- `not_sent`: no matching durable distribution evidence
+- `current`: latest matching receipt is verified for the current canonical revision
+- `update_available`: latest matching receipt is verified for an older canonical revision
+- `drifted`: latest matching receipt reports remote drift
+- `failed`: latest matching receipt is blocked, awaiting approval, unreachable, or otherwise not verified
+
+Compile readiness is a separate dimension. A route may have valid historical delivery evidence while the current revision fails compilation. The matrix surfaces both truths rather than replacing one with the other.
+
+The manager consumes all distribution-history pages before deriving latest receipt and delivery count. Configured routes that have never been sent therefore appear immediately, before their first delivery.
+
 ### Delivery
 
 Delivery is reconcile-first. Before mutating a destination, the kernel inspects the remote projection. A synchronized projection is a no-op, a missing projection requires `article.create`, and a drifted projection requires `article.update` and carries the existing remote identity into delivery. This keeps duplicate prevention in the control plane instead of hoping every provider offers native idempotency.
