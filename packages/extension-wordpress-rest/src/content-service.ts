@@ -27,6 +27,8 @@ import type {
   WordPressPostView,
   WordPressRevisionRecord,
   WordPressRevisionView,
+  WordPressTaxonomyRecord,
+  WordPressTaxonomyView,
   WordPressTermPage,
   WordPressTermQuery,
   WordPressTermRecord,
@@ -81,7 +83,20 @@ function ownership(post: WordPressPostRecord): WordPressPostView["ownership"] {
   };
 }
 
-function postView(post: WordPressPostRecord): WordPressPostView {
+function postView(
+  post: WordPressPostRecord,
+  taxonomies: readonly WordPressTaxonomyView[] = [],
+): WordPressPostView {
+  const customTaxonomyIds: Record<string, readonly number[]> = {};
+  for (const taxonomy of taxonomies) {
+    if (taxonomy.key === "category" || taxonomy.key === "post_tag") continue;
+    const value = post[taxonomy.restBase];
+    if (!Array.isArray(value)) continue;
+    const ids = value.filter(
+      (entry): entry is number => typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0,
+    );
+    customTaxonomyIds[taxonomy.key] = [...ids];
+  }
   return {
     id: post.id,
     ...(typeof post.author === "number" ? { author: post.author } : {}),
@@ -112,6 +127,7 @@ function postView(post: WordPressPostRecord): WordPressPostView {
       : {}),
     ...(typeof post.sticky === "boolean" ? { sticky: post.sticky } : {}),
     ...(typeof post.format === "string" && post.format.trim() ? { format: post.format.trim() } : {}),
+    customTaxonomyIds,
     ownership: ownership(post),
   };
 }
@@ -163,6 +179,25 @@ function contentTypeView(
       .filter(([, enabled]) => enabled === true)
       .map(([name]) => name)
       .sort(),
+  };
+}
+
+function taxonomyView(
+  key: string,
+  taxonomy: WordPressTaxonomyRecord,
+): WordPressTaxonomyView | undefined {
+  const restBase = taxonomy.rest_base?.trim();
+  if (!restBase || !/^[a-zA-Z0-9._-]+$/.test(restBase)) return undefined;
+  const contentTypes = [...(taxonomy.types ?? [])].map((value) => value.trim()).filter(Boolean);
+  if (contentTypes.length === 0) return undefined;
+  return {
+    key: taxonomy.slug?.trim() || key,
+    label: taxonomy.name?.trim() || key,
+    restBase,
+    hierarchical: taxonomy.hierarchical === true,
+    contentTypes,
+    ...(taxonomy.rest_namespace?.trim() ? { restNamespace: taxonomy.rest_namespace.trim() } : {}),
+    ...(taxonomy.description?.trim() ? { description: taxonomy.description.trim() } : {}),
   };
 }
 
@@ -237,6 +272,80 @@ export class WordPressContentService {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  async listTaxonomies(
+    connectionId: string,
+    contentType?: string,
+  ): Promise<readonly WordPressTaxonomyView[]> {
+    const types = await this.listContentTypes(connectionId);
+    const requestedRestBase = contentType ?? this.defaultContentType(connectionId);
+    const type = types.find((candidate) => candidate.restBase === requestedRestBase);
+    if (!type) throw new Error(`WordPress content type is not available: ${requestedRestBase}`);
+    const { client } = this.#client(connectionId);
+    const records = await client.requestJson<Readonly<Record<string, WordPressTaxonomyRecord>>>(
+      "/taxonomies?context=edit",
+    );
+    const allowed = new Set(type.taxonomies);
+    return Object.entries(records)
+      .map(([key, record]) => taxonomyView(key, record))
+      .filter((record): record is WordPressTaxonomyView =>
+        record !== undefined &&
+        (allowed.has(record.key) || record.contentTypes.includes(type.slug)))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }
+
+  async listTermsForTaxonomy(
+    connectionId: string,
+    taxonomyKey: string,
+    contentType: string,
+    query: WordPressTermQuery = {},
+  ): Promise<WordPressTermPage> {
+    const taxonomy = (await this.listTaxonomies(connectionId, contentType))
+      .find((candidate) => candidate.key === taxonomyKey);
+    if (!taxonomy) {
+      throw new Error(`WordPress taxonomy ${taxonomyKey} is not attached to content type ${contentType}`);
+    }
+    const { client } = this.#client(connectionId);
+    const page = requirePage(query.page);
+    const perPage = requirePerPage(query.perPage);
+    const params = new URLSearchParams({
+      context: "edit",
+      page: String(page),
+      per_page: String(perPage),
+      orderby: "name",
+      order: "asc",
+    });
+    if (query.search?.trim()) params.set("search", query.search.trim());
+    const path = `/${taxonomy.restBase}?${params.toString()}`;
+    const records = taxonomy.restNamespace && taxonomy.restNamespace !== "wp/v2"
+      ? await client.requestNamespaceJson<readonly WordPressTermRecord[]>(taxonomy.restNamespace, path)
+      : await client.requestJson<readonly WordPressTermRecord[]>(path);
+    return { items: records, page, perPage, hasMore: records.length === perPage };
+  }
+
+  async createTermForTaxonomy(
+    connectionId: string,
+    taxonomyKey: string,
+    contentType: string,
+    input: {
+      readonly name: string;
+      readonly slug?: string;
+      readonly description?: string;
+    },
+  ): Promise<WordPressTermRecord> {
+    const taxonomy = (await this.listTaxonomies(connectionId, contentType))
+      .find((candidate) => candidate.key === taxonomyKey);
+    if (!taxonomy) {
+      throw new Error(`WordPress taxonomy ${taxonomyKey} is not attached to content type ${contentType}`);
+    }
+    const { client } = this.#client(connectionId);
+    return findOrCreateTerm(
+      client,
+      taxonomy.restBase,
+      input,
+      taxonomy.restNamespace,
+    );
+  }
+
   async list(connectionId: string, query: WordPressPostQuery = {}): Promise<WordPressPostPage> {
     const { client, restBase } = this.#client(connectionId, query.contentType);
     const page = requirePage(query.page);
@@ -253,8 +362,9 @@ export class WordPressContentService {
     const records = await client.requestJson<readonly WordPressPostRecord[]>(
       `/${restBase}?${params.toString()}`,
     );
+    const taxonomies = await this.listTaxonomies(connectionId, restBase);
     return {
-      items: records.map(postView),
+      items: records.map((record) => postView(record, taxonomies)),
       page,
       perPage,
       hasMore: records.length === perPage,
@@ -262,7 +372,12 @@ export class WordPressContentService {
   }
 
   async get(connectionId: string, remoteId: string, contentType?: string): Promise<WordPressPostView> {
-    return postView(await this.#getRecord(connectionId, remoteId, contentType));
+    const restBase = contentType ?? this.defaultContentType(connectionId);
+    const [record, taxonomies] = await Promise.all([
+      this.#getRecord(connectionId, remoteId, contentType),
+      this.listTaxonomies(connectionId, restBase),
+    ]);
+    return postView(record, taxonomies);
   }
 
   async importSnapshot(
@@ -270,8 +385,9 @@ export class WordPressContentService {
     remoteId: string,
     contentType?: string,
   ): Promise<WordPressImportSnapshot> {
-    const { client } = this.#client(connectionId, contentType);
+    const { client, restBase } = this.#client(connectionId, contentType);
     const post = await this.#getRecord(connectionId, remoteId, contentType);
+    const taxonomies = await this.listTaxonomies(connectionId, restBase);
     const categoryNames = await Promise.all((post.categories ?? []).map(async (id) => {
       const term = await client.requestJson<WordPressTermRecord>(`/categories/${id}?context=edit`);
       return term.name;
@@ -286,10 +402,34 @@ export class WordPressContentService {
         `/media/${post.featured_media}?context=edit`,
       );
     }
+    const customTaxonomies = await Promise.all(
+      taxonomies
+        .filter((taxonomy) => taxonomy.key !== "category" && taxonomy.key !== "post_tag")
+        .map(async (taxonomy) => {
+          const value = post[taxonomy.restBase];
+          const ids = Array.isArray(value)
+            ? value.filter((entry): entry is number =>
+                typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0)
+            : [];
+          const names = await Promise.all(ids.map(async (id) => {
+            const path = `/${taxonomy.restBase}/${id}?context=edit`;
+            const term = taxonomy.restNamespace && taxonomy.restNamespace !== "wp/v2"
+              ? await client.requestNamespaceJson<WordPressTermRecord>(taxonomy.restNamespace, path)
+              : await client.requestJson<WordPressTermRecord>(path);
+            return term.name;
+          }));
+          return {
+            taxonomyKey: taxonomy.key,
+            restBase: taxonomy.restBase,
+            names,
+          };
+        }),
+    );
     return {
-      post: postView(post),
+      post: postView(post, taxonomies),
       categoryNames,
       tagNames,
+      customTaxonomies,
       ...(featuredMedia ? { featuredMedia } : {}),
     };
   }
