@@ -548,6 +548,7 @@ export interface PublicationWorkspaceUpdateBody {
   readonly tags?: readonly string[];
   readonly categories?: readonly string[];
   readonly featuredAssetId?: string | null;
+  readonly publishingTargetGroupIds?: readonly string[];
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
