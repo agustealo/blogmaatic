@@ -544,3 +544,81 @@ test("canonical source editorial options are immutable idempotent source-bound a
   );
   assert.equal(current().version, 2);
 });
+
+
+test("canonical source REST meta is immutable idempotent and source-bound", async () => {
+  const publication = importedPublication();
+  publication.current.content.attributes.wordpress = {
+    ...publication.current.content.attributes.wordpress,
+    contentType: "books",
+  };
+  publication.provenance.remoteId = "55";
+  const beforeAssets = structuredClone(publication.current.content.assets);
+  const beforeAttributes = structuredClone(publication.current.content.attributes);
+  const { manager, current } = managerWith(publication);
+
+  const saved = await manager.setSourceMetaValues("publication-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "books",
+    values: {
+      isbn: "978-1-234",
+      rating: 4.5,
+      featured: true,
+      keywords: ["systems"],
+      details: { imprint: "Open Press" },
+    },
+  });
+  assert.equal(saved.version, 2);
+  assert.equal(saved.publication.current.ordinal, 2);
+  assert.equal(saved.publication.current.id, "revision_metadata-revision-2");
+  assert.deepEqual(saved.publication.current.content.attributes.sourceMeta, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "books",
+    values: {
+      isbn: "978-1-234",
+      rating: 4.5,
+      featured: true,
+      keywords: ["systems"],
+      details: { imprint: "Open Press" },
+    },
+  });
+  assert.deepEqual(saved.publication.current.content.assets, beforeAssets);
+  assert.deepEqual(saved.publication.current.content.attributes.wordpress, beforeAttributes.wordpress);
+
+  const retry = await manager.setSourceMetaValues("publication-wp", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "books",
+    values: {
+      isbn: "978-1-234",
+      rating: 4.5,
+      featured: true,
+      keywords: ["systems"],
+      details: { imprint: "Open Press" },
+    },
+  });
+  assert.equal(retry.version, 2);
+  assert.equal(retry.publication.current.id, saved.publication.current.id);
+
+  await assert.rejects(
+    () => manager.setSourceMetaValues("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-other",
+      contentType: "books",
+      values: { isbn: "wrong" },
+    }),
+    /does not match the publication source/,
+  );
+  await assert.rejects(
+    () => manager.setSourceMetaValues("publication-wp", 2, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      contentType: "posts",
+      values: { isbn: "wrong" },
+    }),
+    /content type does not match/,
+  );
+  assert.equal(current().version, 2);
+});

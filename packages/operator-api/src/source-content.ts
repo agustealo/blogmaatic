@@ -13,6 +13,7 @@ import type {
   SourceContentImportBody,
   SourceEditorialOptionsBody,
   SourceRevisionRestoreBody,
+  SourceMetaValuesBody,
   SourcePublishingStateBody,
   SourcePageStructureBody,
   SourceTaxonomyCreateBody,
@@ -178,6 +179,37 @@ function parseAssetQuery(request: FastifyRequest): SourceAssetQuery {
     ...(search ? { search } : {}),
     ...(page === undefined ? {} : { page }),
     ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseMetaValuesBody(body: unknown): SourceMetaValuesBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "values"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const contentType = input.contentType;
+  if (typeof contentType !== "string" || !contentType.trim()) {
+    throw new OperatorRequestError("contentType is required");
+  }
+  const values = input.values;
+  if (values === null || typeof values !== "object" || Array.isArray(values)) {
+    throw new OperatorRequestError("values must be an object");
+  }
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    contentType: contentType.trim(),
+    values: values as Readonly<Record<string, import("@blogmaatic/core").JsonValue>>,
   };
 }
 
@@ -761,6 +793,48 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           revisionId: value.publication.publication.current.id,
           version: value.publication.version,
           taxonomyKeys: Object.keys(value.selections).sort(),
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.get("/v1/connections/:connectionId/meta-fields", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const queryValue = query(request).contentType;
+    if (typeof queryValue !== "string" || !queryValue.trim()) {
+      throw new OperatorRequestError("contentType is required");
+    }
+    return {
+      items: await domainCall(() => manager(options).listMetaFields(connectionId, queryValue.trim())),
+    };
+  });
+
+  app.post("/v1/connections/:connectionId/meta-values", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseMetaValuesBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-meta.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        fieldKeys: Object.keys(body.values).sort(),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setMetaValues(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          fieldKeys: Object.keys(value.values).sort(),
         },
       }),
     });

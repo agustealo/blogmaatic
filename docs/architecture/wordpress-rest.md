@@ -214,6 +214,40 @@ The restore flow is:
 
 Recovered WordPress HTML remains an explicit `embed.html` block so recovery does not perform a lossy HTML-to-block conversion. The Operator API audit ledger records both the remote revision identity and the resulting canonical revision/version.
 
+## REST-registered post meta
+
+Richer WordPress content-type fields are discovered from the authenticated REST contract rather than from plugin names.
+
+For the selected content type, Blogmaatic requests the route with `OPTIONS` using the type's discovered REST namespace and REST base. Only writable properties exposed under the post schema's `meta.properties` object are eligible. Read-only fields are ignored.
+
+Supported schema types are:
+
+- string
+- integer
+- number
+- boolean
+- array
+- object
+
+Nullable unions, JSON-safe defaults, descriptions, titles, and enums are retained when WordPress exposes them. Content renders native controls for safe primitive values and explicit validated JSON editors for arrays and objects.
+
+Blogmaatic also applies a defensive field-name filter to password, secret, token, credential, API-key, access-key, private-key, and authentication-token patterns. Those fields are not returned by source-schema discovery, are not imported, and cannot be injected into a WordPress projection through canonical `sourceMeta` state.
+
+Selected values are stored on immutable Publication revisions under source-bound `PublicationIR.attributes.sourceMeta` with:
+
+- extension id
+- connection id
+- WordPress REST content type
+- managed field values
+
+The runtime validates every requested field and value against the current authenticated WordPress schema before canonical persistence. Unknown fields, cross-site or cross-content-type state, type mismatches, and invalid enum values fail closed.
+
+Imported WordPress content preserves only the currently eligible REST meta fields from canonical revision 1. Generic source-list responses do not expose arbitrary WordPress meta.
+
+Compilation writes managed values through the WordPress post endpoint's `meta` object. Managed REST meta participates in the semantic projection fingerprint and verified remote-state hash. Drift compares only the keys Blogmaatic manages, so unrelated plugin or administrator meta does not create false drift.
+
+Operator audit records field keys and resulting canonical revision identity, never field values. This base capability is plugin-neutral: ACF, Pods, Meta Box, or custom code may participate only when their values are actually registered into the ordinary authenticated WordPress REST `meta` schema.
+
 ## Drift verification
 
 Authenticated inspection uses `context=edit` so raw editable content can be observed.
@@ -256,4 +290,4 @@ Credentials never appear in health evidence.
 
 ## Deferred WordPress-specific work
 
-Future WordPress slices may add explicit support for plugin-specific SEO metadata, custom taxonomies, richer custom post-type schemas, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.
+Future WordPress slices may add explicit support for plugin-specific SEO metadata, richer relationship/media widgets for REST meta, arbitrary top-level custom REST fields, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.

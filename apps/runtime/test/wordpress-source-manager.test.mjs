@@ -1581,3 +1581,305 @@ test("WordPress editorial options validate live type capabilities before canonic
     /does not support sticky state/,
   );
 });
+
+
+test("WordPress REST meta definitions map provider-neutrally and values are schema validated before canonical mutation", async () => {
+  let schemaReads = 0;
+  let setInput;
+  let current = {
+    publication: {
+      id: "publication-wp",
+      createdAt: "2026-10-24T19:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-24T19:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Book",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            wordpress: { connectionId: "wp-main", contentType: "books", remoteId: "55" },
+          },
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-10-24T19:00:00.000Z",
+    updatedAt: "2026-10-24T19:00:00.000Z",
+  };
+  const fields = [
+    { key: "isbn", type: "string", nullable: false, title: "ISBN", description: "Book ISBN" },
+    { key: "rating", type: "number", nullable: false, defaultValue: 0 },
+    { key: "edition", type: "integer", nullable: true },
+    { key: "audience", type: "string", nullable: false, enum: ["public", "members"] },
+    { key: "keywords", type: "array", nullable: false },
+    { key: "details", type: "object", nullable: false },
+  ];
+
+  const manager = new WordPressSourceManager({
+    content: {
+      async listRestMetaFields(connectionId, contentType) {
+        schemaReads += 1;
+        assert.equal(connectionId, "wp-main");
+        assert.equal(contentType, "books");
+        return fields;
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get(id) { return id === "publication-wp" ? current : undefined; },
+      async setSourceMetaValues(publicationId, expectedVersion, state) {
+        assert.equal(publicationId, "publication-wp");
+        assert.equal(expectedVersion, 4);
+        setInput = state;
+        current = {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                attributes: {
+                  ...current.publication.current.content.attributes,
+                  sourceMeta: state,
+                },
+              },
+            },
+          },
+        };
+        return current;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const definitions = await manager.listMetaFields("wp-main", "books");
+  assert.deepEqual(definitions[0], {
+    key: "isbn",
+    type: "string",
+    nullable: false,
+    title: "ISBN",
+    description: "Book ISBN",
+    metadata: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      contentType: "books",
+      source: "wordpress-rest-meta",
+    },
+  });
+
+  await assert.rejects(
+    () => manager.setMetaValues("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 3,
+      contentType: "books",
+      values: { isbn: "978" },
+    }),
+    /changed from version 3 to 4/,
+  );
+  assert.equal(schemaReads, 1);
+
+  await assert.rejects(
+    () => manager.setMetaValues("wp-other", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { isbn: "978" },
+    }),
+    /does not match the publication source/,
+  );
+  await assert.rejects(
+    () => manager.setMetaValues("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "posts",
+      values: { isbn: "978" },
+    }),
+    /content type does not match/,
+  );
+
+  await assert.rejects(
+    () => manager.setMetaValues("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { unknown: "x" },
+    }),
+    /not exposed/,
+  );
+  await assert.rejects(
+    () => manager.setMetaValues("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { rating: "bad" },
+    }),
+    /does not match schema/,
+  );
+  await assert.rejects(
+    () => manager.setMetaValues("wp-main", {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { audience: "private" },
+    }),
+    /does not match schema/,
+  );
+
+  const result = await manager.setMetaValues("wp-main", {
+    publicationId: "publication-wp",
+    expectedVersion: 4,
+    contentType: "books",
+    values: {
+      isbn: "978-1-234",
+      rating: 4.5,
+      edition: null,
+      audience: "members",
+      keywords: ["systems"],
+      details: { imprint: "Open Press" },
+    },
+  });
+  assert.equal(result.publication.version, 5);
+  assert.deepEqual(setInput, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "books",
+    values: {
+      isbn: "978-1-234",
+      rating: 4.5,
+      edition: null,
+      audience: "members",
+      keywords: ["systems"],
+      details: { imprint: "Open Press" },
+    },
+  });
+});
+
+test("WordPress import preserves only filtered REST meta from canonical revision one", async () => {
+  let stored;
+  const snapshot = {
+    post: {
+      id: 55,
+      author: 1,
+      title: "Imported book",
+      excerpt: "",
+      contentHtml: "<p>Book body.</p>",
+      slug: "imported-book",
+      status: "draft",
+      link: "https://example.test/?book=55",
+      dateGmt: null,
+      modifiedGmt: "2026-10-24T20:00:00",
+      categoryIds: [],
+      tagIds: [],
+      customTaxonomyIds: {},
+      ownership: { managed: false },
+    },
+    categoryNames: [],
+    tagNames: [],
+    customTaxonomies: [],
+    restMeta: {
+      fields: [
+        { key: "isbn", type: "string", nullable: false },
+        { key: "rating", type: "number", nullable: false },
+      ],
+      values: { isbn: "978-1-234", rating: 4.5 },
+    },
+  };
+  const group = {
+    id: "group-main",
+    name: "Main",
+    policySetId: "default",
+    routes: [{
+      id: "route-wordpress",
+      enabled: true,
+      desiredState: "present",
+      destination: {
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        channel: "books",
+      },
+      requiredCapabilities: ["article.create", "article.inspect"],
+    }],
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async defaultContentType() { return "posts"; },
+      async importSnapshot() { return snapshot; },
+      async adopt(_connectionId, _remoteId, projection) {
+        return {
+          ...snapshot.post,
+          ownership: {
+            managed: true,
+            publicationId: projection.publicationId,
+            routeId: projection.routeId,
+          },
+        };
+      },
+    },
+    publisher: {
+      async compile({ publication, route }) {
+        return {
+          projectionId: publication.id + ":" + route.id,
+          publicationId: publication.id,
+          sourceRevisionId: publication.current.id,
+          routeId: route.id,
+          destination: route.destination,
+          payload: {},
+          fingerprint: "import-meta-fingerprint",
+        };
+      },
+    },
+    publicationGroups: {
+      async get() { return { group, version: 1, enabled: true, recordedAt: "2026-10-24T20:00:00.000Z" }; },
+    },
+    publications: {
+      async findImportedSource() { return stored; },
+      async registerImported(publication) {
+        stored = {
+          publication,
+          version: 1,
+          recordedAt: "2026-10-24T20:00:00.000Z",
+          updatedAt: "2026-10-24T20:00:00.000Z",
+        };
+        return stored;
+      },
+    },
+    projectionState: { async put() {} },
+    distributionHistory: { async append() {} },
+    now: () => "2026-10-24T20:00:00.000Z",
+    id: (() => {
+      const ids = ["publication-meta", "revision-meta"];
+      let index = 0;
+      return () => ids[index++] ?? "unused";
+    })(),
+  });
+
+  const imported = await manager.import("wp-main", "55", {
+    groupId: "group-main",
+    routeId: "route-wordpress",
+    contentType: "books",
+  });
+  assert.deepEqual(imported.publication.publication.current.content.attributes.sourceMeta, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "books",
+    values: { isbn: "978-1-234", rating: 4.5 },
+  });
+});

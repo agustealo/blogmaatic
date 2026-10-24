@@ -254,6 +254,34 @@ function sourcePageStructure(
   return { parentId, template, menuOrder: menuOrderValue };
 }
 
+function sourceRestMeta(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+): Readonly<Record<string, JsonValue>> {
+  const source = publication.current.content.attributes.sourceMeta;
+  if (!isRecord(source)) return {};
+  if (
+    source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    source.connectionId !== route.destination.connectionId ||
+    source.contentType !== contentType
+  ) {
+    return {};
+  }
+  if (!isRecord(source.values)) throw new Error("Canonical WordPress sourceMeta values must be an object");
+  const result: Record<string, JsonValue> = {};
+  for (const [rawKey, value] of Object.entries(source.values)) {
+    const key = rawKey.trim();
+    if (!key) throw new Error("Canonical WordPress REST meta key must be non-empty");
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    if (/(^|_)(password|passwd|secret|token|credential|credentials|api_key|apikey|access_key|private_key|auth_token)($|_)/.test(normalized)) {
+      throw new Error(`Canonical WordPress REST meta key is not allowed: ${key}`);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
 function sourceEditorialOptions(
   publication: Publication,
   route: PublicationRoute,
@@ -345,6 +373,7 @@ function semanticPayload(
     pingStatus: payload.pingStatus ?? null,
     sticky: payload.sticky ?? null,
     format: payload.format ?? null,
+    restMeta: Object.fromEntries(Object.entries(payload.restMeta ?? {}).sort(([left], [right]) => left.localeCompare(right))),
     assets: parsedAssets.map((asset) => ({
       assetId: asset.assetId,
       source: asset.localPath ? "managed-local" : asset.source,
@@ -371,6 +400,7 @@ function remoteStateHash(
     readonly restBase: string;
     readonly names: readonly string[];
   }>> = {},
+  restMeta: Readonly<Record<string, JsonValue>> = {},
 ): string {
   const customState = Object.fromEntries(
     Object.entries(customTaxonomies)
@@ -383,6 +413,11 @@ function remoteStateHash(
           : [];
         return [taxonomyKey, [...ids].sort((left, right) => left - right)];
       }),
+  );
+  const managedMeta = Object.fromEntries(
+    Object.keys(restMeta)
+      .sort()
+      .map((key) => [key, post.meta?.[key] ?? null]),
   );
   return sha256(
     stableJson({
@@ -405,6 +440,7 @@ function remoteStateHash(
       pingStatus: post.ping_status ?? null,
       sticky: post.sticky ?? null,
       format: post.format ?? null,
+      restMeta: managedMeta,
     }),
   );
 }
@@ -488,7 +524,7 @@ function inspectRecord(
     };
   }
   const payload = parsePayload(projection);
-  const actualRemoteHash = remoteStateHash(post, stripMarker(raw), payload.customTaxonomies);
+  const actualRemoteHash = remoteStateHash(post, stripMarker(raw), payload.customTaxonomies, payload.restMeta);
   const synchronized =
     marker.projectionFingerprint === projection.fingerprint &&
     marker.renderedHash === actualRemoteHash;
@@ -530,6 +566,7 @@ function postRequestBody(
     ...(payload.pingStatus === undefined ? {} : { ping_status: payload.pingStatus }),
     ...(payload.sticky === undefined ? {} : { sticky: payload.sticky }),
     ...(payload.format === undefined ? {} : { format: payload.format }),
+    ...(Object.keys(payload.restMeta).length === 0 ? {} : { meta: payload.restMeta }),
     ...(payload.status === "future" && payload.scheduledAt
       ? { date_gmt: payload.scheduledAt.replace(/\.\d{3}Z$/, "") }
       : {}),
@@ -637,6 +674,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const pageStructure = sourcePageStructure(publication, route, contentType);
     const editorial = sourceEditorialOptions(publication, route, contentType);
     const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType);
+    const restMeta = sourceRestMeta(publication, route, contentType);
     const payload: WordPressProjectionPayload = {
       contentType,
       title: publication.current.content.title,
@@ -647,6 +685,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       tags: tagNames(publication, route),
       categories: categoryNames(publication, route),
       ...(Object.keys(customTaxonomies).length === 0 ? {} : { customTaxonomies }),
+      ...(Object.keys(restMeta).length === 0 ? {} : { restMeta }),
       assets: assets.map((asset) => ({
         assetId: asset.assetId,
         source: asset.source,
@@ -821,7 +860,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
 
     let current = await fetchPost(client, restBase, String(saved.id));
     const currentBody = stripMarker(sourceBody(current));
-    const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies);
+    const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies, payload.restMeta);
     const currentMarker = parseMarker(sourceBody(current));
     if (
       currentMarker?.projectionFingerprint !== request.projection.fingerprint ||

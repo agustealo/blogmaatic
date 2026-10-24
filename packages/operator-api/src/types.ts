@@ -417,6 +417,32 @@ export interface SourceTaxonomySelectionResult {
   readonly selections: Readonly<Record<string, readonly string[]>>;
 }
 
+export type SourceMetaFieldType = "string" | "integer" | "number" | "boolean" | "array" | "object";
+
+export interface SourceMetaFieldDefinition {
+  readonly key: string;
+  readonly type: SourceMetaFieldType;
+  readonly nullable: boolean;
+  readonly title?: string;
+  readonly description?: string;
+  readonly enum?: readonly JsonValue[];
+  readonly defaultValue?: JsonValue;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceMetaValuesBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType: string;
+  readonly values: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceMetaValuesResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly contentType: string;
+  readonly values: Readonly<Record<string, JsonValue>>;
+}
+
 export interface SourceTaxonomyPage {
   readonly items: readonly SourceTaxonomyRecord[];
   readonly page: number;
@@ -447,6 +473,8 @@ export interface OperatorSourceContentManager {
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   createTaxonomy(connectionId: string, body: SourceTaxonomyCreateBody): Promise<SourceTaxonomyRecord>;
   setTaxonomySelections(connectionId: string, body: SourceTaxonomySelectionBody): Promise<SourceTaxonomySelectionResult>;
+  listMetaFields(connectionId: string, contentType: string): Promise<readonly SourceMetaFieldDefinition[]>;
+  setMetaValues(connectionId: string, body: SourceMetaValuesBody): Promise<SourceMetaValuesResult>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
   restore(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;

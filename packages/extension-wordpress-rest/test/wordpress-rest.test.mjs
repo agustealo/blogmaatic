@@ -52,6 +52,7 @@ function makeServer() {
     ping_status: post.ping_status,
     sticky: post.sticky,
     format: post.format,
+    meta: post.meta,
     date_gmt: post.date_gmt,
   });
   const toPost = (id, body) => {
@@ -76,6 +77,7 @@ function makeServer() {
       ping_status: body.ping_status ?? "open",
       sticky: body.sticky ?? false,
       format: body.format ?? "standard",
+      meta: body.meta ?? {},
       date_gmt: body.date_gmt ?? null,
       modified_gmt: `2026-09-22T18:00:${String(modification).padStart(2, "0")}`,
     };
@@ -139,6 +141,29 @@ function makeServer() {
         },
       });
     }
+    if (request.method === "OPTIONS" && path === "/books") {
+      return json(response, 200, {
+        schema: {
+          properties: {
+            meta: {
+              type: "object",
+              properties: {
+                isbn: { type: "string", title: "ISBN", description: "Book ISBN" },
+                rating: { type: "number", default: 0 },
+                edition: { type: ["integer", "null"], title: "Edition" },
+                featured: { type: "boolean" },
+                audience: { type: "string", enum: ["public", "members"] },
+                keywords: { type: "array", items: { type: "string" } },
+                details: { type: "object", properties: { imprint: { type: "string" } } },
+                api_token: { type: "string" },
+                internal_score: { type: "integer", readOnly: true },
+              },
+            },
+          },
+        },
+      });
+    }
+
     if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
     if (request.method === "GET" && path === "/users") {
       const search = url.searchParams.get("search")?.toLowerCase();
@@ -1582,6 +1607,206 @@ test("WordPress content types are discovered and source browsing is scoped by RE
     assert.deepEqual((await content.list("wp-1", { contentType: "books", perPage: 30 })).items.map((item) => item.id), [81]);
     assert.equal((await content.revisions("wp-1", "81", "books"))[0].parent, 81);
   } finally { api.server.close(); }
+});
+
+test("WordPress REST meta schema discovery filters unsafe fields and preserves typed import values", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.books.set(81, {
+      id: 81,
+      author: 1,
+      link: "http://example.test/?book=81",
+      slug: "schema-book",
+      status: "draft",
+      title: { raw: "Schema Book" },
+      excerpt: { raw: "Schema excerpt" },
+      content: { raw: "<p>Schema body.</p>" },
+      categories: [],
+      tags: [],
+      featured_media: 0,
+      meta: {
+        isbn: "978-1-234",
+        rating: 4.5,
+        edition: null,
+        featured: true,
+        audience: "members",
+        keywords: ["systems", "publishing"],
+        details: { imprint: "Open Press" },
+        api_token: "DO_NOT_LEAK",
+        internal_score: 99,
+      },
+      date_gmt: null,
+      modified_gmt: "2026-10-24T20:00:00",
+    });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-24T19:00:00.000Z",
+      updatedAt: "2026-10-24T19:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+
+    const fields = await content.listRestMetaFields("wp-1", "books");
+    assert.deepEqual(fields.map((field) => field.key), [
+      "audience", "details", "edition", "featured", "isbn", "keywords", "rating",
+    ]);
+    assert.equal(fields.some((field) => field.key === "api_token"), false);
+    assert.equal(fields.some((field) => field.key === "internal_score"), false);
+    const edition = fields.find((field) => field.key === "edition");
+    assert.equal(edition.type, "integer");
+    assert.equal(edition.nullable, true);
+    const audience = fields.find((field) => field.key === "audience");
+    assert.deepEqual(audience.enum, ["public", "members"]);
+    const rating = fields.find((field) => field.key === "rating");
+    assert.equal(rating.defaultValue, 0);
+
+    const snapshot = await content.importSnapshot("wp-1", "81", "books");
+    assert.deepEqual(snapshot.restMeta.values, {
+      audience: "members",
+      details: { imprint: "Open Press" },
+      edition: null,
+      featured: true,
+      isbn: "978-1-234",
+      keywords: ["systems", "publishing"],
+      rating: 4.5,
+    });
+    assert.equal("api_token" in snapshot.restMeta.values, false);
+    assert.equal("internal_score" in snapshot.restMeta.values, false);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress managed REST meta compiles delivers and detects only managed-key drift", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-24T19:00:00.000Z",
+      updatedAt: "2026-10-24T19:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = textPublication();
+    const publication = {
+      ...base,
+      current: {
+        ...base.current,
+        content: {
+          ...base.current.content,
+          attributes: {
+            ...base.current.content.attributes,
+            sourceMeta: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "books",
+              values: {
+                isbn: "978-1-234",
+                rating: 4.5,
+                featured: true,
+                audience: "members",
+                keywords: ["systems"],
+                details: { imprint: "Open Press" },
+              },
+            },
+          },
+        },
+      },
+    };
+    const bookRoute = { ...route(), destination: { ...route().destination, channel: "books" } };
+    const projection = await publisher.compile({ publication, route: bookRoute });
+    assert.deepEqual(projection.payload.restMeta, {
+      isbn: "978-1-234",
+      rating: 4.5,
+      featured: true,
+      audience: "members",
+      keywords: ["systems"],
+      details: { imprint: "Open Press" },
+    });
+    const delivered = await publisher.deliver({ idempotencyKey: "book-meta", projection });
+    const stored = api.books.get(Number(delivered.remote.id));
+    assert.deepEqual(stored.meta, projection.payload.restMeta);
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+    stored.meta.rating = 2;
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+
+    stored.meta.rating = 4.5;
+    stored.meta.unmanaged_plugin_value = "changed elsewhere";
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress source REST meta applies only to matching connection and content type", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-24T19:00:00.000Z",
+      updatedAt: "2026-10-24T19:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-1", displayName: "One" },
+        { ...baseConnection, id: "wp-2", displayName: "Two" },
+      ]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = textPublication();
+    const publication = {
+      ...base,
+      current: {
+        ...base.current,
+        content: {
+          ...base.current.content,
+          attributes: {
+            ...base.current.content.attributes,
+            sourceMeta: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "books",
+              values: { isbn: "978-1-234" },
+            },
+          },
+        },
+      },
+    };
+    const matching = { ...route(), destination: { ...route().destination, connectionId: "wp-1", channel: "books" } };
+    assert.deepEqual((await publisher.compile({ publication, route: matching })).payload.restMeta, { isbn: "978-1-234" });
+
+    const otherConnection = { ...matching, destination: { ...matching.destination, connectionId: "wp-2" } };
+    assert.equal((await publisher.compile({ publication, route: otherConnection })).payload.restMeta, undefined);
+
+    const otherType = { ...matching, destination: { ...matching.destination, channel: "posts" } };
+    assert.equal((await publisher.compile({ publication, route: otherType })).payload.restMeta, undefined);
+  } finally {
+    api.server.close();
+  }
 });
 
 test("WordPress route channel selects content type while status remains independent", async () => {

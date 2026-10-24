@@ -20,6 +20,7 @@ import {
   type WordPressTaxonomyView,
   type WordPressUserView,
   type WordPressRevisionView,
+  type WordPressRestMetaFieldDefinition,
 } from "@blogmaatic/extension-wordpress-rest";
 import type {
   OperatorSourceContentManager,
@@ -43,6 +44,9 @@ import type {
   SourceContentRevision,
   SourceEditorialOptionsBody,
   SourceEditorialOptionsResult,
+  SourceMetaFieldDefinition,
+  SourceMetaValuesBody,
+  SourceMetaValuesResult,
   SourceRevisionRestoreBody,
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
@@ -181,6 +185,43 @@ function sourceTaxonomyRecord(
       } : {}),
     },
   };
+}
+
+function sourceMetaFieldDefinition(
+  connectionId: string,
+  contentType: string,
+  field: WordPressRestMetaFieldDefinition,
+): SourceMetaFieldDefinition {
+  return {
+    key: field.key,
+    type: field.type,
+    nullable: field.nullable,
+    ...(field.title ? { title: field.title } : {}),
+    ...(field.description ? { description: field.description } : {}),
+    ...(field.enum ? { enum: field.enum } : {}),
+    ...(field.defaultValue === undefined ? {} : { defaultValue: field.defaultValue }),
+    metadata: {
+      extensionId: WORDPRESS_REST_EXTENSION_ID,
+      connectionId,
+      contentType,
+      source: "wordpress-rest-meta",
+    },
+  };
+}
+
+function validMetaValue(field: WordPressRestMetaFieldDefinition, value: JsonValue): boolean {
+  if (value === null) return field.nullable;
+  if (field.enum && !field.enum.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value))) {
+    return false;
+  }
+  switch (field.type) {
+    case "string": return typeof value === "string";
+    case "integer": return typeof value === "number" && Number.isSafeInteger(value);
+    case "number": return typeof value === "number" && Number.isFinite(value);
+    case "boolean": return typeof value === "boolean";
+    case "array": return Array.isArray(value);
+    case "object": return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
 }
 
 function sourceAuthorRecord(connectionId: string, author: WordPressUserView): SourceAuthorRecord {
@@ -420,6 +461,64 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       limit: page.perPage,
       hasMore: page.hasMore,
     };
+  }
+
+  async listMetaFields(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceMetaFieldDefinition[]> {
+    const normalized = contentType.trim();
+    if (!normalized) throw new Error("Source meta content type is required");
+    return (await this.#content.listRestMetaFields(connectionId, normalized))
+      .map((field) => sourceMetaFieldDefinition(connectionId, normalized, field));
+  }
+
+  async setMetaValues(
+    connectionId: string,
+    body: SourceMetaValuesBody,
+  ): Promise<SourceMetaValuesResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source meta connection does not match the publication source");
+    }
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("Source meta content type is required");
+    const wordpress = current.publication.current.content.attributes.wordpress;
+    if (!isRecord(wordpress) || wordpress.contentType !== contentType) {
+      throw new Error("Source meta content type does not match the publication source");
+    }
+
+    const fields = await this.#content.listRestMetaFields(connectionId, contentType);
+    const byKey = new Map(fields.map((field) => [field.key, field] as const));
+    const values: Record<string, JsonValue> = {};
+    for (const [rawKey, value] of Object.entries(body.values)) {
+      const key = rawKey.trim();
+      const field = byKey.get(key);
+      if (!field) throw new Error(`WordPress REST meta field is not exposed for ${contentType}: ${key}`);
+      if (!validMetaValue(field, value)) {
+        throw new Error(`WordPress REST meta value does not match schema: ${key}`);
+      }
+      values[key] = value;
+    }
+
+    const publication = await this.#publications.setSourceMetaValues(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType,
+        values,
+      },
+    );
+    return { publication, contentType, values };
   }
 
   async setTaxonomySelections(
@@ -1175,6 +1274,14 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
                     names: [...taxonomy.names],
                   },
                 ])),
+              },
+            } : {}),
+            ...(snapshot.restMeta && Object.keys(snapshot.restMeta.values).length > 0 ? {
+              sourceMeta: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                contentType,
+                values: snapshot.restMeta.values,
               },
             } : {}),
             sourcePublishing: {
