@@ -1858,9 +1858,19 @@ function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationW
           </div>
         </>
       ) : null}
+      {!loading && matrix && matrix.unavailableTargetGroupIds.length ? (
+        <div className="warning-banner" role="alert">
+          <strong>Some saved publishing targets are unavailable.</strong>
+          <span>{matrix.unavailableTargetGroupIds.join(", ")}. Re-open the editor, remove or replace these targets, and save a new canonical revision before publishing.</span>
+        </div>
+      ) : null}
       {!loading && matrix && matrix.items.length === 0 ? (
         <div className="publication-publishing-empty">
-          <span>No enabled publishing routes are configured. Add or enable a Publication Group destination to distribute this content.</span>
+          <span>
+            {matrix.targetGroupIds.length === 0
+              ? "No Publishing Targets are selected for this publication. Choose one or more Publication Groups in the editor and save before publishing."
+              : "The selected Publishing Targets currently have no available enabled routes."}
+          </span>
         </div>
       ) : null}
 
