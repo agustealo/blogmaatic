@@ -55,6 +55,7 @@ interface PublicationEditor {
   readonly slug: string;
   readonly canonicalUrl: string;
   readonly status: WorkspacePublicationStatus;
+  readonly targetGroupIds: readonly string[];
   readonly hasUnsupportedBlocks: boolean;
 }
 
@@ -107,6 +108,7 @@ function editorForCreate(): PublicationEditor {
     slug: "",
     canonicalUrl: "",
     status: "draft",
+    targetGroupIds: [],
     hasUnsupportedBlocks: false,
   };
 }
@@ -141,6 +143,14 @@ function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
     slug: entry.publication.slug ?? "",
     canonicalUrl: entry.publication.canonicalUrl ?? "",
     status: entry.publication.status as WorkspacePublicationStatus,
+    targetGroupIds: Array.isArray(entry.publication.current.content.attributes.distributionGroupIds)
+      ? [...new Set(
+          entry.publication.current.content.attributes.distributionGroupIds
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim())
+            .filter(Boolean),
+        )].sort()
+      : [],
     hasUnsupportedBlocks: body.unsupported,
   };
 }
@@ -1601,6 +1611,128 @@ function VersionsPanel({ publicationId, nonce }: { readonly publicationId: strin
   );
 }
 
+function PublishingTargetsEditor({
+  value,
+  onChange,
+  onSummary,
+  disabled = false,
+}: {
+  readonly value: readonly string[];
+  readonly onChange: (value: readonly string[]) => void;
+  readonly onSummary: (summary: { readonly groupCount: number; readonly routeCount: number }) => void;
+  readonly disabled?: boolean;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [groups, setGroups] = useState<readonly PublicationGroupRegistryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const items: PublicationGroupRegistryEntry[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await client.listPublicationGroups({
+            enabled: true,
+            limit: 100,
+            ...(cursor ? { cursor } : {}),
+          });
+          items.push(...page.items.filter((entry) => entry.group.routes.some((route) => route.enabled)));
+          cursor = page.nextCursor;
+        } while (cursor);
+        if (active) setGroups(items);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause : new Error("Publishing targets could not be loaded"));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [client]);
+
+  const selected = useMemo(() => new Set(value), [value]);
+  const availableIds = useMemo(() => new Set(groups.map((entry) => entry.group.id)), [groups]);
+  const unavailable = value.filter((groupId) => !availableIds.has(groupId));
+  const routeCount = groups
+    .filter((entry) => selected.has(entry.group.id))
+    .reduce((total, entry) => total + entry.group.routes.filter((route) => route.enabled).length, 0);
+
+  useEffect(() => {
+    onSummary({ groupCount: value.length, routeCount });
+  }, [onSummary, routeCount, value.length]);
+
+  const toggle = (groupId: string, checked: boolean) => {
+    const next = new Set(value);
+    if (checked) next.add(groupId);
+    else next.delete(groupId);
+    onChange([...next].sort());
+  };
+
+  return (
+    <div className="publishing-targets-editor">
+      <div className="publishing-targets-editor__header">
+        <span>
+          <strong>Publishing targets</strong>
+          <small>Choose exactly which Publication Groups this content may dispatch through.</small>
+        </span>
+        <StatusPill
+          value={value.length ? `${value.length} group${value.length === 1 ? "" : "s"} · ${routeCount} route${routeCount === 1 ? "" : "s"}` : "No targets"}
+          tone={value.length ? "good" : "warn"}
+        />
+      </div>
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : (
+        <div className="publishing-targets-editor__list">
+          {groups.map((entry) => {
+            const enabledRoutes = entry.group.routes.filter((route) => route.enabled);
+            return (
+              <label className="publishing-targets-editor__row" key={entry.group.id}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(entry.group.id)}
+                  onChange={(event) => toggle(entry.group.id, event.target.checked)}
+                  disabled={disabled}
+                />
+                <span>
+                  <strong>{entry.group.name}</strong>
+                  <small>
+                    {enabledRoutes.length} route{enabledRoutes.length === 1 ? "" : "s"} · {enabledRoutes
+                      .map((route) => `${destinationLabel(route.destination.extensionId)} / ${route.destination.channel}`)
+                      .join(" · ")}
+                  </small>
+                </span>
+              </label>
+            );
+          })}
+          {groups.length === 0 ? <EmptyState title="No enabled Publication Groups">Create and enable a Publishing group before targeting this publication.</EmptyState> : null}
+          {unavailable.map((groupId) => (
+            <div className="publishing-targets-editor__row publishing-targets-editor__row--unavailable" key={groupId}>
+              <span>
+                <strong>{groupId}</strong>
+                <small>This saved target is missing or disabled. Remove it before publishing.</small>
+              </span>
+              <button
+                className="button button--quiet"
+                type="button"
+                onClick={() => toggle(groupId, false)}
+                disabled={disabled}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="security-note">No target is implicit. A publication with zero targets cannot be published.</p>
+    </div>
+  );
+}
+
 function destinationMatrixTone(state: PublicationDestinationMatrixItem["state"]): "good" | "warn" | "bad" {
   if (state === "current") return "good";
   if (state === "not_sent" || state === "update_available") return "warn";
@@ -1988,6 +2120,12 @@ export function PublicationsPage() {
   const [actionError, setActionError] = useState<Error | null>(null);
   const [dispatchResult, setDispatchResult] = useState<PublicationWorkspaceDispatchResult | null>(null);
   const [changeNonce, setChangeNonce] = useState(0);
+  const [targetSummary, setTargetSummary] = useState({ groupCount: 0, routeCount: 0 });
+  const updateTargetSummary = useCallback((summary: { readonly groupCount: number; readonly routeCount: number }) => {
+    setTargetSummary((current) =>
+      current.groupCount === summary.groupCount && current.routeCount === summary.routeCount ? current : summary,
+    );
+  }, []);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setSearchQuery(searchInput.trim()), 250);
@@ -2067,6 +2205,7 @@ export function PublicationsPage() {
         language: editor.language.trim() || "en",
         tags: listFromInput(editor.tags),
         categories: listFromInput(editor.categories),
+        targetGroupIds: editor.targetGroupIds,
         slug: editor.slug,
         canonicalUrl: editor.canonicalUrl,
         status: editor.status,
@@ -2119,7 +2258,11 @@ export function PublicationsPage() {
     }
   }, [client, editor]);
 
-  const canPublish = editor?.mode === "edit" && editor.status !== "archived" && !editor.hasUnsupportedBlocks;
+  const canPublish =
+    editor?.mode === "edit" &&
+    editor.status !== "archived" &&
+    !editor.hasUnsupportedBlocks &&
+    editor.targetGroupIds.length > 0;
 
   return (
     <>
@@ -2247,15 +2390,25 @@ export function PublicationsPage() {
                 <label className="field"><span>Canonical URL</span><input type="url" value={editor.canonicalUrl} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, canonicalUrl: event.target.value } : current); }} /></label>
                 <label className="field"><span>Status</span><select value={editor.status} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, status: event.target.value as WorkspacePublicationStatus } : current); }}>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               </div>
+              <PublishingTargetsEditor
+                value={editor.targetGroupIds}
+                onChange={(targetGroupIds) => {
+                  setPendingPublish(false);
+                  setEditor((current) => current ? { ...current, targetGroupIds } : current);
+                }}
+                onSummary={updateTargetSummary}
+                disabled={busy !== null}
+              />
               <div className="publication-editor__actions">
                 <button className="button button--quiet" type="button" onClick={() => { setActiveEntry(null); setEditor(null); setPendingPublish(false); setDispatchResult(null); navigate("/publications"); }} disabled={busy !== null}>Close</button>
                 <button className="button button--primary" type="submit" disabled={busy !== null || !editor.title.trim() || editor.hasUnsupportedBlocks}>{busy === "save" ? "Saving…" : editor.mode === "create" ? "Create Draft" : "Save New Version"}</button>
                 {canPublish && !pendingPublish ? <button className="button publication-publish-button" type="button" onClick={() => setPendingPublish(true)} disabled={busy !== null}>{busy === "publish" ? "Publishing…" : "Approve & Publish"}</button> : null}
+                {editor.mode === "edit" && editor.targetGroupIds.length === 0 ? <span className="publication-target-lock">Select and save at least one Publishing Target before publishing.</span> : null}
               </div>
               {canPublish && pendingPublish ? (
                 <div className="confirmation-strip confirmation-strip--primary" role="group" aria-label="Confirm publication approval and dispatch">
                   <strong>Approve and publish “{editor.title}”?</strong>
-                  <span>This dispatches every enabled <code>publication.approved</code> Automation that matches the canonical event. The saved workspace snapshot is used for the dispatch.</span>
+                  <span>This dispatches the saved canonical revision only through {targetSummary.groupCount} selected Publication Group{targetSummary.groupCount === 1 ? "" : "s"} covering {targetSummary.routeCount} enabled route{targetSummary.routeCount === 1 ? "" : "s"}. Matching <code>publication.approved</code> Automations receive only those groups.</span>
                   <div>
                     <button className="button button--quiet" type="button" onClick={() => setPendingPublish(false)} disabled={busy !== null}>Cancel</button>
                     <button className="button button--primary" type="button" onClick={() => void publish()} disabled={busy !== null} autoFocus>{busy === "publish" ? "Publishing…" : "Confirm publish"}</button>
