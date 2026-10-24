@@ -36,6 +36,7 @@ import type {
   PublicationGroupUpdateBody,
   PublicationGroupVersionListQuery,
   PublicationGroupVersionPage,
+  PublicationDestinationMatrix,
   PublicationProjectionPreview,
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
@@ -581,6 +582,12 @@ export class OperatorClient {
       `/v1/publications/${encodeURIComponent(publicationId)}/preview`,
       { groupId },
     ));
+  }
+
+  getPublicationDestinations(publicationId: string): Promise<PublicationDestinationMatrix> {
+    return this.#request<PublicationDestinationMatrix>(
+      `/v1/publications/${encodeURIComponent(publicationId)}/destinations`,
+    );
   }
 
   listPublicationDistributions(

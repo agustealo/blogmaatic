@@ -22,6 +22,7 @@ import {
 import type {
   OperatorApiOptions,
   OperatorDistributionHistory,
+  OperatorPublicationDestinationMatrixManager,
   OperatorPublicationGroupManager,
   OperatorPublicationPreviewManager,
   OperatorPublicationWorkspaceManager,
@@ -56,6 +57,17 @@ function manager(options: OperatorApiOptions): OperatorPublicationGroupManager {
     );
   }
   return options.publicationGroups;
+}
+
+function destinationMatrixManager(options: OperatorApiOptions): OperatorPublicationDestinationMatrixManager {
+  if (!options.destinationMatrix) {
+    throw new PublicationGroupApiError(
+      503,
+      "PUBLICATION_DESTINATION_MATRIX_UNAVAILABLE",
+      "Publication destination matrix is unavailable",
+    );
+  }
+  return options.destinationMatrix;
 }
 
 function distributionManager(options: OperatorApiOptions): OperatorDistributionHistory {
@@ -187,6 +199,13 @@ function registerPublicationWorkspaceRoutes(app: FastifyInstance, options: Opera
     await publicationOr404(publicationManager(options), publicationId);
     await currentOr404(manager(options), groupId);
     return publicationDomainCall(() => previewManager(options).preview(publicationId, groupId));
+  });
+
+  app.get("/v1/publications/:publicationId/destinations", async (request) => {
+    await authorize(options, request, "publications:read");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    await publicationOr404(publicationManager(options), publicationId);
+    return publicationDomainCall(() => destinationMatrixManager(options).get(publicationId));
   });
 
   app.get("/v1/publications/:publicationId/distributions", async (request) => {

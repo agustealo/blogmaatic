@@ -51,6 +51,7 @@ import { ControlRoomServer, type ControlRoomUpdateStatus } from "./control-room-
 import { canonicalLoopbackHost, httpOrigin, normalizeHost } from "./network.js";
 import { ManagedRestateServer, runLocalCommand, waitForTcp } from "./processes.js";
 import { productVersion as installedProductVersion } from "./product-version.js";
+import { PublicationDestinationMatrixManager } from "./publication-destination-matrix-manager.js";
 import { PublicationGroupManager } from "./publication-group-manager.js";
 import { PublicationPreviewManager } from "./publication-preview-manager.js";
 import { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
@@ -253,6 +254,12 @@ export async function startRuntime(options: {
       publicationGroups,
       extensions,
     });
+    const destinationMatrix = new PublicationDestinationMatrixManager({
+      publications,
+      publicationGroups,
+      previews,
+      distributions: projectionState,
+    });
     const sourceContent = new WordPressSourceManager({
       content: wordpressContent,
       publisher: wordpressPublisher,
@@ -271,6 +278,7 @@ export async function startRuntime(options: {
       publications,
       previews,
       distributions: projectionState,
+      destinationMatrix,
       schedules,
       authorizer: new StaticBearerAuthorizer([{
         id: config.operator.principalId,
