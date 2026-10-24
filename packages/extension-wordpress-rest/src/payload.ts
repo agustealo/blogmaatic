@@ -41,6 +41,33 @@ function parseAssets(value: JsonValue | undefined): readonly CompiledWordPressAs
   });
 }
 
+function parseCustomTaxonomies(
+  value: JsonValue | undefined,
+): Readonly<Record<string, { readonly restBase: string; readonly restNamespace?: string; readonly names: readonly string[] }>> {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new Error("WordPress customTaxonomies must be an object");
+  const result: Record<string, { readonly restBase: string; readonly restNamespace?: string; readonly names: readonly string[] }> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const taxonomyKey = rawKey.trim();
+    if (!taxonomyKey) throw new Error("WordPress custom taxonomy key must be non-empty");
+    if (!isRecord(rawValue)) throw new Error(`WordPress custom taxonomy ${taxonomyKey} must be an object`);
+    const restBase = requiredString(rawValue, "restBase").trim();
+    if (!/^[a-zA-Z0-9._-]+$/.test(restBase)) {
+      throw new Error(`WordPress custom taxonomy ${taxonomyKey} has invalid restBase`);
+    }
+    const restNamespace = typeof rawValue.restNamespace === "string" && rawValue.restNamespace.trim()
+      ? rawValue.restNamespace.trim()
+      : undefined;
+    const names = stringArray(rawValue.names);
+    result[taxonomyKey] = {
+      restBase,
+      ...(restNamespace ? { restNamespace } : {}),
+      names,
+    };
+  }
+  return result;
+}
+
 export interface ParsedWordPressPayload extends WordPressProjectionPayload {
   readonly assetsParsed: readonly CompiledWordPressAsset[];
 }
@@ -103,6 +130,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     throw new Error("WordPress sticky posts cannot be password protected");
   }
   const assetsParsed = parseAssets(projection.payload.assets);
+  const customTaxonomies = parseCustomTaxonomies(projection.payload.customTaxonomies);
   return {
     contentType: requiredString(projection.payload, "contentType"),
     title: requiredString(projection.payload, "title"),
@@ -112,6 +140,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     bodyTemplate: requiredString(projection.payload, "bodyTemplate"),
     tags: stringArray(projection.payload.tags),
     categories: stringArray(projection.payload.categories),
+    customTaxonomies,
     assets: projection.payload.assets && Array.isArray(projection.payload.assets)
       ? projection.payload.assets.filter(isRecord)
       : [],
