@@ -24,6 +24,7 @@ export interface PublicationWorkspaceCreateInput {
   readonly language?: string;
   readonly tags?: readonly string[];
   readonly categories?: readonly string[];
+  readonly publishingTargetGroupIds?: readonly string[];
   readonly slug?: string;
   readonly canonicalUrl?: string;
   readonly status?: WorkspacePublicationStatus;
@@ -281,7 +282,10 @@ export class PublicationWorkspaceManager {
           blocks: blocksFromBody(input.body, input.bodyFormat),
           assets: [],
           tags: normalizeTags(input.tags),
-          attributes: withCategories({}, normalizeCategories(input.categories)),
+          attributes: withPublishingTargets(
+            withCategories({}, normalizeCategories(input.categories)),
+            input.publishingTargetGroupIds ?? [],
+          ),
         },
       },
       ...(canonicalUrl ? { canonicalUrl } : {}),
