@@ -52,6 +52,7 @@ function makeServer() {
     ping_status: post.ping_status,
     sticky: post.sticky,
     format: post.format,
+    meta: post.meta,
     date_gmt: post.date_gmt,
   });
   const toPost = (id, body) => {
@@ -76,6 +77,7 @@ function makeServer() {
       ping_status: body.ping_status ?? "open",
       sticky: body.sticky ?? false,
       format: body.format ?? "standard",
+      meta: body.meta ?? {},
       date_gmt: body.date_gmt ?? null,
       modified_gmt: `2026-09-22T18:00:${String(modification).padStart(2, "0")}`,
     };
@@ -139,6 +141,29 @@ function makeServer() {
         },
       });
     }
+    if (request.method === "OPTIONS" && path === "/books") {
+      return json(response, 200, {
+        schema: {
+          properties: {
+            meta: {
+              type: "object",
+              properties: {
+                isbn: { type: "string", title: "ISBN", description: "Book ISBN" },
+                rating: { type: "number", default: 0 },
+                edition: { type: ["integer", "null"], title: "Edition" },
+                featured: { type: "boolean" },
+                audience: { type: "string", enum: ["public", "members"] },
+                keywords: { type: "array", items: { type: "string" } },
+                details: { type: "object", properties: { imprint: { type: "string" } } },
+                api_token: { type: "string" },
+                internal_score: { type: "integer", readOnly: true },
+              },
+            },
+          },
+        },
+      });
+    }
+
     if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
     if (request.method === "GET" && path === "/users") {
       const search = url.searchParams.get("search")?.toLowerCase();
