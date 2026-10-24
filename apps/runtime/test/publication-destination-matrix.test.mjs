@@ -201,7 +201,7 @@ test("destination matrix joins configured routes with full durable history and p
                 blocks: [],
                 assets: [],
                 tags: [],
-                attributes: {},
+                attributes: { distributionGroupIds: ["group-a", "group-b"] },
               },
             },
             provenance: { source: "blogmaatic.publication-workspace" },
@@ -279,6 +279,8 @@ test("destination matrix joins configured routes with full durable history and p
   assert.equal(result.currentRevisionId, "revision-current");
   assert.equal(result.currentRevisionOrdinal, 8);
   assert.equal(result.generatedAt, "2026-10-24T22:00:00.000Z");
+  assert.deepEqual(result.targetGroupIds, ["group-a", "group-b"]);
+  assert.deepEqual(result.unavailableTargetGroupIds, []);
   assert.equal(result.items.length, 7);
   assert.equal(result.items.some((item) => item.routeId === "disabled"), false);
 
@@ -337,7 +339,7 @@ test("destination matrix keeps receipt evidence when an entire group preview fai
                 blocks: [],
                 assets: [],
                 tags: [],
-                attributes: {},
+                attributes: { distributionGroupIds: ["group-a"] },
               },
             },
             provenance: { source: "wordpress" },
@@ -358,4 +360,131 @@ test("destination matrix keeps receipt evidence when an entire group preview fai
   assert.equal(result.items[0].remote.id, "55");
   assert.equal(result.items[0].preview.status, "error");
   assert.match(result.items[0].preview.error, /Compiler unavailable/);
+});
+
+
+test("destination matrix is fail-closed for no targets and reports unavailable saved targets", async () => {
+  const enabled = groupEntry("group-a", "Primary", 1, [
+    route("wp", "blogmaatic.wordpress-rest", "wp-main", "posts"),
+  ]);
+  let attributes = {};
+  const matrix = new PublicationDestinationMatrixManager({
+    publications: {
+      async get() {
+        return {
+          publication: {
+            id: "publication-1",
+            createdAt: "2026-10-24T19:00:00.000Z",
+            status: "approved",
+            current: {
+              id: "revision-current",
+              ordinal: 2,
+              createdAt: "2026-10-24T20:00:00.000Z",
+              content: {
+                schemaVersion: 1,
+                title: "Target-aware matrix",
+                language: "en",
+                blocks: [],
+                assets: [],
+                tags: [],
+                attributes,
+              },
+            },
+            provenance: { source: "blogmaatic.publication-workspace" },
+          },
+          version: 2,
+          recordedAt: "2026-10-24T20:00:00.000Z",
+          updatedAt: "2026-10-24T20:00:00.000Z",
+        };
+      },
+    },
+    publicationGroups: {
+      async list() {
+        return { items: [enabled] };
+      },
+    },
+    distributions: {
+      async list() {
+        throw new Error("History should not be required to invent implicit targets");
+      },
+    },
+    previews: {
+      async preview() {
+        throw new Error("Preview should not compile an unselected group");
+      },
+    },
+  });
+
+  // No canonical target means no configured destination is considered intended.
+  let result = await matrix.get("publication-1");
+  assert.deepEqual(result.targetGroupIds, []);
+  assert.deepEqual(result.unavailableTargetGroupIds, []);
+  assert.deepEqual(result.items, []);
+
+  attributes = { distributionGroupIds: ["group-a", "group-missing"] };
+  const targeted = new PublicationDestinationMatrixManager({
+    publications: {
+      async get() {
+        return {
+          publication: {
+            id: "publication-1",
+            createdAt: "2026-10-24T19:00:00.000Z",
+            status: "approved",
+            current: {
+              id: "revision-current",
+              ordinal: 2,
+              createdAt: "2026-10-24T20:00:00.000Z",
+              content: {
+                schemaVersion: 1,
+                title: "Target-aware matrix",
+                language: "en",
+                blocks: [],
+                assets: [],
+                tags: [],
+                attributes,
+              },
+            },
+            provenance: { source: "blogmaatic.publication-workspace" },
+          },
+          version: 2,
+          recordedAt: "2026-10-24T20:00:00.000Z",
+          updatedAt: "2026-10-24T20:00:00.000Z",
+        };
+      },
+    },
+    publicationGroups: { async list() { return { items: [enabled] }; } },
+    distributions: { async list() { return { items: [] }; } },
+    previews: {
+      async preview() {
+        return {
+          publicationId: "publication-1",
+          revisionId: "revision-current",
+          revisionOrdinal: 2,
+          groupId: "group-a",
+          groupName: "Primary",
+          items: [{
+            status: "ready",
+            routeId: "wp",
+            destination: {
+              extensionId: "blogmaatic.wordpress-rest",
+              extensionName: "WordPress REST",
+              connectionId: "wp-main",
+              connectionName: "WordPress",
+              channel: "posts",
+            },
+            projectionId: "projection-wp",
+            sourceRevisionId: "revision-current",
+            fingerprint: "fingerprint-wp",
+            payload: {},
+            summary: {},
+          }],
+        };
+      },
+    },
+  });
+  result = await targeted.get("publication-1");
+  assert.deepEqual(result.targetGroupIds, ["group-a", "group-missing"]);
+  assert.deepEqual(result.unavailableTargetGroupIds, ["group-missing"]);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].groupId, "group-a");
 });
