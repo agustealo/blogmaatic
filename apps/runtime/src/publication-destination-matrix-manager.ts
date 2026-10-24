@@ -9,7 +9,7 @@ import type {
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
 import type { PublicationPreviewManager } from "./publication-preview-manager.js";
-import type { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
+import { publicationTargetGroupIds, type PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 
 export interface PublicationDestinationMatrixManagerOptions {
   readonly publications: PublicationWorkspaceManager;
@@ -66,6 +66,8 @@ export class PublicationDestinationMatrixManager implements OperatorPublicationD
     const publicationEntry = await this.#publications.get(publicationId);
     if (!publicationEntry) throw new Error(`Publication is not registered: ${publicationId}`);
 
+    const targetGroupIds = publicationTargetGroupIds(publicationEntry.publication);
+    const targetGroupSet = new Set(targetGroupIds);
     const groups = [];
     let groupCursor: string | undefined;
     do {
@@ -74,9 +76,11 @@ export class PublicationDestinationMatrixManager implements OperatorPublicationD
         limit: 100,
         ...(groupCursor ? { cursor: groupCursor } : {}),
       });
-      groups.push(...page.items);
+      groups.push(...page.items.filter((entry) => targetGroupSet.has(entry.group.id)));
       groupCursor = page.nextCursor;
     } while (groupCursor);
+    const availableTargetIds = new Set(groups.map((entry) => entry.group.id));
+    const unavailableTargetGroupIds = targetGroupIds.filter((groupId) => !availableTargetIds.has(groupId));
 
     const history: DistributionHistoryRecord[] = [];
     let historyCursor: string | undefined;
@@ -188,6 +192,8 @@ export class PublicationDestinationMatrixManager implements OperatorPublicationD
       currentRevisionId,
       currentRevisionOrdinal,
       generatedAt: this.#now(),
+      targetGroupIds,
+      unavailableTargetGroupIds,
       items,
     };
   }
