@@ -196,6 +196,7 @@ export interface WordPressTaxonomyView {
 export interface WordPressCustomTaxonomySelection {
   readonly taxonomyKey: string;
   readonly restBase: string;
+  readonly restNamespace?: string;
   readonly names: readonly string[];
 }
 
