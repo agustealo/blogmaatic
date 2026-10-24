@@ -111,9 +111,10 @@ function optionalQueryString(input: Record<string, unknown>, key: string): strin
 
 export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationWorkspaceCreateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "publishingTargetGroupIds", "slug", "canonicalUrl", "status"], "request body");
   const parsedTags = stringList(input, "tags");
   const parsedCategories = stringList(input, "categories");
+  const parsedPublishingTargetGroupIds = publishingTargetGroupIds(input);
   const parsedStatus = status(input);
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -132,6 +133,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
     ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
+    ...(parsedPublishingTargetGroupIds === undefined ? {} : { publishingTargetGroupIds: parsedPublishingTargetGroupIds }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),
