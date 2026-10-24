@@ -860,7 +860,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
 
     let current = await fetchPost(client, restBase, String(saved.id));
     const currentBody = stripMarker(sourceBody(current));
-    const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies);
+    const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies, payload.restMeta);
     const currentMarker = parseMarker(sourceBody(current));
     if (
       currentMarker?.projectionFingerprint !== request.projection.fingerprint ||
