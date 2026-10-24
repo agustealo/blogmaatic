@@ -1170,6 +1170,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
                   taxonomy.taxonomyKey,
                   {
                     restBase: taxonomy.restBase,
+                    ...(taxonomy.restNamespace ? { restNamespace: taxonomy.restNamespace } : {}),
                     names: [...taxonomy.names],
                   },
                 ])),
