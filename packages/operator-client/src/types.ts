@@ -70,10 +70,13 @@ import type {
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
+  SourceTaxonomyDefinitionRecord,
   SourceTaxonomyKind,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SourceTaxonomyRecord,
+  SourceTaxonomySelectionBody,
+  SourceTaxonomySelectionResult,
   WorkspacePublicationStatus,
 } from "@blogmaatic/operator-api";
 
@@ -149,10 +152,13 @@ export type {
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
+  SourceTaxonomyDefinitionRecord,
   SourceTaxonomyKind,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SourceTaxonomyRecord,
+  SourceTaxonomySelectionBody,
+  SourceTaxonomySelectionResult,
   WorkspacePublicationStatus,
 };
 

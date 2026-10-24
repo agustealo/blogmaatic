@@ -77,9 +77,12 @@ import type {
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
+  SourceTaxonomyDefinitionRecord,
   SourceTaxonomyRecord,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
+  SourceTaxonomySelectionBody,
+  SourceTaxonomySelectionResult,
   SchedulerDispatchResponse,
 } from "./types.js";
 
@@ -307,6 +310,26 @@ export class OperatorClient {
   ): Promise<SourceAuthorAssignResult> {
     return this.#request<SourceAuthorAssignResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/authors/${encodeURIComponent(remoteId)}/assign`,
+      { method: "POST", body: input },
+    );
+  }
+
+  async listSourceTaxonomyDefinitions(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceTaxonomyDefinitionRecord[]> {
+    const response = await this.#request<{ readonly items: readonly SourceTaxonomyDefinitionRecord[] }>(
+      pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/taxonomies`, { contentType }),
+    );
+    return response.items;
+  }
+
+  setSourceTaxonomySelections(
+    connectionId: string,
+    input: SourceTaxonomySelectionBody,
+  ): Promise<SourceTaxonomySelectionResult> {
+    return this.#request<SourceTaxonomySelectionResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/taxonomy-selections`,
       { method: "POST", body: input },
     );
   }

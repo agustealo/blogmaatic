@@ -807,3 +807,54 @@ a.data-table__row:hover { background: var(--surface-2); }
   .source-editorial-controls { grid-template-columns: 1fr; }
   .source-editorial-controls > .button { width: 100%; }
 }
+
+
+/* Source custom taxonomy editor */
+.source-custom-taxonomy-toolbar {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  display: grid;
+  grid-template-columns: minmax(180px, .7fr) minmax(240px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.source-custom-taxonomy-selected {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.source-custom-taxonomy-selected button {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 6px 10px;
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  font: inherit;
+  font-size: .76rem;
+  cursor: pointer;
+}
+.source-custom-taxonomy-selected button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  background: var(--surface);
+}
+.source-custom-taxonomy-selected button > span:first-child {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-custom-taxonomy-selected button > span:last-child {
+  color: var(--muted);
+  font-weight: 800;
+}
+@media (max-width: 760px) {
+  .source-custom-taxonomy-toolbar { grid-template-columns: 1fr; }
+  .source-custom-taxonomy-toolbar > .button { width: 100%; }
+}

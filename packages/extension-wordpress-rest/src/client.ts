@@ -40,6 +40,25 @@ export class WordPressRestClient {
     return this.#request<T>(path, init, true);
   }
 
+  async requestNamespaceJson<T>(
+    namespace: string,
+    path: string,
+    init: RequestInit = {},
+  ): Promise<T> {
+    const normalizedNamespace = namespace.trim().replace(/^\/+|\/+$/g, "");
+    if (
+      !normalizedNamespace ||
+      normalizedNamespace.split("/").some((segment) => !/^[a-zA-Z0-9._-]+$/.test(segment) || segment === "." || segment === "..")
+    ) {
+      throw new Error("WordPress REST namespace contains unsupported characters");
+    }
+    if (!path.startsWith("/") || path.startsWith("//")) {
+      throw new Error("WordPress REST namespace request path must be root-relative");
+    }
+    const root = `${this.#settings.siteUrl.replace(/\/+$/g, "")}/wp-json/${normalizedNamespace}`;
+    return this.#request<T>(`${root}${path}`, init, true);
+  }
+
   async requestBytes<T>(path: string, bytes: Uint8Array, contentType: string, filename: string): Promise<T> {
     const headers = new Headers({
       "Content-Type": contentType,

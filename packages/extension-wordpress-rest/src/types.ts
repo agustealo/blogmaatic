@@ -44,9 +44,15 @@ export interface WordPressProjectionPayload {
   readonly pingStatus?: "open" | "closed";
   readonly sticky?: boolean;
   readonly format?: string;
+  readonly customTaxonomies?: Readonly<Record<string, {
+    readonly restBase: string;
+    readonly restNamespace?: string;
+    readonly names: readonly string[];
+  }>>;
 }
 
 export interface WordPressPostRecord {
+  readonly [key: string]: unknown;
   readonly id: number;
   readonly author?: number;
   readonly date_gmt?: string | null;
@@ -163,6 +169,37 @@ export interface WordPressTermPage {
   readonly hasMore: boolean;
 }
 
+export interface WordPressTaxonomyRecord {
+  readonly slug: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly hierarchical?: boolean;
+  readonly types?: readonly string[];
+  readonly rest_base?: string;
+  readonly rest_namespace?: string;
+  readonly visibility?: {
+    readonly show_ui?: boolean;
+    readonly show_in_nav_menus?: boolean;
+    readonly show_in_rest?: boolean;
+  };
+}
+
+export interface WordPressTaxonomyView {
+  readonly key: string;
+  readonly label: string;
+  readonly restBase: string;
+  readonly hierarchical: boolean;
+  readonly contentTypes: readonly string[];
+  readonly restNamespace?: string;
+  readonly description?: string;
+}
+
+export interface WordPressCustomTaxonomySelection {
+  readonly taxonomyKey: string;
+  readonly restBase: string;
+  readonly restNamespace?: string;
+  readonly names: readonly string[];
+}
 
 export interface WordPressRevisionRecord {
   readonly id: number;
@@ -236,6 +273,7 @@ export interface WordPressPostView {
   readonly pingStatus?: "open" | "closed";
   readonly sticky?: boolean;
   readonly format?: string;
+  readonly customTaxonomyIds?: Readonly<Record<string, readonly number[]>>;
   readonly ownership: WordPressManagedOwnership;
 }
 
@@ -261,5 +299,6 @@ export interface WordPressImportSnapshot {
   readonly post: WordPressPostView;
   readonly categoryNames: readonly string[];
   readonly tagNames: readonly string[];
+  readonly customTaxonomies?: readonly WordPressCustomTaxonomySelection[];
   readonly featuredMedia?: WordPressMediaRecord;
 }

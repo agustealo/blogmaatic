@@ -17,6 +17,7 @@ import {
   type WordPressContentTypeView,
   type WordPressMediaView,
   type WordPressPostView,
+  type WordPressTaxonomyView,
   type WordPressUserView,
   type WordPressRevisionView,
 } from "@blogmaatic/extension-wordpress-rest";
@@ -49,9 +50,12 @@ import type {
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
+  SourceTaxonomyDefinitionRecord,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SourceTaxonomyRecord,
+  SourceTaxonomySelectionBody,
+  SourceTaxonomySelectionResult,
 } from "@blogmaatic/operator-api";
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
@@ -77,6 +81,9 @@ function sourceRecord(
     authorId: post.author ?? null,
     categoryIds: [...post.categoryIds],
     tagIds: [...post.tagIds],
+    customTaxonomyIds: Object.fromEntries(
+      Object.entries(post.customTaxonomyIds ?? {}).map(([key, ids]) => [key, [...ids]]),
+    ),
     featuredMediaId: post.featuredMediaId ?? null,
     parentRemoteId: post.parentId === undefined ? null : String(post.parentId),
     template: post.template ?? null,
@@ -126,21 +133,53 @@ function sourceContentTypeRecord(
   };
 }
 
-function sourceTaxonomyRecord(
+function taxonomyKind(taxonomyKey: string): "category" | "tag" | "custom" {
+  return taxonomyKey === "category" ? "category" : taxonomyKey === "post_tag" ? "tag" : "custom";
+}
+
+function sourceTaxonomyDefinitionRecord(
   connectionId: string,
-  kind: "category" | "tag",
-  term: { readonly id: number; readonly name: string; readonly slug: string; readonly description?: string; readonly count?: number },
-): SourceTaxonomyRecord {
+  taxonomy: WordPressTaxonomyView,
+): SourceTaxonomyDefinitionRecord {
   return {
     connectionId,
     extensionId: WORDPRESS_REST_EXTENSION_ID,
+    taxonomyKey: taxonomy.key,
+    label: taxonomy.label,
+    kind: taxonomyKind(taxonomy.key),
+    hierarchical: taxonomy.hierarchical,
+    contentTypes: [...taxonomy.contentTypes],
+    metadata: {
+      restBase: taxonomy.restBase,
+      restNamespace: taxonomy.restNamespace ?? null,
+    },
+  };
+}
+
+function sourceTaxonomyRecord(
+  connectionId: string,
+  taxonomyKey: string,
+  term: { readonly id: number; readonly name: string; readonly slug: string; readonly description?: string; readonly count?: number },
+  taxonomy?: WordPressTaxonomyView,
+): SourceTaxonomyRecord {
+  const kind = taxonomyKind(taxonomyKey);
+  return {
+    connectionId,
+    extensionId: WORDPRESS_REST_EXTENSION_ID,
+    ...(kind === "custom" ? { taxonomyKey } : {}),
     kind,
     remoteId: String(term.id),
     name: term.name,
     slug: term.slug,
     ...(term.description ? { description: term.description } : {}),
     ...(term.count === undefined ? {} : { count: term.count }),
-    metadata: { wordpressTermId: term.id },
+    metadata: {
+      wordpressTermId: term.id,
+      ...(taxonomy ? {
+        restBase: taxonomy.restBase,
+        restNamespace: taxonomy.restNamespace ?? null,
+      } : {}),
+    },
   };
 }
 
@@ -304,30 +343,147 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     };
   }
 
+  async listTaxonomyDefinitions(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceTaxonomyDefinitionRecord[]> {
+    return (await this.#content.listTaxonomies(connectionId, contentType))
+      .map((taxonomy) => sourceTaxonomyDefinitionRecord(connectionId, taxonomy));
+  }
+
   async createTaxonomy(
     connectionId: string,
     body: SourceTaxonomyCreateBody,
   ): Promise<SourceTaxonomyRecord> {
+    if (body.taxonomyKey) {
+      if (!body.contentType) throw new Error("Custom taxonomy creation requires contentType");
+      const taxonomy = (await this.#content.listTaxonomies(connectionId, body.contentType))
+        .find((candidate) => candidate.key === body.taxonomyKey);
+      if (!taxonomy) {
+        throw new Error(`WordPress taxonomy ${body.taxonomyKey} is not attached to content type ${body.contentType}`);
+      }
+      const term = await this.#content.createTermForTaxonomy(connectionId, taxonomy.key, body.contentType, {
+        name: body.name,
+        ...(body.slug === undefined ? {} : { slug: body.slug }),
+        ...(body.description === undefined ? {} : { description: body.description }),
+      });
+      return sourceTaxonomyRecord(connectionId, taxonomy.key, term, taxonomy);
+    }
+    if (body.kind !== "category" && body.kind !== "tag") {
+      throw new Error("Legacy taxonomy creation requires category or tag kind");
+    }
     const term = await this.#content.createTerm(connectionId, body.kind, {
       name: body.name,
       ...(body.slug === undefined ? {} : { slug: body.slug }),
       ...(body.description === undefined ? {} : { description: body.description }),
     });
-    return sourceTaxonomyRecord(connectionId, body.kind, term);
+    return sourceTaxonomyRecord(connectionId, body.kind === "category" ? "category" : "post_tag", term);
   }
 
   async listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage> {
+    if (query.taxonomyKey) {
+      if (!query.contentType) throw new Error("Custom taxonomy lookup requires contentType");
+      const taxonomy = (await this.#content.listTaxonomies(connectionId, query.contentType))
+        .find((candidate) => candidate.key === query.taxonomyKey);
+      if (!taxonomy) {
+        throw new Error(`WordPress taxonomy ${query.taxonomyKey} is not attached to content type ${query.contentType}`);
+      }
+      const page = await this.#content.listTermsForTaxonomy(
+        connectionId,
+        taxonomy.key,
+        query.contentType,
+        {
+          ...(query.search ? { search: query.search } : {}),
+          ...(query.page === undefined ? {} : { page: query.page }),
+          ...(query.limit === undefined ? {} : { perPage: query.limit }),
+        },
+      );
+      return {
+        items: page.items.map((term) => sourceTaxonomyRecord(connectionId, taxonomy.key, term, taxonomy)),
+        page: page.page,
+        limit: page.perPage,
+        hasMore: page.hasMore,
+      };
+    }
+    if (query.kind !== "category" && query.kind !== "tag") {
+      throw new Error("Legacy taxonomy lookup requires category or tag kind");
+    }
     const page = await this.#content.listTerms(connectionId, query.kind, {
       ...(query.search ? { search: query.search } : {}),
       ...(query.page === undefined ? {} : { page: query.page }),
       ...(query.limit === undefined ? {} : { perPage: query.limit }),
     });
+    const taxonomyKey = query.kind === "category" ? "category" : "post_tag";
     return {
-      items: page.items.map((term) => sourceTaxonomyRecord(connectionId, query.kind, term)),
+      items: page.items.map((term) => sourceTaxonomyRecord(connectionId, taxonomyKey, term)),
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
     };
+  }
+
+  async setTaxonomySelections(
+    connectionId: string,
+    body: SourceTaxonomySelectionBody,
+  ): Promise<SourceTaxonomySelectionResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
+    }
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source taxonomy connection does not match the publication source");
+    }
+    const wordpress = current.publication.current.content.attributes.wordpress;
+    if (!isRecord(wordpress) || wordpress.contentType !== body.contentType) {
+      throw new Error("Source taxonomy content type does not match the publication source");
+    }
+
+    const definitions = await this.#content.listTaxonomies(connectionId, body.contentType);
+    const byKey = new Map(definitions.map((definition) => [definition.key, definition] as const));
+    const taxonomies: Record<string, {
+      readonly restBase: string;
+      readonly restNamespace?: string;
+      readonly names: readonly string[];
+    }> = {};
+    for (const [taxonomyKey, names] of Object.entries(body.selections)) {
+      if (taxonomyKey === "category" || taxonomyKey === "post_tag") {
+        throw new Error("Categories and tags must use their existing canonical fields");
+      }
+      const definition = byKey.get(taxonomyKey);
+      if (!definition) {
+        throw new Error(`WordPress taxonomy ${taxonomyKey} is not attached to content type ${body.contentType}`);
+      }
+      taxonomies[taxonomyKey] = {
+        restBase: definition.restBase,
+        ...(definition.restNamespace ? { restNamespace: definition.restNamespace } : {}),
+        names,
+      };
+    }
+
+    const publication = await this.#publications.setSourceTaxonomies(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType: body.contentType,
+        taxonomies,
+      },
+    );
+    const source = publication.publication.current.content.attributes.sourceTaxonomies;
+    if (!isRecord(source) || !isRecord(source.taxonomies)) {
+      throw new Error("Canonical source taxonomy selections were not persisted");
+    }
+    const selections: Record<string, readonly string[]> = {};
+    for (const [taxonomyKey, value] of Object.entries(source.taxonomies)) {
+      if (!isRecord(value) || !Array.isArray(value.names)) continue;
+      selections[taxonomyKey] = value.names.filter((name): name is string => typeof name === "string");
+    }
+    return { publication, contentType: body.contentType, selections };
   }
 
   async setEditorialOptions(
@@ -1006,6 +1162,21 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
                 remoteId: String(snapshot.post.author),
               },
             }),
+            ...((snapshot.customTaxonomies ?? []).length > 0 ? {
+              sourceTaxonomies: {
+                extensionId: WORDPRESS_REST_EXTENSION_ID,
+                connectionId,
+                contentType,
+                taxonomies: Object.fromEntries((snapshot.customTaxonomies ?? []).map((taxonomy) => [
+                  taxonomy.taxonomyKey,
+                  {
+                    restBase: taxonomy.restBase,
+                    ...(taxonomy.restNamespace ? { restNamespace: taxonomy.restNamespace } : {}),
+                    names: [...taxonomy.names],
+                  },
+                ])),
+              },
+            } : {}),
             sourcePublishing: {
               extensionId: WORDPRESS_REST_EXTENSION_ID,
               connectionId,
@@ -1022,6 +1193,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
               authorId: snapshot.post.author ?? null,
               categoryIds: [...snapshot.post.categoryIds],
               tagIds: [...snapshot.post.tagIds],
+              customTaxonomyIds: Object.fromEntries(
+                Object.entries(snapshot.post.customTaxonomyIds ?? {}).map(([key, ids]) => [key, [...ids]]),
+              ),
               featuredMediaId: snapshot.post.featuredMediaId ?? null,
               parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
               template: snapshot.post.template ?? null,

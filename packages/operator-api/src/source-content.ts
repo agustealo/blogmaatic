@@ -17,6 +17,7 @@ import type {
   SourcePageStructureBody,
   SourceTaxonomyCreateBody,
   SourceTaxonomyQuery,
+  SourceTaxonomySelectionBody,
   SourceContentQuery,
 } from "./types.js";
 import { OperatorRequestError, requirePathString } from "./validation.js";
@@ -185,21 +186,27 @@ function parseTaxonomyCreateBody(body: unknown): SourceTaxonomyCreateBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["kind", "name", "slug", "description"]);
+  const allowed = new Set(["kind", "taxonomyKey", "contentType", "name", "slug", "description"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
 
   const kind = input.kind;
-  if (kind !== "category" && kind !== "tag") {
-    throw new OperatorRequestError("kind must be category or tag");
+  if (kind !== undefined && kind !== "category" && kind !== "tag" && kind !== "custom") {
+    throw new OperatorRequestError("kind must be category, tag, or custom");
   }
+  const taxonomyKey = optionalString(input, "taxonomyKey");
+  const contentType = optionalContentType(input.contentType);
+  if (taxonomyKey) {
+    if (!contentType) throw new OperatorRequestError("contentType is required with taxonomyKey");
+  } else if (kind !== "category" && kind !== "tag") {
+    throw new OperatorRequestError("category or tag kind is required when taxonomyKey is omitted");
+  }
+
   const name = input.name;
   if (typeof name !== "string" || !name.trim()) {
     throw new OperatorRequestError("name is required");
   }
-  if (name.trim().length > 200) {
-    throw new OperatorRequestError("name must not exceed 200 characters");
-  }
+  if (name.trim().length > 200) throw new OperatorRequestError("name must not exceed 200 characters");
   const slug = input.slug;
   if (slug !== undefined && (typeof slug !== "string" || !slug.trim())) {
     throw new OperatorRequestError("slug must be a non-empty string when provided");
@@ -215,7 +222,9 @@ function parseTaxonomyCreateBody(body: unknown): SourceTaxonomyCreateBody {
     throw new OperatorRequestError("description must not exceed 2000 characters");
   }
   return {
-    kind,
+    ...(kind === undefined ? {} : { kind }),
+    ...(taxonomyKey ? { taxonomyKey } : {}),
+    ...(contentType ? { contentType } : {}),
     name: name.trim(),
     ...(typeof slug === "string" ? { slug: slug.trim() } : {}),
     ...(typeof description === "string" ? { description: description.trim() } : {}),
@@ -224,21 +233,68 @@ function parseTaxonomyCreateBody(body: unknown): SourceTaxonomyCreateBody {
 
 function parseTaxonomyQuery(request: FastifyRequest): SourceTaxonomyQuery {
   const input = query(request);
-  const allowed = new Set(["kind", "search", "page", "limit"]);
+  const allowed = new Set(["kind", "taxonomyKey", "contentType", "search", "page", "limit"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
   const kind = optionalString(input, "kind");
-  if (kind !== "category" && kind !== "tag") {
-    throw new OperatorRequestError("kind must be category or tag");
+  if (kind !== undefined && kind !== "category" && kind !== "tag" && kind !== "custom") {
+    throw new OperatorRequestError("kind must be category, tag, or custom");
+  }
+  const taxonomyKey = optionalString(input, "taxonomyKey");
+  const contentType = optionalContentType(input.contentType);
+  if (taxonomyKey) {
+    if (!contentType) throw new OperatorRequestError("contentType is required with taxonomyKey");
+  } else if (kind !== "category" && kind !== "tag") {
+    throw new OperatorRequestError("category or tag kind is required when taxonomyKey is omitted");
   }
   const search = optionalString(input, "search");
   const page = optionalInteger(input, "page", 1, 1000000);
   const limit = optionalInteger(input, "limit", 1, 100);
   return {
-    kind,
+    ...(kind === undefined ? {} : { kind }),
+    ...(taxonomyKey ? { taxonomyKey } : {}),
+    ...(contentType ? { contentType } : {}),
     ...(search ? { search } : {}),
     ...(page === undefined ? {} : { page }),
     ...(limit === undefined ? {} : { limit }),
+  };
+}
+
+function parseTaxonomySelectionBody(body: unknown): SourceTaxonomySelectionBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "selections"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  if (typeof input.publicationId !== "string" || !input.publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+  if (input.selections === null || typeof input.selections !== "object" || Array.isArray(input.selections)) {
+    throw new OperatorRequestError("selections must be an object");
+  }
+  const selections: Record<string, readonly string[]> = {};
+  for (const [rawKey, rawNames] of Object.entries(input.selections as Record<string, unknown>)) {
+    const taxonomyKey = rawKey.trim();
+    if (!taxonomyKey) throw new OperatorRequestError("taxonomy selection key must be non-empty");
+    if (!Array.isArray(rawNames) || rawNames.some((name) => typeof name !== "string")) {
+      throw new OperatorRequestError(`taxonomy selection ${taxonomyKey} must be an array of strings`);
+    }
+    const names = [...new Set((rawNames as string[]).map((name) => name.trim()).filter(Boolean))];
+    if (names.length > 200) throw new OperatorRequestError(`taxonomy selection ${taxonomyKey} is too large`);
+    selections[taxonomyKey] = names;
+  }
+  return {
+    publicationId: input.publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    contentType,
+    selections,
   };
 }
 
@@ -670,6 +726,47 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     return reply.code(201).send(result);
   });
 
+  app.get("/v1/connections/:connectionId/taxonomies", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const input = query(request);
+    const unknown = Object.keys(input).find((key) => key !== "contentType");
+    if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+    const contentType = optionalContentType(input.contentType);
+    if (!contentType) throw new OperatorRequestError("contentType is required");
+    return { items: await domainCall(() => manager(options).listTaxonomyDefinitions(connectionId, contentType)) };
+  });
+
+  app.post("/v1/connections/:connectionId/taxonomy-selections", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseTaxonomySelectionBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-taxonomy.selection.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        taxonomyKeys: Object.keys(body.selections).sort(),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setTaxonomySelections(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          taxonomyKeys: Object.keys(value.selections).sort(),
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
   app.post("/v1/connections/:connectionId/taxonomy", async (request, reply) => {
     const principal = await authorize(options, request, "source-content:write");
     const connectionId = requirePathString(params(request).connectionId, "connectionId");
@@ -679,10 +776,12 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       principal,
       requestId: request.id,
       action: "source-taxonomy.create",
-      resource: { type: "source-taxonomy", id: `${connectionId}:${body.kind}:${body.slug ?? body.name}` },
+      resource: { type: "source-taxonomy", id: `${connectionId}:${body.taxonomyKey ?? body.kind ?? "taxonomy"}:${body.slug ?? body.name}` },
       evidence: {
         connectionId,
-        kind: body.kind,
+        kind: body.kind ?? null,
+        taxonomyKey: body.taxonomyKey ?? null,
+        contentType: body.contentType ?? null,
         name: body.name,
         requestedSlug: body.slug ?? null,
         descriptionPresent: Boolean(body.description),

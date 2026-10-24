@@ -15,6 +15,7 @@ import type {
   SourceContentRecord,
   SourceContentRevision,
   SourceContentTypeRecord,
+  SourceTaxonomyDefinitionRecord,
   SourceTaxonomyKind,
   SourceTaxonomyRecord,
   WorkspacePublicationStatus,
@@ -951,6 +952,279 @@ function SourceTaxonomyPanel({
           <button className="button button--quiet" type="button" onClick={() => void load(page + 1, true)} disabled={loading}>Load more</button>
         </div>
       ) : null}
+    </Panel>
+  );
+}
+
+function canonicalCustomTaxonomySelections(
+  entry: PublicationWorkspaceEntry,
+): Readonly<Record<string, readonly string[]>> {
+  const source = entry.publication.current.content.attributes.sourceTaxonomies;
+  if (source === null || typeof source !== "object" || Array.isArray(source)) return {};
+  const taxonomies = (source as Readonly<Record<string, unknown>>).taxonomies;
+  if (taxonomies === null || typeof taxonomies !== "object" || Array.isArray(taxonomies)) return {};
+  const result: Record<string, readonly string[]> = {};
+  for (const [taxonomyKey, value] of Object.entries(taxonomies as Readonly<Record<string, unknown>>)) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    const names = (value as Readonly<Record<string, unknown>>).names;
+    if (!Array.isArray(names)) continue;
+    result[taxonomyKey] = names.filter((name): name is string => typeof name === "string");
+  }
+  return result;
+}
+
+function normalizeTaxonomySelections(
+  input: Readonly<Record<string, readonly string[]>>,
+): Readonly<Record<string, readonly string[]>> {
+  return Object.fromEntries(
+    Object.entries(input)
+      .map(([key, names]) => [
+        key,
+        [...new Set(names.map((name) => name.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right)),
+      ] as const)
+      .filter(([, names]) => names.length > 0)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function SourceCustomTaxonomyPanel({
+  entry,
+  connectionId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const contentType = wordpressContentType(entry);
+  const canonical = useMemo(
+    () => normalizeTaxonomySelections(canonicalCustomTaxonomySelections(entry)),
+    [entry.publication.current.id],
+  );
+  const [definitions, setDefinitions] = useState<readonly SourceTaxonomyDefinitionRecord[]>([]);
+  const [taxonomyKey, setTaxonomyKey] = useState("");
+  const [selections, setSelections] = useState<Readonly<Record<string, readonly string[]>>>(canonical);
+  const [search, setSearch] = useState("");
+  const [terms, setTerms] = useState<readonly SourceTaxonomyRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    setSelections(canonical);
+  }, [canonical]);
+
+  useEffect(() => {
+    let active = true;
+    if (!contentType) {
+      setDefinitions([]);
+      setTaxonomyKey("");
+      setLoading(false);
+      return () => { active = false; };
+    }
+    setLoading(true);
+    setError(null);
+    void client.listSourceTaxonomyDefinitions(connectionId, contentType)
+      .then((items) => {
+        if (!active) return;
+        const custom = items.filter((item) => item.kind === "custom");
+        setDefinitions(custom);
+        setTaxonomyKey((current) =>
+          current && custom.some((item) => item.taxonomyKey === current)
+            ? current
+            : custom[0]?.taxonomyKey ?? "");
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress custom taxonomies could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connectionId, contentType]);
+
+  const loadTerms = useCallback(async () => {
+    if (!contentType || !taxonomyKey) {
+      setTerms([]);
+      return;
+    }
+    setSearching(true);
+    setError(null);
+    try {
+      const page = await client.listSourceTaxonomy(connectionId, {
+        kind: "custom",
+        taxonomyKey,
+        contentType,
+        limit: 50,
+        ...(search.trim() ? { search: search.trim() } : {}),
+      });
+      setTerms(page.items);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress custom taxonomy terms could not be loaded"));
+    } finally {
+      setSearching(false);
+    }
+  }, [client, connectionId, contentType, search, taxonomyKey]);
+
+  useEffect(() => {
+    void loadTerms();
+  }, [taxonomyKey, contentType]);
+
+  const add = useCallback((name: string) => {
+    if (!taxonomyKey) return;
+    setSelections((current) => ({
+      ...current,
+      [taxonomyKey]: [...new Set([...(current[taxonomyKey] ?? []), name.trim()].filter(Boolean))],
+    }));
+  }, [taxonomyKey]);
+
+  const remove = useCallback((key: string, name: string) => {
+    setSelections((current) => {
+      const next = (current[key] ?? []).filter((candidate) => candidate !== name);
+      const copy = { ...current };
+      if (next.length > 0) copy[key] = next;
+      else delete copy[key];
+      return copy;
+    });
+  }, []);
+
+  const create = useCallback(async () => {
+    const name = search.trim();
+    if (!name || !taxonomyKey || !contentType) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const created = await client.createSourceTaxonomy(connectionId, {
+        kind: "custom",
+        taxonomyKey,
+        contentType,
+        name,
+      });
+      setTerms((current) => [
+        created,
+        ...current.filter((item) => item.remoteId !== created.remoteId),
+      ]);
+      add(created.name);
+      setSearch(created.name);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress custom taxonomy term could not be created"));
+    } finally {
+      setCreating(false);
+    }
+  }, [add, client, connectionId, contentType, search, taxonomyKey]);
+
+  const save = useCallback(async () => {
+    if (!contentType) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await client.setSourceTaxonomySelections(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        contentType,
+        selections: normalizeTaxonomySelections(selections),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress custom taxonomy selections could not be saved"));
+    } finally {
+      setSaving(false);
+    }
+  }, [client, connectionId, contentType, entry.publication.id, entry.version, onUpdated, selections]);
+
+  if (!loading && definitions.length === 0) return null;
+
+  const selected = taxonomyKey ? selections[taxonomyKey] ?? [] : [];
+  const normalizedSearch = search.trim();
+  const exactMatch = normalizedSearch
+    ? terms.some((item) => item.name.localeCompare(normalizedSearch, undefined, { sensitivity: "accent" }) === 0)
+    : true;
+  const dirty = JSON.stringify(normalizeTaxonomySelections(selections)) !== JSON.stringify(canonical);
+
+  return (
+    <Panel title="WordPress custom taxonomies" meta="Source-bound terms for this content type" className="source-custom-taxonomy-panel">
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : (
+        <>
+          <div className="source-custom-taxonomy-toolbar">
+            <label className="field">
+              <span>Taxonomy</span>
+              <select value={taxonomyKey} onChange={(event) => setTaxonomyKey(event.target.value)} disabled={saving}>
+                {definitions.map((definition) => (
+                  <option key={definition.taxonomyKey} value={definition.taxonomyKey}>
+                    {definition.label}{definition.hierarchical ? " · hierarchical" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Search terms</span>
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void loadTerms();
+                  }
+                }}
+                disabled={saving}
+              />
+            </label>
+            <button className="button button--quiet" type="button" onClick={() => void loadTerms()} disabled={searching || saving}>
+              {searching ? "Searching…" : "Search"}
+            </button>
+          </div>
+
+          {selected.length > 0 ? (
+            <div className="source-custom-taxonomy-selected">
+              {selected.map((name) => (
+                <button type="button" key={name} onClick={() => remove(taxonomyKey, name)} disabled={saving}>
+                  <span>{name}</span><span>×</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="source-taxonomy-list">
+            {terms.map((item) => {
+              const added = selected.includes(item.name);
+              return (
+                <button
+                  className="source-taxonomy-item"
+                  type="button"
+                  key={item.remoteId}
+                  onClick={() => add(item.name)}
+                  disabled={saving || added}
+                >
+                  <span><strong>{item.name}</strong><small>/{item.slug}</small></span>
+                  <span>{added ? "Added" : "Add"}</span>
+                </button>
+              );
+            })}
+            {normalizedSearch && !exactMatch ? (
+              <button className="source-taxonomy-create" type="button" onClick={() => void create()} disabled={creating || saving}>
+                <span>
+                  <strong>{creating ? "Creating…" : `Create & add “${normalizedSearch}”`}</strong>
+                  <small>Creates this term in the selected WordPress taxonomy.</small>
+                </span>
+                <span>+</span>
+              </button>
+            ) : null}
+          </div>
+
+          <div className="collection-footer">
+            <button className="button button--primary" type="button" onClick={() => void save()} disabled={saving || !dirty}>
+              {saving ? "Saving…" : "Save custom taxonomies"}
+            </button>
+          </div>
+        </>
+      )}
     </Panel>
   );
 }
@@ -1995,6 +2269,16 @@ export function PublicationsPage() {
                       ? { categories: addListValue(current.categories, name) }
                       : { tags: addListValue(current.tags, name) }),
                   } : current);
+                }}
+              />
+              <SourceCustomTaxonomyPanel
+                entry={activeEntry}
+                connectionId={activeEntry.publication.provenance.connectionId}
+                onUpdated={(next) => {
+                  setActiveEntry(next);
+                  setEditor(editorForEntry(next));
+                  setPendingPublish(false);
+                  setChangeNonce((value) => value + 1);
                 }}
               />
               {typeof activeEntry.publication.provenance.remoteId === "string" ? (

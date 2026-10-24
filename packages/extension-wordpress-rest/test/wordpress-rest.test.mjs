@@ -16,6 +16,7 @@ function makeServer() {
   const books = new Map();
   const tags = new Map();
   const categories = new Map();
+  const genres = new Map();
   const media = new Map();
   const users = new Map([
     [1, { id: 1, name: "Editor", slug: "editor", link: "http://example.test/author/editor", avatar_urls: { "96": "http://example.test/avatar/editor.png" } }],
@@ -104,6 +105,38 @@ function makeServer() {
         page: { slug: "page", name: "Pages", description: "Static pages", hierarchical: true, viewable: true, rest_base: "pages", rest_namespace: "wp/v2", taxonomies: [], supports: { title: true, editor: true, comments: true, "page-attributes": true } },
         book: { slug: "book", name: "Books", description: "Custom book entries", hierarchical: false, viewable: true, rest_base: "books", rest_namespace: "wp/v2", taxonomies: ["category"], supports: { title: true, editor: true } },
         attachment: { slug: "attachment", name: "Media", viewable: false, rest_base: "media", rest_namespace: "wp/v2", taxonomies: [] },
+      });
+    }
+    if (request.method === "GET" && path === "/taxonomies") {
+      return json(response, 200, {
+        category: {
+          slug: "category",
+          name: "Categories",
+          hierarchical: true,
+          types: ["post", "book"],
+          rest_base: "categories",
+          rest_namespace: "wp/v2",
+          visibility: { show_ui: true, show_in_rest: true },
+        },
+        post_tag: {
+          slug: "post_tag",
+          name: "Tags",
+          hierarchical: false,
+          types: ["post"],
+          rest_base: "tags",
+          rest_namespace: "wp/v2",
+          visibility: { show_ui: true, show_in_rest: true },
+        },
+        genre: {
+          slug: "genre",
+          name: "Genres",
+          description: "Book genres",
+          hierarchical: true,
+          types: ["book"],
+          rest_base: "genres",
+          rest_namespace: "wp/v2",
+          visibility: { show_ui: true, show_in_rest: true },
+        },
       });
     }
     if (request.method === "GET" && path === "/users/me") return json(response, 200, users.get(1));
@@ -351,6 +384,7 @@ function makeServer() {
     books,
     tags,
     categories,
+    genres,
     media,
     users,
     mediaUploads,
