@@ -1052,8 +1052,25 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     }
 
     if (!workspace) {
-      const publication = this.#importedPublication(connectionId, contentType, snapshot);
+      const publication = this.#importedPublication(connectionId, contentType, snapshot, body.groupId);
       workspace = await this.#publications.registerImported(publication);
+    }
+
+    const existingTargets = workspace.publication.current.content.attributes.publishingTargets;
+    const existingTargetIds = (
+      existingTargets !== null &&
+      typeof existingTargets === "object" &&
+      !Array.isArray(existingTargets) &&
+      Array.isArray((existingTargets as Readonly<Record<string, unknown>>).groupIds)
+    )
+      ? ((existingTargets as Readonly<Record<string, unknown>>).groupIds as readonly unknown[])
+          .filter((value): value is string => typeof value === "string")
+      : [];
+    if (!existingTargetIds.includes(body.groupId)) {
+      workspace = await this.#publications.update(workspace.publication.id, {
+        expectedVersion: workspace.version,
+        publishingTargetGroupIds: [...existingTargetIds, body.groupId],
+      });
     }
 
     const projection = await this.#publisher.compile({
@@ -1185,6 +1202,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     connectionId: string,
     contentType: string,
     snapshot: Awaited<ReturnType<WordPressContentService["importSnapshot"]>>,
+    publishingTargetGroupId: string,
   ): Publication {
     const now = this.#now();
     const revisionId = `revision_${this.#id()}`;
@@ -1226,6 +1244,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           tags: [...snapshot.tagNames],
           attributes: {
             categories: [...snapshot.categoryNames],
+            publishingTargets: { groupIds: [publishingTargetGroupId] },
             ...(snapshot.post.password !== undefined ||
                 snapshot.post.commentStatus !== undefined ||
                 snapshot.post.pingStatus !== undefined ||
