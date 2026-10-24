@@ -82,7 +82,7 @@ function sourceRecord(
     categoryIds: [...post.categoryIds],
     tagIds: [...post.tagIds],
     customTaxonomyIds: Object.fromEntries(
-      Object.entries(post.customTaxonomyIds).map(([key, ids]) => [key, [...ids]]),
+      Object.entries(post.customTaxonomyIds ?? {}).map(([key, ids]) => [key, [...ids]]),
     ),
     featuredMediaId: post.featuredMediaId ?? null,
     parentRemoteId: post.parentId === undefined ? null : String(post.parentId),
@@ -1161,12 +1161,12 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
                 remoteId: String(snapshot.post.author),
               },
             }),
-            ...(snapshot.customTaxonomies.length > 0 ? {
+            ...((snapshot.customTaxonomies ?? []).length > 0 ? {
               sourceTaxonomies: {
                 extensionId: WORDPRESS_REST_EXTENSION_ID,
                 connectionId,
                 contentType,
-                taxonomies: Object.fromEntries(snapshot.customTaxonomies.map((taxonomy) => [
+                taxonomies: Object.fromEntries((snapshot.customTaxonomies ?? []).map((taxonomy) => [
                   taxonomy.taxonomyKey,
                   {
                     restBase: taxonomy.restBase,
@@ -1193,7 +1193,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
               categoryIds: [...snapshot.post.categoryIds],
               tagIds: [...snapshot.post.tagIds],
               customTaxonomyIds: Object.fromEntries(
-                Object.entries(snapshot.post.customTaxonomyIds).map(([key, ids]) => [key, [...ids]]),
+                Object.entries(snapshot.post.customTaxonomyIds ?? {}).map(([key, ids]) => [key, [...ids]]),
               ),
               featuredMediaId: snapshot.post.featuredMediaId ?? null,
               parentRemoteId: snapshot.post.parentId === undefined ? null : String(snapshot.post.parentId),
