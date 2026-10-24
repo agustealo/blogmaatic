@@ -108,8 +108,11 @@ function metaType(schema: Readonly<Record<string, unknown>>): {
 } {
   const raw = schema.type;
   if (typeof raw === "string") {
+    const supported = REST_META_TYPES.has(raw as WordPressRestMetaType)
+      ? raw as WordPressRestMetaType
+      : undefined;
     return {
-      type: REST_META_TYPES.has(raw as WordPressRestMetaType) ? raw as WordPressRestMetaType : undefined,
+      ...(supported ? { type: supported } : {}),
       nullable: raw === "null",
     };
   }
