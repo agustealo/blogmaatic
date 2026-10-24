@@ -77,8 +77,6 @@ import type {
   SourceTaxonomyRecord,
   SourceTaxonomySelectionBody,
   SourceTaxonomySelectionResult,
-  SourceTaxonomySelectionBody,
-  SourceTaxonomySelectionResult,
   WorkspacePublicationStatus,
 } from "@blogmaatic/operator-api";
 
@@ -159,6 +157,8 @@ export type {
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SourceTaxonomyRecord,
+  SourceTaxonomySelectionBody,
+  SourceTaxonomySelectionResult,
   WorkspacePublicationStatus,
 };
 
