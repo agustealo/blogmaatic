@@ -81,6 +81,19 @@ export class PublicationDestinationMatrixManager implements OperatorPublicationD
     } while (groupCursor);
     const availableTargetIds = new Set(groups.map((entry) => entry.group.id));
     const unavailableTargetGroupIds = targetGroupIds.filter((groupId) => !availableTargetIds.has(groupId));
+    const currentRevisionId = publicationEntry.publication.current.id;
+    const currentRevisionOrdinal = publicationEntry.publication.current.ordinal;
+    if (groups.length === 0) {
+      return {
+        publicationId,
+        currentRevisionId,
+        currentRevisionOrdinal,
+        generatedAt: this.#now(),
+        targetGroupIds,
+        unavailableTargetGroupIds,
+        items: [],
+      };
+    }
 
     const history: DistributionHistoryRecord[] = [];
     let historyCursor: string | undefined;
@@ -121,8 +134,6 @@ export class PublicationDestinationMatrixManager implements OperatorPublicationD
       }
     }));
 
-    const currentRevisionId = publicationEntry.publication.current.id;
-    const currentRevisionOrdinal = publicationEntry.publication.current.ordinal;
     const items: PublicationDestinationMatrixItem[] = [];
 
     for (const entry of groups) {
