@@ -272,7 +272,7 @@ export interface WordPressPostView {
   readonly pingStatus?: "open" | "closed";
   readonly sticky?: boolean;
   readonly format?: string;
-  readonly customTaxonomyIds: Readonly<Record<string, readonly number[]>>;
+  readonly customTaxonomyIds?: Readonly<Record<string, readonly number[]>>;
   readonly ownership: WordPressManagedOwnership;
 }
 
@@ -298,6 +298,6 @@ export interface WordPressImportSnapshot {
   readonly post: WordPressPostView;
   readonly categoryNames: readonly string[];
   readonly tagNames: readonly string[];
-  readonly customTaxonomies: readonly WordPressCustomTaxonomySelection[];
+  readonly customTaxonomies?: readonly WordPressCustomTaxonomySelection[];
   readonly featuredMedia?: WordPressMediaRecord;
 }
