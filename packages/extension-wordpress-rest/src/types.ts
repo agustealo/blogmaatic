@@ -46,6 +46,7 @@ export interface WordPressProjectionPayload {
   readonly format?: string;
   readonly customTaxonomies?: Readonly<Record<string, {
     readonly restBase: string;
+    readonly restNamespace?: string;
     readonly names: readonly string[];
   }>>;
 }
