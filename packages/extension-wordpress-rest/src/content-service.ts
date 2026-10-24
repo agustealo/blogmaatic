@@ -294,6 +294,7 @@ function remoteStateHash(
   post: WordPressPostRecord,
   bodyWithoutMarker: string,
   customTaxonomies: Readonly<Record<string, { readonly restBase: string }>> = {},
+  restMeta: Readonly<Record<string, JsonValue>> = {},
 ): string {
   const customState = Object.fromEntries(
     Object.entries(customTaxonomies)
@@ -306,6 +307,11 @@ function remoteStateHash(
           : [];
         return [taxonomyKey, [...ids].sort((left, right) => left - right)];
       }),
+  );
+  const managedMeta = Object.fromEntries(
+    Object.keys(restMeta)
+      .sort()
+      .map((key) => [key, post.meta?.[key] ?? null]),
   );
   return sha256(
     stableJson({
@@ -320,6 +326,15 @@ function remoteStateHash(
       customTaxonomies: customState,
       featuredMedia: post.featured_media ?? 0,
       author: post.author ?? null,
+      parent: post.parent ?? 0,
+      template: post.template ?? "",
+      menuOrder: post.menu_order ?? 0,
+      password: post.password ?? "",
+      commentStatus: post.comment_status ?? null,
+      pingStatus: post.ping_status ?? null,
+      sticky: post.sticky ?? null,
+      format: post.format ?? null,
+      restMeta: managedMeta,
     }),
   );
 }
@@ -846,7 +861,7 @@ export class WordPressContentService {
       publicationId: projection.publicationId,
       routeId: projection.routeId,
       projectionFingerprint: projection.fingerprint,
-      renderedHash: remoteStateHash(current, raw, payload.customTaxonomies),
+      renderedHash: remoteStateHash(current, raw, payload.customTaxonomies, payload.restMeta),
     });
     const saved = await client.requestJson<WordPressPostRecord>(
       `/${restBase}/${requireRemoteId(remoteId)}`,
