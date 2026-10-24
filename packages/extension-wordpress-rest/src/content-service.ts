@@ -11,6 +11,7 @@ import {
   stableJson,
   stripMarker,
 } from "./fingerprint.js";
+import { parsePayload } from "./payload.js";
 import { WORDPRESS_REST_EXTENSION_ID, parseSettings } from "./settings.js";
 import { findOrCreateTerm } from "./taxonomy.js";
 import type {
@@ -214,7 +215,23 @@ function revisionView(revision: WordPressRevisionRecord): WordPressRevisionView 
   };
 }
 
-function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): string {
+function remoteStateHash(
+  post: WordPressPostRecord,
+  bodyWithoutMarker: string,
+  customTaxonomies: Readonly<Record<string, { readonly restBase: string }>> = {},
+): string {
+  const customState = Object.fromEntries(
+    Object.entries(customTaxonomies)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([taxonomyKey, definition]) => {
+        const raw = post[definition.restBase];
+        const ids = Array.isArray(raw)
+          ? raw.filter((value): value is number =>
+              typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+          : [];
+        return [taxonomyKey, [...ids].sort((left, right) => left - right)];
+      }),
+  );
   return sha256(
     stableJson({
       title: rawValue(post.title),
@@ -225,6 +242,7 @@ function remoteStateHash(post: WordPressPostRecord, bodyWithoutMarker: string): 
       content: bodyWithoutMarker,
       categories: [...(post.categories ?? [])].sort((left, right) => left - right),
       tags: [...(post.tags ?? [])].sort((left, right) => left - right),
+      customTaxonomies: customState,
       featuredMedia: post.featured_media ?? 0,
       author: post.author ?? null,
     }),
@@ -421,6 +439,7 @@ export class WordPressContentService {
           return {
             taxonomyKey: taxonomy.key,
             restBase: taxonomy.restBase,
+            ...(taxonomy.restNamespace ? { restNamespace: taxonomy.restNamespace } : {}),
             names,
           };
         }),
@@ -701,12 +720,13 @@ export class WordPressContentService {
       throw new Error("WordPress post is already owned by a different Blogmaatic publication or route");
     }
     const raw = stripMarker(rawValue(current.content));
+    const payload = parsePayload(projection);
     const marked = documentWithMarker(raw, {
       version: 1,
       publicationId: projection.publicationId,
       routeId: projection.routeId,
       projectionFingerprint: projection.fingerprint,
-      renderedHash: remoteStateHash(current, raw),
+      renderedHash: remoteStateHash(current, raw, payload.customTaxonomies),
     });
     const saved = await client.requestJson<WordPressPostRecord>(
       `/${restBase}/${requireRemoteId(remoteId)}`,
