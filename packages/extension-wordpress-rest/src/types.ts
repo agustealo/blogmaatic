@@ -49,6 +49,7 @@ export interface WordPressProjectionPayload {
     readonly restNamespace?: string;
     readonly names: readonly string[];
   }>>;
+  readonly restMeta?: Readonly<Record<string, JsonValue>>;
 }
 
 export interface WordPressPostRecord {
@@ -74,6 +75,7 @@ export interface WordPressPostRecord {
   readonly ping_status?: "open" | "closed";
   readonly sticky?: boolean;
   readonly format?: string;
+  readonly meta?: Readonly<Record<string, JsonValue>>;
 }
 
 export interface WordPressMediaRecord {
@@ -201,6 +203,23 @@ export interface WordPressCustomTaxonomySelection {
   readonly names: readonly string[];
 }
 
+export type WordPressRestMetaType = "string" | "integer" | "number" | "boolean" | "array" | "object";
+
+export interface WordPressRestMetaFieldDefinition {
+  readonly key: string;
+  readonly type: WordPressRestMetaType;
+  readonly nullable: boolean;
+  readonly title?: string;
+  readonly description?: string;
+  readonly enum?: readonly JsonValue[];
+  readonly defaultValue?: JsonValue;
+}
+
+export interface WordPressRestMetaSnapshot {
+  readonly fields: readonly WordPressRestMetaFieldDefinition[];
+  readonly values: Readonly<Record<string, JsonValue>>;
+}
+
 export interface WordPressRevisionRecord {
   readonly id: number;
   readonly parent?: number;
@@ -300,5 +319,6 @@ export interface WordPressImportSnapshot {
   readonly categoryNames: readonly string[];
   readonly tagNames: readonly string[];
   readonly customTaxonomies?: readonly WordPressCustomTaxonomySelection[];
+  readonly restMeta?: WordPressRestMetaSnapshot;
   readonly featuredMedia?: WordPressMediaRecord;
 }
