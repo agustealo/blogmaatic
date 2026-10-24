@@ -162,11 +162,12 @@ function sourceTaxonomyRecord(
   term: { readonly id: number; readonly name: string; readonly slug: string; readonly description?: string; readonly count?: number },
   taxonomy?: WordPressTaxonomyView,
 ): SourceTaxonomyRecord {
+  const kind = taxonomyKind(taxonomyKey);
   return {
     connectionId,
     extensionId: WORDPRESS_REST_EXTENSION_ID,
-    taxonomyKey,
-    kind: taxonomyKind(taxonomyKey),
+    ...(kind === "custom" ? { taxonomyKey } : {}),
+    kind,
     remoteId: String(term.id),
     name: term.name,
     slug: term.slug,
