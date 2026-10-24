@@ -1601,7 +1601,7 @@ function VersionsPanel({ publicationId, nonce }: { readonly publicationId: strin
   );
 }
 
-function destinationMatrixTone(state: PublicationDestinationMatrixItem["state"]): "good" | "warn" | "bad" | undefined {
+function destinationMatrixTone(state: PublicationDestinationMatrixItem["state"]): "good" | "warn" | "bad" {
   if (state === "current") return "good";
   if (state === "not_sent" || state === "update_available") return "warn";
   return "bad";
