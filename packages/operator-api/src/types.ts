@@ -615,6 +615,57 @@ export interface OperatorDistributionHistory {
 export type OperatorDistributionHistoryQuery = DistributionHistoryQuery;
 export type OperatorDistributionHistoryPage = DistributionHistoryPage;
 
+export type PublicationDestinationMatrixState =
+  | "not_sent"
+  | "current"
+  | "update_available"
+  | "drifted"
+  | "failed";
+
+export interface PublicationDestinationMatrixItem {
+  readonly key: string;
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly groupVersion: number;
+  readonly routeId: string;
+  readonly destination: PublicationProjectionPreviewDestination;
+  readonly state: PublicationDestinationMatrixState;
+  readonly currentRevisionId: string;
+  readonly currentRevisionOrdinal: number;
+  readonly deliveryCount: number;
+  readonly latestRevisionId?: string;
+  readonly latestReceiptStatus?: string;
+  readonly latestRecordedAt?: string;
+  readonly latestProjectionId?: string;
+  readonly remote?: {
+    readonly id: string;
+    readonly url?: string;
+    readonly version?: string;
+  };
+  readonly preview:
+    | {
+      readonly status: "ready";
+      readonly projectionId: string;
+      readonly fingerprint: string;
+    }
+    | {
+      readonly status: "error";
+      readonly error: string;
+    };
+}
+
+export interface PublicationDestinationMatrix {
+  readonly publicationId: string;
+  readonly currentRevisionId: string;
+  readonly currentRevisionOrdinal: number;
+  readonly generatedAt: string;
+  readonly items: readonly PublicationDestinationMatrixItem[];
+}
+
+export interface OperatorPublicationDestinationMatrixManager {
+  get(publicationId: string): Promise<PublicationDestinationMatrix>;
+}
+
 export interface OperatorPublicationWorkspaceManager {
   list(query?: PublicationWorkspaceListQuery): Promise<Page<PublicationWorkspaceEntry>>;
   get(publicationId: string): Promise<PublicationWorkspaceEntry | undefined>;
@@ -648,6 +699,7 @@ export interface OperatorApiOptions {
   readonly publications?: OperatorPublicationWorkspaceManager;
   readonly previews?: OperatorPublicationPreviewManager;
   readonly distributions?: OperatorDistributionHistory;
+  readonly destinationMatrix?: OperatorPublicationDestinationMatrixManager;
   readonly schedules?: OperatorScheduleManager;
   readonly authorizer: OperatorAuthorizer;
   readonly clock?: OperatorClock;
