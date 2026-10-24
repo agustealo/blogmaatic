@@ -77,9 +77,12 @@ import type {
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
+  SourceTaxonomyDefinitionRecord,
   SourceTaxonomyRecord,
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
+  SourceTaxonomySelectionBody,
+  SourceTaxonomySelectionResult,
   SchedulerDispatchResponse,
 } from "./types.js";
 
