@@ -360,17 +360,32 @@ export interface SourceAssetUploadInput {
   readonly title?: string;
 }
 
-export type SourceTaxonomyKind = "category" | "tag";
+export type SourceTaxonomyKind = "category" | "tag" | "custom";
+
+export interface SourceTaxonomyDefinitionRecord {
+  readonly connectionId: string;
+  readonly extensionId: string;
+  readonly taxonomyKey: string;
+  readonly label: string;
+  readonly kind: SourceTaxonomyKind;
+  readonly hierarchical: boolean;
+  readonly contentTypes: readonly string[];
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
 
 export interface SourceTaxonomyQuery {
-  readonly kind: SourceTaxonomyKind;
+  readonly kind?: SourceTaxonomyKind;
+  readonly taxonomyKey?: string;
+  readonly contentType?: string;
   readonly search?: string;
   readonly page?: number;
   readonly limit?: number;
 }
 
 export interface SourceTaxonomyCreateBody {
-  readonly kind: SourceTaxonomyKind;
+  readonly kind?: SourceTaxonomyKind;
+  readonly taxonomyKey?: string;
+  readonly contentType?: string;
   readonly name: string;
   readonly slug?: string;
   readonly description?: string;
@@ -379,6 +394,7 @@ export interface SourceTaxonomyCreateBody {
 export interface SourceTaxonomyRecord {
   readonly connectionId: string;
   readonly extensionId: string;
+  readonly taxonomyKey: string;
   readonly kind: SourceTaxonomyKind;
   readonly remoteId: string;
   readonly name: string;
@@ -386,6 +402,19 @@ export interface SourceTaxonomyRecord {
   readonly description?: string;
   readonly count?: number;
   readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceTaxonomySelectionBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType: string;
+  readonly selections: Readonly<Record<string, readonly string[]>>;
+}
+
+export interface SourceTaxonomySelectionResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly contentType: string;
+  readonly selections: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface SourceTaxonomyPage {
@@ -414,8 +443,10 @@ export interface OperatorSourceContentManager {
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;
+  listTaxonomyDefinitions(connectionId: string, contentType: string): Promise<readonly SourceTaxonomyDefinitionRecord[]>;
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   createTaxonomy(connectionId: string, body: SourceTaxonomyCreateBody): Promise<SourceTaxonomyRecord>;
+  setTaxonomySelections(connectionId: string, body: SourceTaxonomySelectionBody): Promise<SourceTaxonomySelectionResult>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
   restore(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
