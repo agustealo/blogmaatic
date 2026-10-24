@@ -113,6 +113,22 @@ function editorForCreate(): PublicationEditor {
   };
 }
 
+function targetGroupIdsFromEntry(entry: PublicationWorkspaceEntry): readonly string[] {
+  const raw = entry.publication.current.content.attributes.distributionGroupIds;
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(
+    raw
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  )].sort();
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
 function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
   const body = editableBody(entry);
   return {
@@ -143,14 +159,7 @@ function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
     slug: entry.publication.slug ?? "",
     canonicalUrl: entry.publication.canonicalUrl ?? "",
     status: entry.publication.status as WorkspacePublicationStatus,
-    targetGroupIds: Array.isArray(entry.publication.current.content.attributes.distributionGroupIds)
-      ? [...new Set(
-          entry.publication.current.content.attributes.distributionGroupIds
-            .filter((value): value is string => typeof value === "string")
-            .map((value) => value.trim())
-            .filter(Boolean),
-        )].sort()
-      : [],
+    targetGroupIds: targetGroupIdsFromEntry(entry),
     hasUnsupportedBlocks: body.unsupported,
   };
 }
@@ -1619,7 +1628,7 @@ function PublishingTargetsEditor({
 }: {
   readonly value: readonly string[];
   readonly onChange: (value: readonly string[]) => void;
-  readonly onSummary: (summary: { readonly groupCount: number; readonly routeCount: number }) => void;
+  readonly onSummary: (summary: { readonly groupCount: number; readonly routeCount: number; readonly unavailableCount: number }) => void;
   readonly disabled?: boolean;
 }) {
   const { session } = useConnection();
@@ -1663,8 +1672,8 @@ function PublishingTargetsEditor({
     .reduce((total, entry) => total + entry.group.routes.filter((route) => route.enabled).length, 0);
 
   useEffect(() => {
-    onSummary({ groupCount: value.length, routeCount });
-  }, [onSummary, routeCount, value.length]);
+    onSummary({ groupCount: value.length, routeCount, unavailableCount: unavailable.length });
+  }, [onSummary, routeCount, unavailable.length, value.length]);
 
   const toggle = (groupId: string, checked: boolean) => {
     const next = new Set(value);
@@ -2130,10 +2139,14 @@ export function PublicationsPage() {
   const [actionError, setActionError] = useState<Error | null>(null);
   const [dispatchResult, setDispatchResult] = useState<PublicationWorkspaceDispatchResult | null>(null);
   const [changeNonce, setChangeNonce] = useState(0);
-  const [targetSummary, setTargetSummary] = useState({ groupCount: 0, routeCount: 0 });
-  const updateTargetSummary = useCallback((summary: { readonly groupCount: number; readonly routeCount: number }) => {
+  const [targetSummary, setTargetSummary] = useState({ groupCount: 0, routeCount: 0, unavailableCount: 0 });
+  const updateTargetSummary = useCallback((summary: { readonly groupCount: number; readonly routeCount: number; readonly unavailableCount: number }) => {
     setTargetSummary((current) =>
-      current.groupCount === summary.groupCount && current.routeCount === summary.routeCount ? current : summary,
+      current.groupCount === summary.groupCount &&
+      current.routeCount === summary.routeCount &&
+      current.unavailableCount === summary.unavailableCount
+        ? current
+        : summary,
     );
   }, []);
 
@@ -2268,11 +2281,16 @@ export function PublicationsPage() {
     }
   }, [client, editor]);
 
+  const savedTargetGroupIds = activeEntry ? targetGroupIdsFromEntry(activeEntry) : [];
+  const targetsSaved = editor?.mode === "edit" && sameStringSet(editor.targetGroupIds, savedTargetGroupIds);
   const canPublish =
     editor?.mode === "edit" &&
     editor.status !== "archived" &&
     !editor.hasUnsupportedBlocks &&
-    editor.targetGroupIds.length > 0;
+    editor.targetGroupIds.length > 0 &&
+    targetsSaved &&
+    targetSummary.unavailableCount === 0 &&
+    targetSummary.routeCount > 0;
 
   return (
     <>
@@ -2414,6 +2432,8 @@ export function PublicationsPage() {
                 <button className="button button--primary" type="submit" disabled={busy !== null || !editor.title.trim() || editor.hasUnsupportedBlocks}>{busy === "save" ? "Saving…" : editor.mode === "create" ? "Create Draft" : "Save New Version"}</button>
                 {canPublish && !pendingPublish ? <button className="button publication-publish-button" type="button" onClick={() => setPendingPublish(true)} disabled={busy !== null}>{busy === "publish" ? "Publishing…" : "Approve & Publish"}</button> : null}
                 {editor.mode === "edit" && editor.targetGroupIds.length === 0 ? <span className="publication-target-lock">Select and save at least one Publishing Target before publishing.</span> : null}
+                {editor.mode === "edit" && editor.targetGroupIds.length > 0 && !targetsSaved ? <span className="publication-target-lock">Save this Publishing Target selection before publishing.</span> : null}
+                {editor.mode === "edit" && targetsSaved && targetSummary.unavailableCount > 0 ? <span className="publication-target-lock">Remove or replace unavailable Publishing Targets before publishing.</span> : null}
               </div>
               {canPublish && pendingPublish ? (
                 <div className="confirmation-strip confirmation-strip--primary" role="group" aria-label="Confirm publication approval and dispatch">
