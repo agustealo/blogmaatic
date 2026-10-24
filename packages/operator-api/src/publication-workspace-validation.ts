@@ -44,7 +44,7 @@ function expectedVersion(input: Record<string, unknown>): number {
   return value as number;
 }
 
-function stringList(input: Record<string, unknown>, key: "tags" | "categories"): readonly string[] | undefined {
+function stringList(input: Record<string, unknown>, key: "tags" | "categories" | "targetGroupIds"): readonly string[] | undefined {
   const value = input[key];
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
@@ -102,9 +102,13 @@ function optionalQueryString(input: Record<string, unknown>, key: string): strin
 
 export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationWorkspaceCreateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "targetGroupIds", "slug", "canonicalUrl", "status"], "request body");
   const parsedTags = stringList(input, "tags");
   const parsedCategories = stringList(input, "categories");
+  const parsedTargetGroupIds = stringList(input, "targetGroupIds");
+  if (parsedTargetGroupIds && parsedTargetGroupIds.length > 100) {
+    throw new OperatorRequestError("targetGroupIds must contain at most 100 items");
+  }
   const parsedStatus = status(input);
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -123,6 +127,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
     ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
+    ...(parsedTargetGroupIds === undefined ? {} : { targetGroupIds: parsedTargetGroupIds }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),
@@ -131,7 +136,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
 
 export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationWorkspaceUpdateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "featuredAssetId", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "targetGroupIds", "featuredAssetId", "slug", "canonicalUrl", "status"], "request body");
   const title = optionalString(input, "title");
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -142,6 +147,10 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
   const language = optionalString(input, "language");
   const parsedTags = stringList(input, "tags");
   const parsedCategories = stringList(input, "categories");
+  const parsedTargetGroupIds = stringList(input, "targetGroupIds");
+  if (parsedTargetGroupIds && parsedTargetGroupIds.length > 100) {
+    throw new OperatorRequestError("targetGroupIds must contain at most 100 items");
+  }
   const parsedFeaturedAssetId = featuredAssetId(input);
   const slug = optionalString(input, "slug");
   const canonicalUrl = optionalString(input, "canonicalUrl");
@@ -155,6 +164,7 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
     ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
+    ...(parsedTargetGroupIds === undefined ? {} : { targetGroupIds: parsedTargetGroupIds }),
     ...(parsedFeaturedAssetId === undefined ? {} : { featuredAssetId: parsedFeaturedAssetId }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
