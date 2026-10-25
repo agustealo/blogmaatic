@@ -1,4 +1,5 @@
 import type { CompiledProjection, JsonValue } from "@blogmaatic/core";
+import { parseImageTransformPlan } from "@blogmaatic/media";
 
 import type { LinkedInProjectionPayload } from "./types.js";
 
@@ -49,10 +50,36 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
     };
   }
 
+  let image: LinkedInProjectionPayload["image"];
+  const imageValue = projection.payload.image;
+  if (imageValue !== undefined) {
+    if (!isRecord(imageValue)) throw new Error("LinkedIn projection image must be an object");
+    const assetId = requireString(imageValue, "assetId");
+    const localPath = requireString(imageValue, "localPath");
+    const mediaType = requireString(imageValue, "mediaType");
+    if (mediaType !== "image/jpeg" && mediaType !== "image/png") {
+      throw new Error(`LinkedIn projection image mediaType is unsupported: ${mediaType}`);
+    }
+    const fingerprint = requireString(imageValue, "fingerprint");
+    const transformValue = imageValue.transform;
+    if (transformValue === undefined) throw new Error("LinkedIn projection image requires transform plan");
+    const transform = parseImageTransformPlan(transformValue);
+    const altValue = imageValue.alt;
+    image = {
+      assetId,
+      localPath,
+      mediaType,
+      ...(typeof altValue === "string" && altValue ? { alt: altValue } : {}),
+      fingerprint,
+      transform,
+    };
+  }
+
   return {
     mode,
     commentary,
     ...(article ? { article } : {}),
+    ...(image ? { image } : {}),
     fidelity: {
       destinationId,
       score,
