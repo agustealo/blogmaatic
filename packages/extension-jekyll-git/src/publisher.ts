@@ -148,9 +148,11 @@ export class JekyllGitPublisher implements ManagedPublisherExtension {
   async compile({
     publication,
     route,
+    groupId,
   }: {
     publication: Publication;
     route: PublicationRoute;
+    groupId?: string;
   }): Promise<CompiledProjection> {
     const connection = this.#connections.requireActive(
       JEKYLL_GIT_EXTENSION_ID,
@@ -183,7 +185,8 @@ export class JekyllGitPublisher implements ManagedPublisherExtension {
       ...(url ? { publicUrl: url } : {}),
     };
     return {
-      projectionId: `${publication.id}:${route.id}`,
+      projectionId: `${publication.id}:${groupId ?? "legacy"}:${route.id}`,
+      ...(groupId ? { groupId } : {}),
       publicationId: publication.id,
       sourceRevisionId: publication.current.id,
       routeId: route.id,

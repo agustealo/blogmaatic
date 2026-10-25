@@ -124,3 +124,45 @@ test("preserves append-only publication distribution history across revisions an
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("projection state isolates identical route ids across publication groups", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "blogmaatic-state-groups-"));
+  const path = join(directory, "projection-state.sqlite");
+  try {
+    const store = new SqliteProjectionStateStore(path);
+    const base = {
+      publicationId: "pub-shared",
+      routeId: "route-wordpress",
+      extensionId: "blogmaatic.wordpress-rest",
+      sourceRevisionId: "rev-1",
+      desiredFingerprint: "fingerprint",
+      updatedAt: "2026-10-24T20:00:00.000Z",
+    };
+    await store.put({
+      ...base,
+      groupId: "group-a",
+      projectionId: "pub-shared:group-a:route-wordpress",
+      connectionId: "wp-a",
+      remote: { id: "101" },
+    });
+    await store.put({
+      ...base,
+      groupId: "group-b",
+      projectionId: "pub-shared:group-b:route-wordpress",
+      connectionId: "wp-b",
+      remote: { id: "202" },
+    });
+
+    assert.equal((await store.get("pub-shared", "route-wordpress", "group-a"))?.remote.id, "101");
+    assert.equal((await store.get("pub-shared", "route-wordpress", "group-b"))?.remote.id, "202");
+    assert.equal(await store.get("pub-shared", "route-wordpress"), undefined);
+
+    await store.delete("pub-shared", "route-wordpress", "group-a");
+    assert.equal(await store.get("pub-shared", "route-wordpress", "group-a"), undefined);
+    assert.equal((await store.get("pub-shared", "route-wordpress", "group-b"))?.remote.id, "202");
+    store.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

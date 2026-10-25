@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { PublicationWorkspaceManager } from "../dist/publication-workspace-manager.js";
 
-function managerWith(publication) {
+function managerWith(publication, publicationGroups = {}) {
   let entry = {
     publication,
     version: 1,
@@ -28,7 +28,7 @@ function managerWith(publication) {
         return entry;
       },
     },
-    publicationGroups: {},
+    publicationGroups,
     controlPlane: {},
     now: () => "2026-10-18T14:45:00.000Z",
     id: () => ids[idIndex++] ?? `metadata-id-${idIndex}`,
@@ -621,4 +621,280 @@ test("canonical source REST meta is immutable idempotent and source-bound", asyn
     /content type does not match/,
   );
   assert.equal(current().version, 2);
+});
+
+
+test("workspace-native publication stores independent WordPress overrides for same route id in two groups", async () => {
+  const publication = {
+    id: "publication-multi-wp",
+    createdAt: "2026-10-24T20:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-24T20:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Publish to two WordPress sites",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") {
+        return {
+          enabled: true,
+          group: { id: "group-a", name: "Site A", policySetId: "allow", routes: [routeFor("wp-a")] },
+        };
+      }
+      if (groupId === "group-b") {
+        return {
+          enabled: true,
+          group: { id: "group-b", name: "Site B", policySetId: "allow", routes: [routeFor("wp-b")] },
+        };
+      }
+      return undefined;
+    },
+  };
+  const { manager, current } = managerWith(publication, groups);
+
+  await manager.assignSourceAuthor("publication-multi-wp", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    groupId: "group-a",
+    routeId: "wordpress",
+    remoteId: "7",
+    displayName: "Site A Editor",
+  });
+  await manager.setSourcePublishingState("publication-multi-wp", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    groupId: "group-a",
+    routeId: "wordpress",
+    status: "future",
+    scheduledAt: "2026-11-01T18:30:00.000Z",
+  });
+  await manager.assignSourceAuthor("publication-multi-wp", 3, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    groupId: "group-b",
+    routeId: "wordpress",
+    remoteId: "12",
+    displayName: "Site B Editor",
+  });
+  const final = await manager.setSourcePublishingState("publication-multi-wp", 4, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    groupId: "group-b",
+    routeId: "wordpress",
+    status: "draft",
+  });
+
+  assert.equal(final.version, 5);
+  const overrides = final.publication.current.content.attributes.destinationOverrides;
+  assert.equal(overrides.schemaVersion, 1);
+  assert.deepEqual(overrides.groups["group-a"].routes.wordpress, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    channel: "posts",
+    author: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      remoteId: "7",
+      displayName: "Site A Editor",
+    },
+    publishing: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      status: "future",
+      scheduledAt: "2026-11-01T18:30:00.000Z",
+    },
+  });
+  assert.deepEqual(overrides.groups["group-b"].routes.wordpress, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    channel: "posts",
+    author: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-b",
+      remoteId: "12",
+      displayName: "Site B Editor",
+    },
+    publishing: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-b",
+      status: "draft",
+    },
+  });
+  assert.equal(final.publication.current.content.attributes.sourceAuthor, undefined);
+  assert.equal(final.publication.current.content.attributes.sourcePublishing, undefined);
+
+  await assert.rejects(
+    () => manager.assignSourceAuthor("publication-multi-wp", 5, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-b",
+      groupId: "group-a",
+      routeId: "wordpress",
+      remoteId: "99",
+      displayName: "Wrong site",
+    }),
+    /does not match the requested destination/,
+  );
+  assert.equal(current().version, 5);
+});
+
+
+test("route-scoped destination overrides fail closed for untargeted missing disabled and disabled-route targets", async () => {
+  const route = (connectionId, enabled = true) => ({
+    id: "wordpress",
+    enabled,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const publication = {
+    id: "publication-route-guards",
+    createdAt: "2026-10-24T20:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-24T20:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Route guard proof",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-active", "group-disabled", "group-route-disabled"] },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-active") {
+        return {
+          enabled: true,
+          group: {
+            id: groupId,
+            name: "Active",
+            policySetId: "allow",
+            routes: [route("wp-active")],
+          },
+        };
+      }
+      if (groupId === "group-disabled") {
+        return {
+          enabled: false,
+          group: {
+            id: groupId,
+            name: "Disabled",
+            policySetId: "allow",
+            routes: [route("wp-disabled")],
+          },
+        };
+      }
+      if (groupId === "group-route-disabled") {
+        return {
+          enabled: true,
+          group: {
+            id: groupId,
+            name: "Disabled route",
+            policySetId: "allow",
+            routes: [route("wp-route-disabled", false)],
+          },
+        };
+      }
+      if (groupId === "group-untargeted") {
+        return {
+          enabled: true,
+          group: {
+            id: groupId,
+            name: "Untargeted",
+            policySetId: "allow",
+            routes: [route("wp-untargeted")],
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+  const { manager, current } = managerWith(publication, groups);
+
+  await assert.rejects(
+    () => manager.assignSourceAuthor("publication-route-guards", 1, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-untargeted",
+      groupId: "group-untargeted",
+      routeId: "wordpress",
+      remoteId: "7",
+      displayName: "Untargeted",
+    }),
+    /does not target Publication Group/,
+  );
+  assert.equal(current().version, 1);
+
+  await assert.rejects(
+    () => manager.assignSourceAuthor("publication-route-guards", 1, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-active",
+      groupId: "group-active",
+      routeId: "missing",
+      remoteId: "7",
+      displayName: "Missing route",
+    }),
+    /does not contain route/,
+  );
+  assert.equal(current().version, 1);
+
+  await assert.rejects(
+    () => manager.setSourcePublishingState("publication-route-guards", 1, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-disabled",
+      groupId: "group-disabled",
+      routeId: "wordpress",
+      status: "draft",
+    }),
+    /Publishing target is disabled/,
+  );
+  assert.equal(current().version, 1);
+
+  await assert.rejects(
+    () => manager.setSourcePublishingState("publication-route-guards", 1, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-route-disabled",
+      groupId: "group-route-disabled",
+      routeId: "wordpress",
+      status: "draft",
+    }),
+    /Publishing target route is disabled/,
+  );
+  assert.equal(current().version, 1);
 });

@@ -19,6 +19,7 @@ export interface PublisherExtensionManifest {
 export interface CompileProjectionInput {
   readonly publication: Publication;
   readonly route: PublicationRoute;
+  readonly groupId?: string;
 }
 
 export interface InspectProjectionInput {

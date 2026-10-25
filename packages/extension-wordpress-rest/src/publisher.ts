@@ -24,6 +24,7 @@ import { WordPressHttpError, WordPressRestClient } from "./client.js";
 import {
   documentWithMarker,
   parseMarker,
+  type OwnershipMarker,
   projectionFingerprint,
   sha256,
   stableJson,
@@ -44,6 +45,51 @@ import type {
 
 const POST_STATUSES = ["publish", "draft", "pending", "private", "future"] as const;
 type PostStatus = (typeof POST_STATUSES)[number];
+
+function publicationTargetGroupIds(publication: Publication): readonly string[] {
+  const value = publication.current.content.attributes.publishingTargets;
+  if (!isRecord(value) || !Array.isArray(value.groupIds)) return [];
+  return [...new Set(value.groupIds.filter(
+    (entry): entry is string => typeof entry === "string" && Boolean(entry.trim()),
+  ).map((entry) => entry.trim()))].sort();
+}
+
+function markerOwnsProjection(
+  marker: OwnershipMarker,
+  projection: CompiledProjection,
+  legacyOwnershipAllowed: boolean,
+): boolean {
+  if (
+    marker.publicationId !== projection.publicationId ||
+    marker.routeId !== projection.routeId
+  ) return false;
+  if (!projection.groupId) return true;
+  if (marker.version === 2) return marker.groupId === projection.groupId;
+  return legacyOwnershipAllowed;
+}
+
+function markerForProjection(
+  projection: CompiledProjection,
+  projectionFingerprintValue: string,
+  renderedHash: string,
+): OwnershipMarker {
+  return projection.groupId
+    ? {
+      version: 2,
+      publicationId: projection.publicationId,
+      groupId: projection.groupId,
+      routeId: projection.routeId,
+      projectionFingerprint: projectionFingerprintValue,
+      renderedHash,
+    }
+    : {
+      version: 1,
+      publicationId: projection.publicationId,
+      routeId: projection.routeId,
+      projectionFingerprint: projectionFingerprintValue,
+      renderedHash,
+    };
+}
 
 function variant(route: PublicationRoute): Readonly<Record<string, JsonValue>> {
   return route.variant ?? {};
@@ -68,11 +114,73 @@ function routeRestBase(
   return normalized;
 }
 
+function destinationOverride(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId?: string,
+): Readonly<Record<string, JsonValue>> | undefined {
+  if (!groupId) return undefined;
+  const root = publication.current.content.attributes.destinationOverrides;
+  if (!isRecord(root)) return undefined;
+  if (root.schemaVersion !== 1) {
+    throw new Error("Unsupported destinationOverrides schemaVersion");
+  }
+  const groups = root.groups;
+  if (!isRecord(groups)) return undefined;
+  const group = groups[groupId];
+  if (!isRecord(group)) return undefined;
+  const routes = group.routes;
+  if (!isRecord(routes)) return undefined;
+  const override = routes[route.id];
+  if (!isRecord(override)) return undefined;
+
+  if (
+    override.extensionId !== route.destination.extensionId ||
+    override.connectionId !== route.destination.connectionId ||
+    override.channel !== route.destination.channel
+  ) {
+    throw new Error(`Canonical destination override identity no longer matches route ${groupId}/${route.id}`);
+  }
+  return override;
+}
+
+function legacySourceRouteMatches(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId?: string,
+): boolean {
+  if (
+    publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    publication.provenance.connectionId !== route.destination.connectionId
+  ) {
+    return false;
+  }
+  if (!groupId) return true;
+
+  const wordpress = publication.current.content.attributes.wordpress;
+  if (isRecord(wordpress)) {
+    const importedGroupId = typeof wordpress.groupId === "string" ? wordpress.groupId : undefined;
+    const importedRouteId = typeof wordpress.routeId === "string" ? wordpress.routeId : undefined;
+    if (importedGroupId || importedRouteId) {
+      return importedGroupId === groupId && importedRouteId === route.id;
+    }
+  }
+  const targets = publicationTargetGroupIds(publication);
+  return targets.length === 1 && targets[0] === groupId;
+}
+
 function sourcePublishingState(
   publication: Publication,
   route: PublicationRoute,
+  groupId?: string,
 ): { readonly status: PostStatus; readonly scheduledAt?: string } | undefined {
-  const source = publication.current.content.attributes.sourcePublishing;
+  const scoped = destinationOverride(publication, route, groupId);
+  const scopedPublishing = scoped?.publishing;
+  const source = isRecord(scopedPublishing)
+    ? scopedPublishing
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourcePublishing
+      : undefined;
   if (!isRecord(source)) return undefined;
   if (
     source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -99,8 +207,8 @@ function sourcePublishingState(
   return { status: status as PostStatus };
 }
 
-function desiredStatus(publication: Publication, route: PublicationRoute): PostStatus {
-  const source = sourcePublishingState(publication, route);
+function desiredStatus(publication: Publication, route: PublicationRoute, groupId?: string): PostStatus {
+  const source = sourcePublishingState(publication, route, groupId);
   if (source) return source.status;
   const candidate = getString(variant(route), "status") ?? "publish";
   if (!POST_STATUSES.includes(candidate as PostStatus)) {
@@ -113,8 +221,9 @@ function desiredSchedule(
   publication: Publication,
   route: PublicationRoute,
   status: PostStatus,
+  groupId?: string,
 ): string | undefined {
-  const source = sourcePublishingState(publication, route);
+  const source = sourcePublishingState(publication, route, groupId);
   if (source) return source.scheduledAt;
   const value = getString(variant(route), "scheduledAt");
   if (status !== "future") return undefined;
@@ -190,8 +299,17 @@ function sourceCustomTaxonomies(
   return result;
 }
 
-function sourceAuthorId(publication: Publication, route: PublicationRoute): number | undefined {
-  const sourceAuthor = publication.current.content.attributes.sourceAuthor;
+function sourceAuthorId(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId?: string,
+): number | undefined {
+  const scoped = destinationOverride(publication, route, groupId);
+  const sourceAuthor = isRecord(scoped?.author)
+    ? scoped!.author
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourceAuthor
+      : undefined;
   if (!isRecord(sourceAuthor)) return undefined;
   if (
     sourceAuthor.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -512,10 +630,8 @@ function inspectRecord(
       detail: "WordPress object is not owned by Blogmaatic; refusing to overwrite it",
     };
   }
-  if (
-    marker.publicationId !== projection.publicationId ||
-    marker.routeId !== projection.routeId
-  ) {
+  const payload = parsePayload(projection);
+  if (!markerOwnsProjection(marker, projection, payload.legacyOwnershipAllowed === true)) {
     return {
       state: "unreachable",
       remote,
@@ -523,7 +639,6 @@ function inspectRecord(
       detail: "WordPress object ownership marker belongs to a different publication or route",
     };
   }
-  const payload = parsePayload(projection);
   const actualRemoteHash = remoteStateHash(post, stripMarker(raw), payload.customTaxonomies, payload.restMeta);
   const synchronized =
     marker.projectionFingerprint === projection.fingerprint &&
@@ -653,9 +768,11 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
   async compile({
     publication,
     route,
+    groupId,
   }: {
     publication: Publication;
     route: PublicationRoute;
+    groupId?: string;
   }): Promise<CompiledProjection> {
     const connection = this.#connections.requireActive(
       WORDPRESS_REST_EXTENSION_ID,
@@ -663,14 +780,19 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     );
     const settings = parseSettings(connection);
     const contentType = routeRestBase(route.destination.channel, settings);
-    const status = desiredStatus(publication, route);
-    const scheduledAt = desiredSchedule(publication, route, status);
+    const status = desiredStatus(publication, route, groupId);
+    const scheduledAt = desiredSchedule(publication, route, status, groupId);
     const imageTransform = variant(route).imageTransform === undefined
       ? undefined
       : imageTransformSpecFromJson(variant(route).imageTransform);
-    const assets = await compileAssets(publication, settings, imageTransform);
+    const assets = await compileAssets(
+      publication,
+      settings,
+      imageTransform,
+      route.destination.connectionId,
+    );
     const featured = featuredAssetId(publication, route);
-    const authorId = sourceAuthorId(publication, route);
+    const authorId = sourceAuthorId(publication, route, groupId);
     const pageStructure = sourcePageStructure(publication, route, contentType);
     const editorial = sourceEditorialOptions(publication, route, contentType);
     const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType);
@@ -686,6 +808,10 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       categories: categoryNames(publication, route),
       ...(Object.keys(customTaxonomies).length === 0 ? {} : { customTaxonomies }),
       ...(Object.keys(restMeta).length === 0 ? {} : { restMeta }),
+      ...(groupId && publicationTargetGroupIds(publication).length === 1 &&
+        publicationTargetGroupIds(publication)[0] === groupId
+        ? { legacyOwnershipAllowed: true }
+        : {}),
       assets: assets.map((asset) => ({
         assetId: asset.assetId,
         source: asset.source,
@@ -708,7 +834,8 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     };
     const fingerprint = projectionFingerprint(semanticPayload(payload, assets));
     return {
-      projectionId: `${publication.id}:${route.id}`,
+      projectionId: `${publication.id}:${groupId ?? "legacy"}:${route.id}`,
+      ...(groupId ? { groupId } : {}),
       publicationId: publication.id,
       sourceRevisionId: publication.current.id,
       routeId: route.id,
@@ -743,7 +870,12 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       if (candidates.length === 0) return { state: "missing", observedAt };
       const owned = candidates.filter((candidate) => {
         const marker = parseMarker(sourceBody(candidate));
-        return marker?.publicationId === input.projection.publicationId && marker.routeId === input.projection.routeId;
+        if (!marker) return false;
+        return markerOwnsProjection(
+          marker,
+          input.projection,
+          payload.legacyOwnershipAllowed === true,
+        );
       });
       if (owned.length === 0) {
         return {
@@ -842,13 +974,14 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         menuOrder: payload.menuOrder ?? 0,
       }),
     );
-    const markedContent = documentWithMarker(body, {
-      version: 1,
-      publicationId: request.projection.publicationId,
-      routeId: request.projection.routeId,
-      projectionFingerprint: request.projection.fingerprint,
-      renderedHash: preliminaryHash,
-    });
+    const markedContent = documentWithMarker(
+      body,
+      markerForProjection(
+        request.projection,
+        request.projection.fingerprint,
+        preliminaryHash,
+      ),
+    );
     const postBody = postRequestBody(payload, markedContent, categories, tags, customTaxonomyIds, featuredMedia);
     const endpoint = request.existingRemote
       ? `/${restBase}/${request.existingRemote.id}`
@@ -863,16 +996,23 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies, payload.restMeta);
     const currentMarker = parseMarker(sourceBody(current));
     if (
-      currentMarker?.projectionFingerprint !== request.projection.fingerprint ||
+      !currentMarker ||
+      !markerOwnsProjection(
+        currentMarker,
+        request.projection,
+        payload.legacyOwnershipAllowed === true,
+      ) ||
+      currentMarker.projectionFingerprint !== request.projection.fingerprint ||
       currentMarker.renderedHash !== actualHash
     ) {
-      const normalized = documentWithMarker(currentBody, {
-        version: 1,
-        publicationId: request.projection.publicationId,
-        routeId: request.projection.routeId,
-        projectionFingerprint: request.projection.fingerprint,
-        renderedHash: actualHash,
-      });
+      const normalized = documentWithMarker(
+        currentBody,
+        markerForProjection(
+          request.projection,
+          request.projection.fingerprint,
+          actualHash,
+        ),
+      );
       current = await client.requestJson<WordPressPostRecord>(
         `/${restBase}/${saved.id}?context=edit`,
         { method: "POST", body: JSON.stringify({ content: normalized }) },

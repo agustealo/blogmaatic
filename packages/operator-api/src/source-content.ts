@@ -151,7 +151,7 @@ function parseAuthorAssignBody(body: unknown): SourceAuthorAssignBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion"]);
+  const allowed = new Set(["publicationId", "expectedVersion", "groupId", "routeId"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   const publicationId = input.publicationId;
@@ -161,9 +161,16 @@ function parseAuthorAssignBody(body: unknown): SourceAuthorAssignBody {
   if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
     throw new OperatorRequestError("expectedVersion must be a positive integer");
   }
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
   return {
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
   };
 }
 
@@ -551,7 +558,7 @@ function parsePublishingStateBody(body: unknown): SourcePublishingStateBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion", "status", "scheduledAt"]);
+  const allowed = new Set(["publicationId", "expectedVersion", "groupId", "routeId", "status", "scheduledAt"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   const publicationId = input.publicationId;
@@ -569,9 +576,16 @@ function parsePublishingStateBody(body: unknown): SourcePublishingStateBody {
   if (scheduledAt !== undefined && (typeof scheduledAt !== "string" || !scheduledAt.trim())) {
     throw new OperatorRequestError("scheduledAt must be a non-empty string when provided");
   }
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
   return {
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
     status: status.trim(),
     ...(typeof scheduledAt === "string" ? { scheduledAt: scheduledAt.trim() } : {}),
   };
@@ -704,6 +718,8 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         connectionId,
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
         status: body.status,
         scheduledAt: body.scheduledAt ?? null,
       },
@@ -744,6 +760,8 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         remoteId,
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
       },
       now: () => clock.now(),
       execute: () => domainCall(() => manager(options).assignAuthor(connectionId, remoteId, body)),
