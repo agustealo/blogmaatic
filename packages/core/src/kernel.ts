@@ -36,12 +36,13 @@ export interface PublishInput {
   readonly runId?: string;
 }
 
-function projectionId(publication: Publication, route: PublicationRoute): string {
-  return `${publication.id}:${route.id}`;
+function projectionId(publication: Publication, groupId: string, route: PublicationRoute): string {
+  return `${publication.id}:${groupId}:${route.id}`;
 }
 
 export function deliveryIdempotencyKey(
   publication: Publication,
+  groupId: string,
   route: PublicationRoute,
   projection: CompiledProjection,
 ): string {
@@ -49,6 +50,7 @@ export function deliveryIdempotencyKey(
     "publication",
     encodeURIComponent(publication.id),
     encodeURIComponent(publication.current.id),
+    encodeURIComponent(groupId),
     encodeURIComponent(route.id),
     encodeURIComponent(projection.fingerprint),
   ].join(":");
@@ -123,8 +125,12 @@ export class PublicationKernel {
     this.#distributionHistory = distributionHistory;
   }
 
-  async #knownRemote(publication: Publication, route: PublicationRoute): Promise<RemoteIdentity | undefined> {
-    const record = await this.#projectionState.get(publication.id, route.id);
+  async #knownRemote(
+    publication: Publication,
+    groupId: string,
+    route: PublicationRoute,
+  ): Promise<RemoteIdentity | undefined> {
+    const record = await this.#projectionState.get(publication.id, route.id, groupId);
     if (!record) return undefined;
     if (
       record.extensionId !== route.destination.extensionId ||
@@ -137,12 +143,14 @@ export class PublicationKernel {
 
   async #remember(
     publication: Publication,
+    groupId: string,
     route: PublicationRoute,
     projection: CompiledProjection,
     remote: RemoteIdentity,
   ): Promise<void> {
     await this.#projectionState.put({
       publicationId: publication.id,
+      groupId,
       routeId: route.id,
       projectionId: projection.projectionId,
       extensionId: route.destination.extensionId,
@@ -162,7 +170,7 @@ export class PublicationKernel {
       this.#extensions.assertCapabilities(route.destination.extensionId, route.requiredCapabilities);
 
       const policy = this.#policies.evaluate(group.policySetId, publication, route);
-      const id = projectionId(publication, route);
+      const id = projectionId(publication, group.id, route);
 
       if (policy.effect === "deny") {
         items.push({
@@ -180,16 +188,16 @@ export class PublicationKernel {
         continue;
       }
 
-      const projection = await extension.compile({ publication, route });
-      const knownRemote = await this.#knownRemote(publication, route);
+      const projection = await extension.compile({ publication, route, groupId: group.id });
+      const knownRemote = await this.#knownRemote(publication, group.id, route);
       const observed = await extension.inspect({
         projection,
         ...(knownRemote ? { remote: knownRemote } : {}),
       });
       if (observed.state === "missing" && knownRemote) {
-        await this.#projectionState.delete(publication.id, route.id);
+        await this.#projectionState.delete(publication.id, route.id, group.id);
       } else if (observed.remote) {
-        await this.#remember(publication, route, projection, observed.remote);
+        await this.#remember(publication, group.id, route, projection, observed.remote);
       }
       const plan = await actionForObservation(extension, projection, observed);
 
@@ -221,7 +229,7 @@ export class PublicationKernel {
       const extension = this.#extensions.getPublisher(route.destination.extensionId);
       this.#extensions.assertCapabilities(route.destination.extensionId, route.requiredCapabilities);
       const policy = this.#policies.evaluate(input.group.policySetId, input.publication, route);
-      const id = projectionId(input.publication, route);
+      const id = projectionId(input.publication, input.group.id, route);
 
       if (policy.effect === "deny") {
         receipts.push({
@@ -251,18 +259,18 @@ export class PublicationKernel {
         continue;
       }
 
-      const projection = await extension.compile({ publication: input.publication, route });
-      const idempotencyKey = deliveryIdempotencyKey(input.publication, route, projection);
-      const knownRemote = await this.#knownRemote(input.publication, route);
+      const projection = await extension.compile({ publication: input.publication, route, groupId: input.group.id });
+      const idempotencyKey = deliveryIdempotencyKey(input.publication, input.group.id, route, projection);
+      const knownRemote = await this.#knownRemote(input.publication, input.group.id, route);
       const before = await extension.inspect({
         projection,
         ...(knownRemote ? { remote: knownRemote } : {}),
       });
 
       if (before.state === "missing" && knownRemote) {
-        await this.#projectionState.delete(input.publication.id, route.id);
+        await this.#projectionState.delete(input.publication.id, route.id, input.group.id);
       } else if (before.remote) {
-        await this.#remember(input.publication, route, projection, before.remote);
+        await this.#remember(input.publication, input.group.id, route, projection, before.remote);
       }
 
       if (before.state === "unreachable") {
@@ -283,7 +291,7 @@ export class PublicationKernel {
       }
 
       if (before.state === "synchronized" && before.fingerprint === projection.fingerprint) {
-        if (before.remote) await this.#remember(input.publication, route, projection, before.remote);
+        if (before.remote) await this.#remember(input.publication, input.group.id, route, projection, before.remote);
         receipts.push({
           publicationId: input.publication.id,
           revisionId: input.publication.current.id,
@@ -330,9 +338,9 @@ export class PublicationKernel {
         ...(before.remote ? { existingRemote: before.remote } : {}),
       };
       const delivered = await extension.deliver(request);
-      await this.#remember(input.publication, route, projection, delivered.remote);
+      await this.#remember(input.publication, input.group.id, route, projection, delivered.remote);
       const observed = await extension.inspect({ projection, remote: delivered.remote });
-      if (observed.remote) await this.#remember(input.publication, route, projection, observed.remote);
+      if (observed.remote) await this.#remember(input.publication, input.group.id, route, projection, observed.remote);
 
       const status =
         observed.state === "unreachable"
