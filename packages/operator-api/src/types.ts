@@ -280,6 +280,8 @@ export interface SourcePublishingStateResult {
 export interface SourceEditorialOptionsBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly contentType: string;
   readonly password: string;
   readonly commentStatus?: "open" | "closed";
@@ -301,6 +303,8 @@ export interface SourceEditorialOptionsResult {
 export interface SourcePageStructureBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly contentType: string;
   readonly parentRemoteId: string | null;
   readonly template: string | null;
@@ -412,6 +416,8 @@ export interface SourceTaxonomyRecord {
 export interface SourceTaxonomySelectionBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly contentType: string;
   readonly selections: Readonly<Record<string, readonly string[]>>;
 }
@@ -438,6 +444,8 @@ export interface SourceMetaFieldDefinition {
 export interface SourceMetaValuesBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly contentType: string;
   readonly values: Readonly<Record<string, JsonValue>>;
 }
