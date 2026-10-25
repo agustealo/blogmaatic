@@ -1115,7 +1115,13 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     }
 
     if (!workspace) {
-      const publication = this.#importedPublication(connectionId, contentType, snapshot, body.groupId);
+      const publication = this.#importedPublication(
+        connectionId,
+        contentType,
+        snapshot,
+        body.groupId,
+        body.routeId,
+      );
       workspace = await this.#publications.registerImported(publication);
     }
 
@@ -1139,6 +1145,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     const projection = await this.#publisher.compile({
       publication: workspace.publication,
       route: importProjectionRoute(route, snapshot.post),
+      groupId: groupEntry.group.id,
     });
 
     let adopted = snapshot.post;
@@ -1154,6 +1161,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     const recordedAt = this.#now();
     await this.#projectionState.put({
       publicationId: workspace.publication.id,
+      groupId: groupEntry.group.id,
       routeId: route.id,
       projectionId: projection.projectionId,
       extensionId: route.destination.extensionId,
@@ -1266,6 +1274,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     contentType: string,
     snapshot: Awaited<ReturnType<WordPressContentService["importSnapshot"]>>,
     publishingTargetGroupId: string,
+    publishingTargetRouteId: string,
   ): Publication {
     const now = this.#now();
     const revisionId = `revision_${this.#id()}`;
@@ -1284,6 +1293,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         attributes: {
           featured: true,
           wordpressMediaId: snapshot.featuredMedia.id,
+          sourceExtensionId: WORDPRESS_REST_EXTENSION_ID,
+          sourceConnectionId: connectionId,
+          sourceRemoteId: String(snapshot.featuredMedia.id),
         },
       }]
       : [];
@@ -1376,6 +1388,8 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
             },
             wordpress: {
               connectionId,
+              groupId: publishingTargetGroupId,
+              routeId: publishingTargetRouteId,
               contentType,
               remoteId: String(snapshot.post.id),
               remoteStatus: snapshot.post.status,
