@@ -114,11 +114,46 @@ function routeRestBase(
   return normalized;
 }
 
+function destinationOverride(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId?: string,
+): Readonly<Record<string, JsonValue>> | undefined {
+  if (!groupId) return undefined;
+  const root = publication.current.content.attributes.destinationOverrides;
+  if (!isRecord(root)) return undefined;
+  if (root.schemaVersion !== 1) {
+    throw new Error("Unsupported destinationOverrides schemaVersion");
+  }
+  const groups = root.groups;
+  if (!isRecord(groups)) return undefined;
+  const group = groups[groupId];
+  if (!isRecord(group)) return undefined;
+  const routes = group.routes;
+  if (!isRecord(routes)) return undefined;
+  const override = routes[route.id];
+  if (!isRecord(override)) return undefined;
+
+  if (
+    override.extensionId !== route.destination.extensionId ||
+    override.connectionId !== route.destination.connectionId ||
+    override.channel !== route.destination.channel
+  ) {
+    throw new Error(`Canonical destination override identity no longer matches route ${groupId}/${route.id}`);
+  }
+  return override;
+}
+
 function sourcePublishingState(
   publication: Publication,
   route: PublicationRoute,
+  groupId?: string,
 ): { readonly status: PostStatus; readonly scheduledAt?: string } | undefined {
-  const source = publication.current.content.attributes.sourcePublishing;
+  const scoped = destinationOverride(publication, route, groupId);
+  const scopedPublishing = scoped?.publishing;
+  const source = isRecord(scopedPublishing)
+    ? scopedPublishing
+    : publication.current.content.attributes.sourcePublishing;
   if (!isRecord(source)) return undefined;
   if (
     source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -145,8 +180,8 @@ function sourcePublishingState(
   return { status: status as PostStatus };
 }
 
-function desiredStatus(publication: Publication, route: PublicationRoute): PostStatus {
-  const source = sourcePublishingState(publication, route);
+function desiredStatus(publication: Publication, route: PublicationRoute, groupId?: string): PostStatus {
+  const source = sourcePublishingState(publication, route, groupId);
   if (source) return source.status;
   const candidate = getString(variant(route), "status") ?? "publish";
   if (!POST_STATUSES.includes(candidate as PostStatus)) {
@@ -159,8 +194,9 @@ function desiredSchedule(
   publication: Publication,
   route: PublicationRoute,
   status: PostStatus,
+  groupId?: string,
 ): string | undefined {
-  const source = sourcePublishingState(publication, route);
+  const source = sourcePublishingState(publication, route, groupId);
   if (source) return source.scheduledAt;
   const value = getString(variant(route), "scheduledAt");
   if (status !== "future") return undefined;
@@ -236,8 +272,15 @@ function sourceCustomTaxonomies(
   return result;
 }
 
-function sourceAuthorId(publication: Publication, route: PublicationRoute): number | undefined {
-  const sourceAuthor = publication.current.content.attributes.sourceAuthor;
+function sourceAuthorId(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId?: string,
+): number | undefined {
+  const scoped = destinationOverride(publication, route, groupId);
+  const sourceAuthor = isRecord(scoped?.author)
+    ? scoped!.author
+    : publication.current.content.attributes.sourceAuthor;
   if (!isRecord(sourceAuthor)) return undefined;
   if (
     sourceAuthor.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -708,8 +751,8 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     );
     const settings = parseSettings(connection);
     const contentType = routeRestBase(route.destination.channel, settings);
-    const status = desiredStatus(publication, route);
-    const scheduledAt = desiredSchedule(publication, route, status);
+    const status = desiredStatus(publication, route, groupId);
+    const scheduledAt = desiredSchedule(publication, route, status, groupId);
     const imageTransform = variant(route).imageTransform === undefined
       ? undefined
       : imageTransformSpecFromJson(variant(route).imageTransform);
@@ -720,7 +763,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       route.destination.connectionId,
     );
     const featured = featuredAssetId(publication, route);
-    const authorId = sourceAuthorId(publication, route);
+    const authorId = sourceAuthorId(publication, route, groupId);
     const pageStructure = sourcePageStructure(publication, route, contentType);
     const editorial = sourceEditorialOptions(publication, route, contentType);
     const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType);
