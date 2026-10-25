@@ -11,7 +11,7 @@ import {
   type ImageTransformSpec,
 } from "@blogmaatic/media";
 
-import type { LinkedInSettings } from "./types.js";
+import type { LinkedInImageSpec, LinkedInSettings } from "./types.js";
 
 const LINKEDIN_MAX_PIXELS = 36_152_320;
 const SUPPORTED_SOURCE_MEDIA = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -43,16 +43,6 @@ async function confinedPath(source: string, roots: readonly string[]): Promise<s
     if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return candidate;
   }
   throw new Error("LinkedIn local image is outside the configured assetSourceRoots");
-}
-
-export interface LinkedInImageSpec {
-  readonly assetId: string;
-  readonly source: string;
-  readonly localPath: string;
-  readonly mediaType: "image/jpeg" | "image/png" | "image/webp";
-  readonly alt?: string;
-  readonly fingerprint: string;
-  readonly transform: ImageTransformPlan;
 }
 
 export async function compileLinkedInImage(
