@@ -2636,3 +2636,149 @@ test("WordPress matching imported legacy native metadata remains a backward-comp
   assert.equal(projection.payload.template, "legacy.php");
   assert.equal(projection.payload.menuOrder, 4);
 });
+
+
+test("WordPress merges shared, legacy route, and destination-scoped categories and tags without cross-site leakage", async () => {
+  const baseConnection = {
+    extensionId: "blogmaatic.wordpress-rest",
+    status: "active",
+    settings: {
+      siteUrl: "https://example.test",
+      username: "editor",
+    },
+    secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+    createdAt: "2026-10-24T23:10:00.000Z",
+    updatedAt: "2026-10-24T23:10:00.000Z",
+  };
+  const publisher = new WordPressRestPublisher(
+    new ConnectionAuthority([
+      { ...baseConnection, id: "wp-a", displayName: "Site A" },
+      { ...baseConnection, id: "wp-b", displayName: "Site B" },
+    ]),
+    new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+  );
+  const item = {
+    id: "publication-standard-taxonomy-compile",
+    createdAt: "2026-10-24T23:10:00.000Z",
+    slug: "standard-taxonomy-compile",
+    status: "approved",
+    current: {
+      id: "revision-standard-taxonomy-compile",
+      ordinal: 1,
+      createdAt: "2026-10-24T23:10:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Standard taxonomy compile",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: ["shared-tag", "duplicate-tag"],
+        attributes: {
+          categories: ["Shared Category", "Duplicate Category"],
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+          destinationOverrides: {
+            schemaVersion: 1,
+            groups: {
+              "group-a": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-a",
+                    channel: "posts",
+                    standardTaxonomy: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "posts",
+                      categories: ["Local A", "Shared Category"],
+                      tags: ["site-a", "shared-tag"],
+                    },
+                  },
+                },
+              },
+              "group-b": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-b",
+                    channel: "posts",
+                    standardTaxonomy: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "posts",
+                      categories: ["Local B"],
+                      tags: ["site-b"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+    variant: {
+      categories: ["Legacy Route Category", "Duplicate Category"],
+      tags: ["legacy-route-tag", "duplicate-tag"],
+    },
+  });
+
+  const siteA = await publisher.compile({
+    publication: item,
+    route: routeFor("wp-a"),
+    groupId: "group-a",
+  });
+  const siteB = await publisher.compile({
+    publication: item,
+    route: routeFor("wp-b"),
+    groupId: "group-b",
+  });
+
+  assert.deepEqual(siteA.payload.categories, [
+    "Duplicate Category",
+    "Legacy Route Category",
+    "Local A",
+    "Shared Category",
+  ]);
+  assert.deepEqual(siteA.payload.tags, [
+    "duplicate-tag",
+    "legacy-route-tag",
+    "shared-tag",
+    "site-a",
+  ]);
+  assert.deepEqual(siteB.payload.categories, [
+    "Duplicate Category",
+    "Legacy Route Category",
+    "Local B",
+    "Shared Category",
+  ]);
+  assert.deepEqual(siteB.payload.tags, [
+    "duplicate-tag",
+    "legacy-route-tag",
+    "shared-tag",
+    "site-b",
+  ]);
+
+  const tampered = structuredClone(item);
+  tampered.current.content.attributes.destinationOverrides.groups["group-a"].routes.wordpress.standardTaxonomy.connectionId = "wp-b";
+  await assert.rejects(
+    publisher.compile({
+      publication: tampered,
+      route: routeFor("wp-a"),
+      groupId: "group-a",
+    }),
+    /standard taxonomy identity no longer matches route/,
+  );
+});
