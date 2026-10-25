@@ -576,9 +576,16 @@ function parsePublishingStateBody(body: unknown): SourcePublishingStateBody {
   if (scheduledAt !== undefined && (typeof scheduledAt !== "string" || !scheduledAt.trim())) {
     throw new OperatorRequestError("scheduledAt must be a non-empty string when provided");
   }
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
   return {
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
     status: status.trim(),
     ...(typeof scheduledAt === "string" ? { scheduledAt: scheduledAt.trim() } : {}),
   };
