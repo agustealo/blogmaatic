@@ -11,15 +11,32 @@ export async function compileAssets(
   publication: Publication,
   settings: WordPressSettings,
   transformSpec?: ImageTransformSpec,
+  destinationConnectionId?: string,
 ): Promise<readonly CompiledWordPressAsset[]> {
   const compiled: CompiledWordPressAsset[] = [];
   for (const asset of publication.current.content.assets) {
     if (/^https?:\/\//i.test(asset.source)) {
+      const attributes = asset.attributes;
+      const sourceConnectionId =
+        attributes && typeof attributes.sourceConnectionId === "string"
+          ? attributes.sourceConnectionId
+          : undefined;
+      const legacyConnectionId =
+        publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
+        typeof publication.provenance.connectionId === "string"
+          ? publication.provenance.connectionId
+          : undefined;
+      const connectionOwnsMedia =
+        destinationConnectionId !== undefined &&
+        (sourceConnectionId === destinationConnectionId ||
+          (sourceConnectionId === undefined && legacyConnectionId === destinationConnectionId));
       const wordpressMediaId =
-        asset.attributes &&
-        typeof asset.attributes.wordpressMediaId === "number" &&
-        Number.isSafeInteger(asset.attributes.wordpressMediaId)
-          ? asset.attributes.wordpressMediaId
+        connectionOwnsMedia &&
+        attributes &&
+        typeof attributes.wordpressMediaId === "number" &&
+        Number.isSafeInteger(attributes.wordpressMediaId) &&
+        attributes.wordpressMediaId > 0
+          ? attributes.wordpressMediaId
           : undefined;
       compiled.push({
         assetId: asset.id,
