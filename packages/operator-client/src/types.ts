@@ -125,6 +125,7 @@ export type {
   PublicationProjectionPreview,
   PublicationProjectionPreviewItem,
   ProjectionPreviewSummary,
+  PublicationWorkspaceBlock,
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
   PublicationWorkspaceDispatchResult,
