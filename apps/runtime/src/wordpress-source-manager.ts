@@ -565,7 +565,19 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     const fields = await this.listSeoFields(connectionId, contentType);
     const bySemantic = new Map(fields.map((field) => [field.semantic, field] as const));
     const normalized: Partial<Record<SourceSeoSemantic, string>> = {};
-    const metaValues: Record<string, JsonValue> = {};
+
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
+    }
+    const existingSource = body.groupId && body.routeId
+      ? destinationOverride(current.publication, body.groupId, body.routeId)?.meta
+      : current.publication.current.content.attributes.sourceMeta;
+    const existingValues = isRecord(existingSource) && isRecord(existingSource.values)
+      ? existingSource.values
+      : {};
+    const metaValues: Record<string, JsonValue> = { ...existingValues };
 
     for (const [rawSemantic, rawValue] of Object.entries(body.values)) {
       const semantic = rawSemantic as SourceSeoSemantic;
