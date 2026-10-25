@@ -1,3 +1,5 @@
+import type { JsonValue, PublicationBlock, PublicationBlockKind } from "@blogmaatic/core";
+
 import type {
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
@@ -9,6 +11,17 @@ import { OperatorRequestError } from "./validation.js";
 
 const statuses = new Set<WorkspacePublicationStatus>(["idea", "draft", "ready", "approved", "archived"]);
 const bodyFormats = new Set<PublicationBodyFormat>(["plain", "html"]);
+const blockKinds = new Set<PublicationBlockKind>([
+  "heading",
+  "paragraph",
+  "image",
+  "gallery",
+  "quote",
+  "code",
+  "embed",
+  "table",
+  "callout",
+]);
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -89,6 +102,46 @@ function bodyFormat(input: Record<string, unknown>): PublicationBodyFormat | und
   return value as PublicationBodyFormat;
 }
 
+function jsonValue(value: unknown, label: string): JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map((item, index) => jsonValue(item, `${label}[${index}]`));
+  if (typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(source).map(([key, item]) => [key, jsonValue(item, `${label}.${key}`)]),
+    );
+  }
+  throw new OperatorRequestError(`${label} must contain only JSON-safe values`);
+}
+
+function blocks(input: Record<string, unknown>): readonly PublicationBlock[] | undefined {
+  const value = input.blocks;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new OperatorRequestError("blocks must be an array");
+
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const block = record(item, `blocks[${index}]`);
+    rejectUnknown(block, ["id", "kind", "data"], `blocks[${index}]`);
+    const id = requiredString(block, "id").trim();
+    if (id.length > 200) throw new OperatorRequestError(`blocks[${index}].id must not exceed 200 characters`);
+    if (seen.has(id)) throw new OperatorRequestError(`blocks contains duplicate id: ${id}`);
+    seen.add(id);
+
+    const kind = block.kind;
+    if (typeof kind !== "string" || !blockKinds.has(kind as PublicationBlockKind)) {
+      throw new OperatorRequestError(`blocks[${index}].kind is unsupported`);
+    }
+    const data = record(block.data, `blocks[${index}].data`);
+    return {
+      id,
+      kind: kind as PublicationBlockKind,
+      data: jsonValue(data, `blocks[${index}].data`) as Readonly<Record<string, JsonValue>>,
+    };
+  });
+}
+
 function optionalQueryLimit(input: Record<string, unknown>): number | undefined {
   const value = input.limit;
   if (value === undefined) return undefined;
@@ -111,15 +164,22 @@ function optionalQueryString(input: Record<string, unknown>, key: string): strin
 
 export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationWorkspaceCreateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "publishingTargetGroupIds", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["title", "body", "bodyFormat", "blocks", "summary", "language", "tags", "categories", "publishingTargetGroupIds", "slug", "canonicalUrl", "status"], "request body");
   const parsedTags = stringList(input, "tags");
   const parsedCategories = stringList(input, "categories");
   const parsedPublishingTargetGroupIds = publishingTargetGroupIds(input);
   const parsedStatus = status(input);
   const bodyValue = optionalString(input, "body");
+  const parsedBlocks = blocks(input);
   const parsedBodyFormat = bodyFormat(input);
   if (parsedBodyFormat !== undefined && bodyValue === undefined) {
     throw new OperatorRequestError("bodyFormat requires body");
+  }
+  if (parsedBlocks !== undefined && bodyValue !== undefined) {
+    throw new OperatorRequestError("blocks and body are mutually exclusive");
+  }
+  if (parsedBlocks !== undefined && parsedBodyFormat !== undefined) {
+    throw new OperatorRequestError("bodyFormat cannot be used with blocks");
   }
   const summary = optionalString(input, "summary");
   const language = optionalString(input, "language");
@@ -128,6 +188,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
   return {
     title: requiredString(input, "title"),
     ...(bodyValue === undefined ? {} : { body: bodyValue }),
+    ...(parsedBlocks === undefined ? {} : { blocks: parsedBlocks }),
     ...(parsedBodyFormat === undefined ? {} : { bodyFormat: parsedBodyFormat }),
     ...(summary === undefined ? {} : { summary }),
     ...(language === undefined ? {} : { language }),
@@ -142,12 +203,19 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
 
 export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationWorkspaceUpdateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "featuredAssetId", "publishingTargetGroupIds", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "blocks", "summary", "language", "tags", "categories", "featuredAssetId", "publishingTargetGroupIds", "slug", "canonicalUrl", "status"], "request body");
   const title = optionalString(input, "title");
   const bodyValue = optionalString(input, "body");
+  const parsedBlocks = blocks(input);
   const parsedBodyFormat = bodyFormat(input);
   if (parsedBodyFormat !== undefined && bodyValue === undefined) {
     throw new OperatorRequestError("bodyFormat requires body");
+  }
+  if (parsedBlocks !== undefined && bodyValue !== undefined) {
+    throw new OperatorRequestError("blocks and body are mutually exclusive");
+  }
+  if (parsedBlocks !== undefined && parsedBodyFormat !== undefined) {
+    throw new OperatorRequestError("bodyFormat cannot be used with blocks");
   }
   const summary = optionalString(input, "summary");
   const language = optionalString(input, "language");
@@ -162,6 +230,7 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
     expectedVersion: expectedVersion(input),
     ...(title === undefined ? {} : { title }),
     ...(bodyValue === undefined ? {} : { body: bodyValue }),
+    ...(parsedBlocks === undefined ? {} : { blocks: parsedBlocks }),
     ...(parsedBodyFormat === undefined ? {} : { bodyFormat: parsedBodyFormat }),
     ...(summary === undefined ? {} : { summary }),
     ...(language === undefined ? {} : { language }),
