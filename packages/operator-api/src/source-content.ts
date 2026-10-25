@@ -15,6 +15,7 @@ import type {
   SourceFeaturedMediaBody,
   SourceRevisionRestoreBody,
   SourceMetaValuesBody,
+  SourceSeoValuesBody,
   SourcePublishingStateBody,
   SourceStandardTaxonomyBody,
   SourcePageStructureBody,
@@ -224,6 +225,50 @@ function parseMetaValuesBody(body: unknown): SourceMetaValuesBody {
     expectedVersion: input.expectedVersion as number,
     contentType: contentType.trim(),
     values: values as Readonly<Record<string, import("@blogmaatic/core").JsonValue>>,
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
+  };
+}
+
+function parseSeoValuesBody(body: unknown): SourceSeoValuesBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "values", "groupId", "routeId"]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+
+  const publicationId = optionalString(input, "publicationId");
+  if (!publicationId) throw new OperatorRequestError("publicationId is required");
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+  const values = input.values;
+  if (values === null || typeof values !== "object" || Array.isArray(values)) {
+    throw new OperatorRequestError("values must be an object");
+  }
+  const allowedSemantics = new Set(["title", "description", "canonical", "focus_keyphrase"]);
+  for (const [semantic, value] of Object.entries(values as Record<string, unknown>)) {
+    if (!allowedSemantics.has(semantic)) {
+      throw new OperatorRequestError(`unsupported SEO field: ${semantic}`);
+    }
+    if (typeof value !== "string") {
+      throw new OperatorRequestError(`SEO value must be a string: ${semantic}`);
+    }
+  }
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
+  return {
+    publicationId,
+    expectedVersion: input.expectedVersion as number,
+    contentType,
+    values: values as SourceSeoValuesBody["values"],
     ...(groupId ? { groupId } : {}),
     ...(routeId ? { routeId } : {}),
   };
@@ -995,6 +1040,50 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           revisionId: value.publication.publication.current.id,
           version: value.publication.version,
           taxonomyKeys: Object.keys(value.selections).sort(),
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.get("/v1/connections/:connectionId/seo-fields", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const queryValue = query(request).contentType;
+    if (typeof queryValue !== "string" || !queryValue.trim()) {
+      throw new OperatorRequestError("contentType is required");
+    }
+    return {
+      items: await domainCall(() => manager(options).listSeoFields(connectionId, queryValue.trim())),
+    };
+  });
+
+  app.post("/v1/connections/:connectionId/seo-values", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseSeoValuesBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-seo.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
+        semantics: Object.keys(body.values).sort(),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setSeoValues(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          semantics: Object.keys(value.values).sort(),
         },
       }),
     });

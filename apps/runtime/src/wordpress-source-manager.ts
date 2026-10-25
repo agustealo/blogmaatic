@@ -14,6 +14,7 @@ import {
   WORDPRESS_REST_EXTENSION_ID,
   WordPressContentService,
   WordPressRestPublisher,
+  discoverSeoFields,
   type WordPressContentTypeView,
   type WordPressMediaView,
   type WordPressPostView,
@@ -53,6 +54,10 @@ import type {
   SourceRevisionRestoreResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceSeoFieldDefinition,
+  SourceSeoSemantic,
+  SourceSeoValuesBody,
+  SourceSeoValuesResult,
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
@@ -526,6 +531,98 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
+    };
+  }
+
+  async listSeoFields(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceSeoFieldDefinition[]> {
+    const normalized = contentType.trim();
+    if (!normalized) throw new Error("Source SEO content type is required");
+    const fields = discoverSeoFields(await this.#content.listRestMetaFields(connectionId, normalized));
+    return fields.map((field) => ({
+      semantic: field.semantic,
+      key: field.key,
+      label: field.label,
+      provider: field.provider,
+      ...(field.description ? { description: field.description } : {}),
+      metadata: {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType: normalized,
+        source: "wordpress-rest-meta",
+      },
+    }));
+  }
+
+  async setSeoValues(
+    connectionId: string,
+    body: SourceSeoValuesBody,
+  ): Promise<SourceSeoValuesResult> {
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("Source SEO content type is required");
+    const fields = await this.listSeoFields(connectionId, contentType);
+    const bySemantic = new Map(fields.map((field) => [field.semantic, field] as const));
+    const normalized: Partial<Record<SourceSeoSemantic, string>> = {};
+
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
+    }
+    const existingSource = body.groupId && body.routeId
+      ? destinationOverride(current.publication, body.groupId, body.routeId)?.meta
+      : current.publication.current.content.attributes.sourceMeta;
+    const existingValues = isRecord(existingSource) && isRecord(existingSource.values)
+      ? existingSource.values
+      : {};
+    const metaValues: Record<string, JsonValue> = { ...existingValues };
+
+    for (const [rawSemantic, rawValue] of Object.entries(body.values)) {
+      const semantic = rawSemantic as SourceSeoSemantic;
+      if (!["title", "description", "canonical", "focus_keyphrase"].includes(semantic)) {
+        throw new Error(`Unsupported source SEO semantic: ${rawSemantic}`);
+      }
+      const field = bySemantic.get(semantic);
+      if (!field) {
+        throw new Error(`WordPress SEO field is not writable for ${contentType}: ${semantic}`);
+      }
+      if (typeof rawValue !== "string") {
+        throw new Error(`WordPress SEO value must be a string: ${semantic}`);
+      }
+      const value = rawValue.trim();
+      const maxLength = semantic === "canonical" ? 2048 : semantic === "description" ? 1000 : 500;
+      if (value.length > maxLength) {
+        throw new Error(`WordPress SEO value is too long: ${semantic}`);
+      }
+      if (semantic === "canonical" && value) {
+        let parsed: URL;
+        try {
+          parsed = new URL(value);
+        } catch {
+          throw new Error("WordPress SEO canonical must be an absolute URL");
+        }
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+          throw new Error("WordPress SEO canonical must use http or https");
+        }
+      }
+      normalized[semantic] = value;
+      metaValues[field.key] = value;
+    }
+
+    const result = await this.setMetaValues(connectionId, {
+      publicationId: body.publicationId,
+      expectedVersion: body.expectedVersion,
+      contentType,
+      values: metaValues,
+      ...(body.groupId ? { groupId: body.groupId } : {}),
+      ...(body.routeId ? { routeId: body.routeId } : {}),
+    });
+    return {
+      publication: result.publication,
+      contentType,
+      values: normalized,
     };
   }
 
