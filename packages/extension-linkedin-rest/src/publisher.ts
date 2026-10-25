@@ -220,9 +220,11 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
   async compile({
     publication,
     route,
+    groupId,
   }: {
     publication: Publication;
     route: PublicationRoute;
+    groupId?: string;
   }): Promise<CompiledProjection> {
     if (route.destination.channel !== "posts") {
       throw new Error(`LinkedIn v0.1 supports only the posts channel, got: ${route.destination.channel}`);
@@ -275,7 +277,8 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     };
     const hash = fingerprint(desiredSemantic(settings, payload));
     return {
-      projectionId: `${publication.id}:${route.id}`,
+      projectionId: `${publication.id}:${groupId ?? "legacy"}:${route.id}`,
+      ...(groupId ? { groupId } : {}),
       publicationId: publication.id,
       sourceRevisionId: publication.current.id,
       routeId: route.id,
