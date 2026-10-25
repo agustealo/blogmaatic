@@ -26,6 +26,7 @@ import type {
   ExtensionCapability,
   JsonValue,
   Publication,
+  PublicationBlock,
   PublicationGroup,
   PublicationRoute,
   PublicationStatus,
@@ -528,6 +529,7 @@ export type PublicationBodyFormat = "plain" | "html";
 export interface PublicationWorkspaceCreateBody {
   readonly title: string;
   readonly body?: string;
+  readonly blocks?: readonly PublicationBlock[];
   readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
@@ -543,6 +545,7 @@ export interface PublicationWorkspaceUpdateBody {
   readonly expectedVersion: number;
   readonly title?: string;
   readonly body?: string;
+  readonly blocks?: readonly PublicationBlock[];
   readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
