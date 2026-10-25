@@ -78,6 +78,8 @@ import type {
   SourceMetaValuesResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceStandardTaxonomyBody,
+  SourceStandardTaxonomyResult,
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
@@ -346,6 +348,16 @@ export class OperatorClient {
       pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/taxonomies`, { contentType }),
     );
     return response.items;
+  }
+
+  setSourceStandardTaxonomy(
+    connectionId: string,
+    input: SourceStandardTaxonomyBody,
+  ): Promise<SourceStandardTaxonomyResult> {
+    return this.#request<SourceStandardTaxonomyResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/standard-taxonomy`,
+      { method: "POST", body: input },
+    );
   }
 
   setSourceTaxonomySelections(

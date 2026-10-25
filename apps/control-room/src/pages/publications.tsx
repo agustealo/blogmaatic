@@ -913,6 +913,152 @@ interface WordPressTargetRoute {
   readonly channel: string;
 }
 
+function canonicalRouteStandardTaxonomy(
+  entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  contentType: string,
+  groupId: string,
+  routeId: string,
+): { readonly categories: readonly string[]; readonly tags: readonly string[] } {
+  const source = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.standardTaxonomy);
+  if (!source) return { categories: [], tags: [] };
+  if (
+    source.extensionId !== "blogmaatic.wordpress-rest" ||
+    source.connectionId !== connectionId ||
+    source.contentType !== contentType
+  ) {
+    return { categories: [], tags: [] };
+  }
+  const normalize = (value: unknown): readonly string[] => Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].sort()
+    : [];
+  return {
+    categories: normalize(source.categories),
+    tags: normalize(source.tags),
+  };
+}
+
+function WordPressStandardTaxonomyPanel({
+  entry,
+  connectionId,
+  contentType,
+  groupId,
+  routeId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly contentType: string;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const canonical = canonicalRouteStandardTaxonomy(entry, connectionId, contentType, groupId, routeId);
+  const [categories, setCategories] = useState<readonly string[]>(canonical.categories);
+  const [tags, setTags] = useState<readonly string[]>(canonical.tags);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const next = canonicalRouteStandardTaxonomy(entry, connectionId, contentType, groupId, routeId);
+    setCategories(next.categories);
+    setTags(next.tags);
+  }, [connectionId, contentType, entry.publication.current.id, groupId, routeId]);
+
+  const sharedCategories = Array.isArray(entry.publication.current.content.attributes.categories)
+    ? entry.publication.current.content.attributes.categories
+        .filter((value): value is string => typeof value === "string")
+    : [];
+  const sharedTags = entry.publication.current.content.tags;
+
+  const add = useCallback((kind: SourceTaxonomyKind, name: string) => {
+    const apply = (current: readonly string[]) =>
+      current.some((value) => value.localeCompare(name, undefined, { sensitivity: "accent" }) === 0)
+        ? current
+        : [...current, name].sort((left, right) => left.localeCompare(right));
+    if (kind === "category") setCategories(apply);
+    else setTags(apply);
+  }, []);
+
+  const remove = useCallback((kind: SourceTaxonomyKind, name: string) => {
+    const keep = (value: string) => value.localeCompare(name, undefined, { sensitivity: "accent" }) !== 0;
+    if (kind === "category") setCategories((current) => current.filter(keep));
+    else setTags((current) => current.filter(keep));
+  }, []);
+
+  const dirty =
+    JSON.stringify(categories) !== JSON.stringify(canonical.categories) ||
+    JSON.stringify(tags) !== JSON.stringify(canonical.tags);
+
+  const save = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.setSourceStandardTaxonomy(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        contentType,
+        groupId,
+        routeId,
+        categories,
+        tags,
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress destination taxonomy could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  }, [categories, client, connectionId, contentType, entry.publication.id, entry.version, groupId, onUpdated, routeId, tags]);
+
+  const chips = (kind: SourceTaxonomyKind, values: readonly string[]) => (
+    values.length ? (
+      <div className="wordpress-standard-taxonomy__chips">
+        {values.map((value) => (
+          <button
+            className="wordpress-standard-taxonomy__chip"
+            type="button"
+            key={`${kind}:${value}`}
+            onClick={() => remove(kind, value)}
+            disabled={busy}
+            title={`Remove ${value} from this destination only`}
+          >
+            <span>{value}</span><span aria-hidden="true">×</span>
+          </button>
+        ))}
+      </div>
+    ) : <small className="wordpress-standard-taxonomy__empty">No destination-specific {kind === "category" ? "categories" : "tags"}.</small>
+  );
+
+  return (
+    <Panel title="WordPress categories & tags" meta="Destination additions" className="wordpress-standard-taxonomy">
+      <ErrorBanner error={error} />
+      <div className="wordpress-standard-taxonomy__shared">
+        <div>
+          <strong>Shared categories</strong>
+          <small>{sharedCategories.length ? sharedCategories.join(", ") : "None"}</small>
+        </div>
+        <div>
+          <strong>Shared tags</strong>
+          <small>{sharedTags.length ? sharedTags.join(", ") : "None"}</small>
+        </div>
+      </div>
+      <div className="wordpress-standard-taxonomy__selection">
+        <div><strong>This destination's categories</strong>{chips("category", categories)}</div>
+        <div><strong>This destination's tags</strong>{chips("tag", tags)}</div>
+      </div>
+      <SourceTaxonomyPanel connectionId={connectionId} onSelect={add} />
+      <div className="collection-footer">
+        <button className="button button--primary" type="button" onClick={() => void save()} disabled={busy || !dirty}>
+          {busy ? "Saving…" : "Save destination taxonomy"}
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
 function WordPressDestinationSettings({
   entry,
   onUpdated,
@@ -1008,6 +1154,14 @@ function WordPressDestinationSettings({
             onUpdated={onUpdated}
           />
           <SourcePageStructurePanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
+          <WordPressStandardTaxonomyPanel
             entry={entry}
             connectionId={route.connectionId}
             contentType={route.channel}

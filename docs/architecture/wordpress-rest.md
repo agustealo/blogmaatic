@@ -180,6 +180,30 @@ Creation is idempotent by stable slug. Blogmaatic first reuses an existing match
 
 Creating a remote term does not itself create a canonical Publication revision. Control Room immediately adds the returned term name to the current editor draft; the user's normal Publication Save remains the immutable canonical content boundary.
 
+### Route-scoped standard categories and tags
+
+Canonical Publication categories and tags remain the shared editorial base across destinations. A selected WordPress route may additionally own per-publication category/tag additions under its exact `destinationOverrides.groups[groupId].routes[routeId].standardTaxonomy` entry.
+
+The route-scoped record freezes:
+
+- WordPress extension id
+- connection id
+- REST content type
+- additional categories
+- additional tags
+
+Compilation is additive and deterministic:
+
+1. shared canonical Publication categories/tags
+2. legacy `route.variant.categories` / `route.variant.tags` additions
+3. route-scoped WordPress standard-taxonomy additions
+
+The merged names are trimmed, deduplicated and sorted. Route-scoped additions never replace shared taxonomy and never leak to another group or route, even when two Publication Groups reuse the same route id.
+
+The compiler revalidates the stored extension, connection and content type against the route being compiled. Stale or tampered destination identity fails closed.
+
+Content Studio exposes these additions inside each selected WordPress Destination Settings card. Authors can browse/search/create WordPress categories and tags through the existing source-taxonomy boundary, add them to that destination, remove destination-only additions, and save them as an immutable canonical Publication revision. The global Categories and Tags editor remains the shared base.
+
 ### Custom taxonomies
 
 WordPress REST-enabled custom taxonomies are discovered dynamically instead of being hard-coded by plugin name. Blogmaatic combines the selected content type's taxonomy keys from `/types?context=edit` with definitions from `/taxonomies?context=edit`.

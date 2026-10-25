@@ -233,15 +233,53 @@ function desiredSchedule(
   return date.toISOString();
 }
 
-function categoryNames(publication: Publication, route: PublicationRoute): readonly string[] {
-  const base = stringArray(publication.current.content.attributes.categories);
-  const extra = stringArray(variant(route).categories);
-  return [...new Set([...base, ...extra].map((value) => value.trim()).filter(Boolean))].sort();
+function sourceStandardTaxonomy(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+  groupId?: string,
+): { readonly categories: readonly string[]; readonly tags: readonly string[] } {
+  const scoped = destinationOverride(publication, route, groupId);
+  const source = scoped?.standardTaxonomy;
+  if (!isRecord(source)) return { categories: [], tags: [] };
+  if (
+    source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    source.connectionId !== route.destination.connectionId ||
+    source.contentType !== contentType
+  ) {
+    throw new Error("Canonical WordPress standard taxonomy identity no longer matches route");
+  }
+  return {
+    categories: [...new Set(stringArray(source.categories).map((value) => value.trim()).filter(Boolean))].sort(),
+    tags: [...new Set(stringArray(source.tags).map((value) => value.trim()).filter(Boolean))].sort(),
+  };
 }
 
-function tagNames(publication: Publication, route: PublicationRoute): readonly string[] {
-  const extra = stringArray(variant(route).tags);
-  return [...new Set([...publication.current.content.tags, ...extra].map((value) => value.trim()).filter(Boolean))].sort();
+function categoryNames(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+  groupId?: string,
+): readonly string[] {
+  const base = stringArray(publication.current.content.attributes.categories);
+  const variantExtra = stringArray(variant(route).categories);
+  const scoped = sourceStandardTaxonomy(publication, route, contentType, groupId).categories;
+  return [...new Set(
+    [...base, ...variantExtra, ...scoped].map((value) => value.trim()).filter(Boolean),
+  )].sort();
+}
+
+function tagNames(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+  groupId?: string,
+): readonly string[] {
+  const variantExtra = stringArray(variant(route).tags);
+  const scoped = sourceStandardTaxonomy(publication, route, contentType, groupId).tags;
+  return [...new Set(
+    [...publication.current.content.tags, ...variantExtra, ...scoped].map((value) => value.trim()).filter(Boolean),
+  )].sort();
 }
 
 function sourceCustomTaxonomies(
@@ -822,8 +860,8 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       slug: termSlug(getString(variant(route), "slug") ?? publication.slug ?? publication.id),
       status,
       bodyTemplate: htmlBody(publication),
-      tags: tagNames(publication, route),
-      categories: categoryNames(publication, route),
+      tags: tagNames(publication, route, contentType, groupId),
+      categories: categoryNames(publication, route, contentType, groupId),
       ...(Object.keys(customTaxonomies).length === 0 ? {} : { customTaxonomies }),
       ...(Object.keys(restMeta).length === 0 ? {} : { restMeta }),
       ...(groupId && publicationTargetGroupIds(publication).length === 1 &&
