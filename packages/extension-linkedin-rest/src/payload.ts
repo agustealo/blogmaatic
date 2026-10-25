@@ -16,7 +16,9 @@ function requireString(record: Readonly<Record<string, JsonValue>>, key: string)
 export function parsePayload(projection: CompiledProjection): LinkedInProjectionPayload {
   if (!isRecord(projection.payload)) throw new Error("LinkedIn projection payload must be an object");
   const mode = requireString(projection.payload, "mode");
-  if (mode !== "text" && mode !== "article") throw new Error(`Unsupported LinkedIn projection mode: ${mode}`);
+  if (mode !== "text" && mode !== "article" && mode !== "image") {
+    throw new Error(`Unsupported LinkedIn projection mode: ${mode}`);
+  }
   const commentary = requireString(projection.payload, "commentary");
   const fidelity = projection.payload.fidelity;
   if (!isRecord(fidelity)) throw new Error("LinkedIn projection payload requires fidelity report");
@@ -52,6 +54,9 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
 
   let image: LinkedInProjectionPayload["image"];
   const imageValue = projection.payload.image;
+  if (mode === "image" && imageValue === undefined) {
+    throw new Error("LinkedIn image projection requires image metadata");
+  }
   if (imageValue !== undefined) {
     if (!isRecord(imageValue)) throw new Error("LinkedIn projection image must be an object");
     const assetId = requireString(imageValue, "assetId");
