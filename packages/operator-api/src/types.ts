@@ -624,6 +624,29 @@ export interface PublicationWorkspaceDispatchResult {
   readonly runs: readonly ControlPlaneRunRecord[];
 }
 
+export type PublicationSocialCommentaryMode = "inherit" | "override";
+export type PublicationSocialMediaMode = "inherit" | "none" | "select";
+
+export interface PublicationSocialVariantBody {
+  readonly expectedVersion: number;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly commentaryMode: PublicationSocialCommentaryMode;
+  readonly commentary?: string;
+  readonly mediaMode: PublicationSocialMediaMode;
+  readonly imageAssetIds?: readonly string[];
+}
+
+export interface PublicationSocialVariantResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly commentaryMode: PublicationSocialCommentaryMode;
+  readonly commentary?: string;
+  readonly mediaMode: PublicationSocialMediaMode;
+  readonly imageAssetIds: readonly string[];
+}
+
 export interface ProjectionPreviewMediaSummary {
   readonly assetId?: string;
   readonly sourceWidth?: number;
@@ -763,6 +786,7 @@ export interface OperatorPublicationWorkspaceManager {
   getVersion(publicationId: string, version: number): Promise<PublicationWorkspaceEntry | undefined>;
   create(input: PublicationWorkspaceCreateBody): Promise<PublicationWorkspaceEntry>;
   update(publicationId: string, input: PublicationWorkspaceUpdateBody): Promise<PublicationWorkspaceEntry>;
+  setSocialVariant(publicationId: string, input: PublicationSocialVariantBody): Promise<PublicationSocialVariantResult>;
   approveAndDispatch(publicationId: string, expectedVersion: number): Promise<PublicationWorkspaceDispatchResult>;
 }
 
