@@ -83,7 +83,7 @@ test("mixed canonical blocks round-trip losslessly and reorder as immutable revi
   );
 });
 
-test("image blocks require valid canonical image assets while legacy external images remain readable", async () => {
+test("image block mutations require valid canonical image assets", async () => {
   const { manager, current } = harness();
   const created = await manager.create({
     title: "Image blocks",
@@ -118,15 +118,14 @@ test("image blocks require valid canonical image assets while legacy external im
   );
   assert.equal(current().version, 3);
 
-  const external = await manager.update(created.publication.id, {
-    expectedVersion: 3,
-    blocks: [{ id: "legacy-image", kind: "image", data: { src: "https://cdn.example.test/legacy.jpg", alt: "Legacy" } }],
-  });
-  assert.equal(external.version, 4);
-  assert.deepEqual(external.publication.current.content.blocks[0].data, {
-    src: "https://cdn.example.test/legacy.jpg",
-    alt: "Legacy",
-  });
+  await assert.rejects(
+    () => manager.update(created.publication.id, {
+      expectedVersion: 3,
+      blocks: [{ id: "legacy-image", kind: "image", data: { src: "https://cdn.example.test/legacy.jpg", alt: "Legacy" } }],
+    }),
+    /requires canonical assetId/,
+  );
+  assert.equal(current().version, 3);
 });
 
 test("direct workspace mutations reject duplicate future blocks and ambiguous legacy body writes", async () => {
