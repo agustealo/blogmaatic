@@ -572,6 +572,8 @@ export class PublicationWorkspaceManager {
       readonly pingStatus?: "open" | "closed";
       readonly sticky?: boolean;
       readonly format?: string;
+      readonly groupId?: string;
+      readonly routeId?: string;
     },
   ): Promise<PublicationWorkspaceEntry> {
     const current = await this.#store.get(publicationId);
@@ -579,23 +581,35 @@ export class PublicationWorkspaceManager {
     if (current.version !== expectedVersion) {
       throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
     }
-    if (
-      current.publication.provenance.extensionId !== state.extensionId ||
-      current.publication.provenance.connectionId !== state.connectionId
-    ) {
-      throw new Error("Source editorial options connection does not match the publication source");
-    }
-    const wordpress = current.publication.current.content.attributes.wordpress;
-    if (
-      wordpress === null ||
-      typeof wordpress !== "object" ||
-      Array.isArray(wordpress) ||
-      wordpress.contentType !== state.contentType
-    ) {
-      throw new Error("Source editorial options content type does not match the publication source");
-    }
     const contentType = state.contentType.trim();
     if (!contentType) throw new Error("Source editorial content type is required");
+
+    let targetRoute: PublicationGroup["routes"][number] | undefined;
+    if (state.groupId !== undefined || state.routeId !== undefined) {
+      if (!state.groupId || !state.routeId) {
+        throw new Error("Route-scoped source editorial options require both groupId and routeId");
+      }
+      targetRoute = await this.#publishingTargetRoute(current.publication, state.groupId, state.routeId);
+      if (
+        targetRoute.destination.extensionId !== state.extensionId ||
+        targetRoute.destination.connectionId !== state.connectionId ||
+        targetRoute.destination.channel !== contentType
+      ) {
+        throw new Error("Source editorial options route does not match the requested destination/content type");
+      }
+    } else {
+      if (
+        current.publication.provenance.extensionId !== state.extensionId ||
+        current.publication.provenance.connectionId !== state.connectionId
+      ) {
+        throw new Error("Source editorial options connection does not match the publication source");
+      }
+      const wordpress = jsonRecord(current.publication.current.content.attributes.wordpress);
+      if (wordpress?.contentType !== contentType) {
+        throw new Error("Source editorial options content type does not match the publication source");
+      }
+    }
+
     const password = state.password;
     if (state.commentStatus !== undefined && state.commentStatus !== "open" && state.commentStatus !== "closed") {
       throw new Error("Source editorial commentStatus must be open or closed");
@@ -620,11 +634,20 @@ export class PublicationWorkspaceManager {
       ...(state.sticky === undefined ? {} : { sticky: state.sticky }),
       ...(format === undefined ? {} : { format }),
     };
-    if (JSON.stringify(current.publication.current.content.attributes.sourceEditorial) === JSON.stringify(nextState)) {
-      return current;
-    }
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = targetRoute && state.groupId && state.routeId
+      ? withDestinationOverride(
+        oldAttributes,
+        state.groupId,
+        state.routeId,
+        targetRoute.destination,
+        { editorial: nextState },
+      )
+      : { ...oldAttributes, sourceEditorial: nextState };
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
+
     const now = this.#now();
-    const publication: Publication = {
+    return this.#store.update({
       ...current.publication,
       current: {
         id: `revision_${this.#id()}`,
@@ -632,14 +655,10 @@ export class PublicationWorkspaceManager {
         createdAt: now,
         content: {
           ...current.publication.current.content,
-          attributes: {
-            ...current.publication.current.content.attributes,
-            sourceEditorial: nextState,
-          },
+          attributes: nextAttributes,
         },
       },
-    };
-    return this.#store.update(publication, expectedVersion, now);
+    }, expectedVersion, now);
   }
 
   async setSourcePageStructure(
@@ -652,6 +671,8 @@ export class PublicationWorkspaceManager {
       readonly parentRemoteId: string | null;
       readonly template: string | null;
       readonly menuOrder: number;
+      readonly groupId?: string;
+      readonly routeId?: string;
     },
   ): Promise<PublicationWorkspaceEntry> {
     const current = await this.#store.get(publicationId);
@@ -659,25 +680,34 @@ export class PublicationWorkspaceManager {
     if (current.version !== expectedVersion) {
       throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
     }
-    if (
-      current.publication.provenance.extensionId !== state.extensionId ||
-      current.publication.provenance.connectionId !== state.connectionId
-    ) {
-      throw new Error("Source page structure connection does not match the publication source");
-    }
-
-    const wordpress = current.publication.current.content.attributes.wordpress;
-    if (
-      wordpress === null ||
-      typeof wordpress !== "object" ||
-      Array.isArray(wordpress) ||
-      wordpress.contentType !== state.contentType
-    ) {
-      throw new Error("Source page structure content type does not match the publication source");
-    }
-
     const contentType = state.contentType.trim();
     if (!contentType) throw new Error("Source page content type is required");
+
+    let targetRoute: PublicationGroup["routes"][number] | undefined;
+    if (state.groupId !== undefined || state.routeId !== undefined) {
+      if (!state.groupId || !state.routeId) {
+        throw new Error("Route-scoped source page structure requires both groupId and routeId");
+      }
+      targetRoute = await this.#publishingTargetRoute(current.publication, state.groupId, state.routeId);
+      if (
+        targetRoute.destination.extensionId !== state.extensionId ||
+        targetRoute.destination.connectionId !== state.connectionId ||
+        targetRoute.destination.channel !== contentType
+      ) {
+        throw new Error("Source page structure route does not match the requested destination/content type");
+      }
+    } else {
+      if (
+        current.publication.provenance.extensionId !== state.extensionId ||
+        current.publication.provenance.connectionId !== state.connectionId
+      ) {
+        throw new Error("Source page structure connection does not match the publication source");
+      }
+      const wordpress = jsonRecord(current.publication.current.content.attributes.wordpress);
+      if (wordpress?.contentType !== contentType) {
+        throw new Error("Source page structure content type does not match the publication source");
+      }
+    }
 
     let parentRemoteId: string | null = null;
     if (state.parentRemoteId !== null) {
@@ -689,7 +719,7 @@ export class PublicationWorkspaceManager {
       if (!Number.isSafeInteger(parent) || parent < 1) {
         throw new Error("Source page parentRemoteId must be null or a positive integer string");
       }
-      if (current.publication.provenance.remoteId === parentRemoteId) {
+      if (!targetRoute && current.publication.provenance.remoteId === parentRemoteId) {
         throw new Error("A WordPress page cannot be its own parent");
       }
     }
@@ -707,11 +737,20 @@ export class PublicationWorkspaceManager {
       template,
       menuOrder: state.menuOrder,
     };
-    const existing = current.publication.current.content.attributes.sourcePage;
-    if (JSON.stringify(existing) === JSON.stringify(nextState)) return current;
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = targetRoute && state.groupId && state.routeId
+      ? withDestinationOverride(
+        oldAttributes,
+        state.groupId,
+        state.routeId,
+        targetRoute.destination,
+        { pageStructure: nextState },
+      )
+      : { ...oldAttributes, sourcePage: nextState };
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
 
     const now = this.#now();
-    const publication: Publication = {
+    return this.#store.update({
       ...current.publication,
       current: {
         id: `revision_${this.#id()}`,
@@ -719,14 +758,10 @@ export class PublicationWorkspaceManager {
         createdAt: now,
         content: {
           ...current.publication.current.content,
-          attributes: {
-            ...current.publication.current.content.attributes,
-            sourcePage: nextState,
-          },
+          attributes: nextAttributes,
         },
       },
-    };
-    return this.#store.update(publication, expectedVersion, now);
+    }, expectedVersion, now);
   }
 
   async setSourceMetaValues(
@@ -737,6 +772,8 @@ export class PublicationWorkspaceManager {
       readonly connectionId: string;
       readonly contentType: string;
       readonly values: Readonly<Record<string, JsonValue>>;
+      readonly groupId?: string;
+      readonly routeId?: string;
     },
   ): Promise<PublicationWorkspaceEntry> {
     const current = await this.#store.get(publicationId);
@@ -744,23 +781,33 @@ export class PublicationWorkspaceManager {
     if (current.version !== expectedVersion) {
       throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
     }
-    if (
-      current.publication.provenance.extensionId !== state.extensionId ||
-      current.publication.provenance.connectionId !== state.connectionId
-    ) {
-      throw new Error("Source meta connection does not match the publication source");
-    }
     const contentType = state.contentType.trim();
     if (!contentType) throw new Error("Source meta content type is required");
 
-    const wordpress = current.publication.current.content.attributes.wordpress;
-    if (
-      wordpress === null ||
-      typeof wordpress !== "object" ||
-      Array.isArray(wordpress) ||
-      wordpress.contentType !== contentType
-    ) {
-      throw new Error("Source meta content type does not match the publication source");
+    let targetRoute: PublicationGroup["routes"][number] | undefined;
+    if (state.groupId !== undefined || state.routeId !== undefined) {
+      if (!state.groupId || !state.routeId) {
+        throw new Error("Route-scoped source meta requires both groupId and routeId");
+      }
+      targetRoute = await this.#publishingTargetRoute(current.publication, state.groupId, state.routeId);
+      if (
+        targetRoute.destination.extensionId !== state.extensionId ||
+        targetRoute.destination.connectionId !== state.connectionId ||
+        targetRoute.destination.channel !== contentType
+      ) {
+        throw new Error("Source meta route does not match the requested destination/content type");
+      }
+    } else {
+      if (
+        current.publication.provenance.extensionId !== state.extensionId ||
+        current.publication.provenance.connectionId !== state.connectionId
+      ) {
+        throw new Error("Source meta connection does not match the publication source");
+      }
+      const wordpress = jsonRecord(current.publication.current.content.attributes.wordpress);
+      if (wordpress?.contentType !== contentType) {
+        throw new Error("Source meta content type does not match the publication source");
+      }
     }
 
     const values: Record<string, JsonValue> = {};
@@ -776,11 +823,20 @@ export class PublicationWorkspaceManager {
       contentType,
       values,
     };
-    const existing = current.publication.current.content.attributes.sourceMeta;
-    if (JSON.stringify(existing) === JSON.stringify(nextState)) return current;
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = targetRoute && state.groupId && state.routeId
+      ? withDestinationOverride(
+        oldAttributes,
+        state.groupId,
+        state.routeId,
+        targetRoute.destination,
+        { meta: nextState },
+      )
+      : { ...oldAttributes, sourceMeta: nextState };
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
 
     const now = this.#now();
-    const publication: Publication = {
+    return this.#store.update({
       ...current.publication,
       current: {
         id: `revision_${this.#id()}`,
@@ -788,14 +844,10 @@ export class PublicationWorkspaceManager {
         createdAt: now,
         content: {
           ...current.publication.current.content,
-          attributes: {
-            ...current.publication.current.content.attributes,
-            sourceMeta: nextState,
-          },
+          attributes: nextAttributes,
         },
       },
-    };
-    return this.#store.update(publication, expectedVersion, now);
+    }, expectedVersion, now);
   }
 
   async setSourceTaxonomies(
@@ -810,6 +862,8 @@ export class PublicationWorkspaceManager {
         readonly restNamespace?: string;
         readonly names: readonly string[];
       }>>;
+      readonly groupId?: string;
+      readonly routeId?: string;
     },
   ): Promise<PublicationWorkspaceEntry> {
     const current = await this.#store.get(publicationId);
@@ -817,14 +871,34 @@ export class PublicationWorkspaceManager {
     if (current.version !== expectedVersion) {
       throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
     }
-    if (
-      current.publication.provenance.extensionId !== state.extensionId ||
-      current.publication.provenance.connectionId !== state.connectionId
-    ) {
-      throw new Error("Source taxonomy connection does not match the publication source");
-    }
     const contentType = state.contentType.trim();
     if (!contentType) throw new Error("Source taxonomy content type is required");
+
+    let targetRoute: PublicationGroup["routes"][number] | undefined;
+    if (state.groupId !== undefined || state.routeId !== undefined) {
+      if (!state.groupId || !state.routeId) {
+        throw new Error("Route-scoped source taxonomy requires both groupId and routeId");
+      }
+      targetRoute = await this.#publishingTargetRoute(current.publication, state.groupId, state.routeId);
+      if (
+        targetRoute.destination.extensionId !== state.extensionId ||
+        targetRoute.destination.connectionId !== state.connectionId ||
+        targetRoute.destination.channel !== contentType
+      ) {
+        throw new Error("Source taxonomy route does not match the requested destination/content type");
+      }
+    } else {
+      if (
+        current.publication.provenance.extensionId !== state.extensionId ||
+        current.publication.provenance.connectionId !== state.connectionId
+      ) {
+        throw new Error("Source taxonomy connection does not match the publication source");
+      }
+      const wordpress = jsonRecord(current.publication.current.content.attributes.wordpress);
+      if (wordpress?.contentType !== contentType) {
+        throw new Error("Source taxonomy content type does not match the publication source");
+      }
+    }
 
     const normalized: Record<string, JsonValue> = {};
     for (const [rawKey, value] of Object.entries(state.taxonomies)) {
@@ -846,11 +920,20 @@ export class PublicationWorkspaceManager {
       contentType,
       taxonomies: normalized,
     };
-    const existing = current.publication.current.content.attributes.sourceTaxonomies;
-    if (JSON.stringify(existing) === JSON.stringify(nextState)) return current;
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = targetRoute && state.groupId && state.routeId
+      ? withDestinationOverride(
+        oldAttributes,
+        state.groupId,
+        state.routeId,
+        targetRoute.destination,
+        { taxonomies: nextState },
+      )
+      : { ...oldAttributes, sourceTaxonomies: nextState };
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
 
     const now = this.#now();
-    const publication: Publication = {
+    return this.#store.update({
       ...current.publication,
       current: {
         id: `revision_${this.#id()}`,
@@ -858,14 +941,10 @@ export class PublicationWorkspaceManager {
         createdAt: now,
         content: {
           ...current.publication.current.content,
-          attributes: {
-            ...current.publication.current.content.attributes,
-            sourceTaxonomies: nextState,
-          },
+          attributes: nextAttributes,
         },
       },
-    };
-    return this.#store.update(publication, expectedVersion, now);
+    }, expectedVersion, now);
   }
 
   async setSourcePublishingState(
