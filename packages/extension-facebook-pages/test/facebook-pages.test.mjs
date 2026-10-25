@@ -325,3 +325,135 @@ test("local image byte type must match declared media type", async () => {
     await rm(allowed, { recursive: true, force: true });
   }
 });
+
+
+test("Facebook canonical social override owns exact commentary and ordered image selection", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const item = publication();
+    item.current.content.assets = [
+      { id: "hero", kind: "image", source: "https://cdn.example.test/hero.png", mediaType: "image/png", alt: "Hero" },
+      { id: "detail", kind: "image", source: "https://cdn.example.test/detail.png", mediaType: "image/png", alt: "Detail" },
+    ];
+    item.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          social: {
+            routes: {
+              "facebook-route": {
+                extensionId: "blogmaatic.facebook-pages",
+                connectionId: "fb-1",
+                channel: "feed",
+                socialVariant: {
+                  extensionId: "blogmaatic.facebook-pages",
+                  connectionId: "fb-1",
+                  channel: "feed",
+                  commentaryMode: "override",
+                  commentary: "Facebook-only launch copy",
+                  mediaMode: "select",
+                  imageAssetIds: ["detail", "hero"],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const extension = publisher(api.server.address().port);
+    const projection = await extension.compile({
+      publication: item,
+      route: route({ maxImages: 2 }),
+      groupId: "social",
+    });
+    assert.equal(projection.payload.mode, "image");
+    assert.equal(projection.payload.message, "Facebook-only launch copy");
+    assert.deepEqual(projection.payload.images.map((asset) => asset.assetId), ["detail", "hero"]);
+
+    const delivered = await extension.deliver({ idempotencyKey: "social-override", projection });
+    assert.equal(delivered.evidence.imageCount, 2);
+    const post = api.posts.get(delivered.remote.id);
+    assert.equal(post.message, "Facebook-only launch copy");
+    assert.equal(post.attachments.data[0].subattachments.data.length, 2);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("Facebook social media none suppresses inherited image mode and select enforces route maximum", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const none = publication();
+    none.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          social: {
+            routes: {
+              "facebook-route": {
+                extensionId: "blogmaatic.facebook-pages",
+                connectionId: "fb-1",
+                channel: "feed",
+                socialVariant: {
+                  extensionId: "blogmaatic.facebook-pages",
+                  connectionId: "fb-1",
+                  channel: "feed",
+                  commentaryMode: "inherit",
+                  mediaMode: "none",
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const extension = publisher(api.server.address().port);
+    const noMedia = await extension.compile({ publication: none, route: route(), groupId: "social" });
+    assert.equal(noMedia.payload.mode, "text");
+    assert.equal(noMedia.payload.images.length, 0);
+
+    const selected = publication();
+    selected.current.content.assets = [
+      { id: "hero", kind: "image", source: "https://cdn.example.test/hero.png", mediaType: "image/png" },
+      { id: "detail", kind: "image", source: "https://cdn.example.test/detail.png", mediaType: "image/png" },
+    ];
+    selected.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          social: {
+            routes: {
+              "facebook-route": {
+                extensionId: "blogmaatic.facebook-pages",
+                connectionId: "fb-1",
+                channel: "feed",
+                socialVariant: {
+                  extensionId: "blogmaatic.facebook-pages",
+                  connectionId: "fb-1",
+                  channel: "feed",
+                  commentaryMode: "inherit",
+                  mediaMode: "select",
+                  imageAssetIds: ["hero", "detail"],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    await assert.rejects(
+      extension.compile({ publication: selected, route: route({ maxImages: 1 }), groupId: "social" }),
+      /selects 2 images but route maxImages is 1/,
+    );
+
+    selected.current.content.attributes.destinationOverrides.groups.social.routes["facebook-route"].socialVariant.connectionId = "fb-other";
+    await assert.rejects(
+      extension.compile({ publication: selected, route: route({ maxImages: 2 }), groupId: "social" }),
+      /social variant identity no longer matches route/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
