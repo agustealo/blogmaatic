@@ -172,14 +172,14 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
   const bodyValue = optionalString(input, "body");
   const parsedBlocks = blocks(input);
   const parsedBodyFormat = bodyFormat(input);
-  if (parsedBodyFormat !== undefined && bodyValue === undefined) {
-    throw new OperatorRequestError("bodyFormat requires body");
-  }
   if (parsedBlocks !== undefined && bodyValue !== undefined) {
     throw new OperatorRequestError("blocks and body are mutually exclusive");
   }
   if (parsedBlocks !== undefined && parsedBodyFormat !== undefined) {
     throw new OperatorRequestError("bodyFormat cannot be used with blocks");
+  }
+  if (parsedBodyFormat !== undefined && bodyValue === undefined) {
+    throw new OperatorRequestError("bodyFormat requires body");
   }
   const summary = optionalString(input, "summary");
   const language = optionalString(input, "language");
