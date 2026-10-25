@@ -1,4 +1,5 @@
 import type { CompiledProjection, JsonValue } from "@blogmaatic/core";
+import { parseImageTransformPlan } from "@blogmaatic/media";
 
 import type { LinkedInProjectionPayload } from "./types.js";
 
@@ -15,7 +16,7 @@ function requireString(record: Readonly<Record<string, JsonValue>>, key: string)
 export function parsePayload(projection: CompiledProjection): LinkedInProjectionPayload {
   if (!isRecord(projection.payload)) throw new Error("LinkedIn projection payload must be an object");
   const mode = requireString(projection.payload, "mode");
-  if (mode !== "text" && mode !== "article") throw new Error(`Unsupported LinkedIn projection mode: ${mode}`);
+  if (mode !== "text" && mode !== "article" && mode !== "image") throw new Error(`Unsupported LinkedIn projection mode: ${mode}`);
   const commentary = requireString(projection.payload, "commentary");
   const fidelity = projection.payload.fidelity;
   if (!isRecord(fidelity)) throw new Error("LinkedIn projection payload requires fidelity report");
@@ -49,10 +50,35 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
     };
   }
 
+  let image: LinkedInProjectionPayload["image"];
+  if (mode === "image") {
+    const value = projection.payload.image;
+    if (!isRecord(value)) throw new Error("LinkedIn image projection requires image metadata");
+    const assetId = requireString(value, "assetId");
+    const source = requireString(value, "source");
+    const localPath = requireString(value, "localPath");
+    const mediaType = requireString(value, "mediaType");
+    if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp") {
+      throw new Error(`Unsupported LinkedIn image mediaType: ${mediaType}`);
+    }
+    const fingerprint = requireString(value, "fingerprint");
+    const altValue = value.alt;
+    image = {
+      assetId,
+      source,
+      localPath,
+      mediaType,
+      ...(typeof altValue === "string" && altValue ? { alt: altValue } : {}),
+      fingerprint,
+      transform: parseImageTransformPlan(value.transform),
+    };
+  }
+
   return {
     mode,
     commentary,
     ...(article ? { article } : {}),
+    ...(image ? { image } : {}),
     fidelity: {
       destinationId,
       score,
