@@ -226,3 +226,91 @@ test("LinkedIn article projection fails closed when article-card structure drift
     api.server.close();
   }
 });
+
+
+test("LinkedIn canonical social commentary override becomes desired and delivered state", async () => {
+  const { api, publisher } = await fixture();
+  try {
+    const item = publication();
+    item.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          social: {
+            routes: {
+              "linkedin-text": {
+                extensionId: "blogmaatic.linkedin-rest",
+                connectionId: "linkedin-company",
+                channel: "posts",
+                socialVariant: {
+                  extensionId: "blogmaatic.linkedin-rest",
+                  connectionId: "linkedin-company",
+                  channel: "posts",
+                  commentaryMode: "override",
+                  commentary: "LinkedIn-only executive commentary",
+                  mediaMode: "inherit",
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const projection = await publisher.compile({
+      publication: item,
+      route: route("text"),
+      groupId: "social",
+    });
+    assert.equal(projection.payload.commentary, "LinkedIn-only executive commentary");
+    const delivered = await publisher.deliver({ idempotencyKey: "linkedin-social-override", projection });
+    assert.equal(api.posts.get(delivered.remote.id).commentary, "LinkedIn-only executive commentary");
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+    api.posts.get(delivered.remote.id).commentary = "Changed remotely";
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+  } finally {
+    api.server.close();
+  }
+});
+
+test("LinkedIn social image selection fails closed and canonical identity is route-bound", async () => {
+  const { api, publisher } = await fixture();
+  try {
+    const selected = publication();
+    selected.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          social: {
+            routes: {
+              "linkedin-text": {
+                extensionId: "blogmaatic.linkedin-rest",
+                connectionId: "linkedin-company",
+                channel: "posts",
+                socialVariant: {
+                  extensionId: "blogmaatic.linkedin-rest",
+                  connectionId: "linkedin-company",
+                  channel: "posts",
+                  commentaryMode: "inherit",
+                  mediaMode: "select",
+                  imageAssetIds: ["hero"],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    await assert.rejects(
+      publisher.compile({ publication: selected, route: route("text"), groupId: "social" }),
+      /does not support per-publication image selection/,
+    );
+
+    selected.current.content.attributes.destinationOverrides.groups.social.routes["linkedin-text"].socialVariant.connectionId = "other-company";
+    await assert.rejects(
+      publisher.compile({ publication: selected, route: route("text"), groupId: "social" }),
+      /social variant identity no longer matches route/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
