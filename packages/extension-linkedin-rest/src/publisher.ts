@@ -111,22 +111,26 @@ function imageTransformSpec(route: PublicationRoute): ImageTransformSpec {
   return spec;
 }
 
-function selectedImageAsset(
+function selectedImageAssets(
   publication: Publication,
   social: Readonly<Record<string, JsonValue>>,
-): PublicationAsset {
+): readonly PublicationAsset[] {
   const raw = social.imageAssetIds;
   if (!Array.isArray(raw)) {
     throw new Error("LinkedIn selected social media requires imageAssetIds");
   }
   const ids = raw.map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean);
-  if (ids.length !== 1) {
-    throw new Error("LinkedIn selected social media requires exactly one image");
+  if (ids.length === 0) throw new Error("LinkedIn selected social media requires at least one image");
+  if (ids.length > 20) throw new Error("LinkedIn selected social media supports at most 20 images");
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("LinkedIn selected social media cannot contain duplicate image asset ids");
   }
-  const asset = publication.current.content.assets.find((candidate) => candidate.id === ids[0]);
-  if (!asset) throw new Error(`LinkedIn social image asset does not exist: ${ids[0]}`);
-  if (asset.kind !== "image") throw new Error(`LinkedIn social selected asset must be an image: ${ids[0]}`);
-  return asset;
+  return ids.map((id) => {
+    const asset = publication.current.content.assets.find((candidate) => candidate.id === id);
+    if (!asset) throw new Error(`LinkedIn social image asset does not exist: ${id}`);
+    if (asset.kind !== "image") throw new Error(`LinkedIn social selected asset must be an image: ${id}`);
+    return asset;
+  });
 }
 
 function imageSemantic(image: LinkedInImageSpec): Readonly<Record<string, unknown>> {
@@ -140,6 +144,11 @@ function imageSemantic(image: LinkedInImageSpec): Readonly<Record<string, unknow
     outputMediaType: image.transform.output.mediaType,
     alt: image.alt ?? null,
   };
+}
+
+function projectedImages(payload: LinkedInProjectionPayload): readonly LinkedInImageSpec[] {
+  if (payload.image) return [payload.image];
+  return payload.images ?? [];
 }
 
 function desiredSemantic(
@@ -160,11 +169,13 @@ function desiredSemantic(
         }
       : null,
     ...(payload.image ? { image: imageSemantic(payload.image) } : {}),
+    ...(payload.images ? { images: payload.images.map(imageSemantic) } : {}),
   };
 }
 
-function remoteSemantic(post: LinkedInPostRecord, image?: LinkedInImageSpec): unknown {
+function remoteSemantic(post: LinkedInPostRecord, payload: LinkedInProjectionPayload): unknown {
   const article = post.content?.article;
+  const multi = post.content?.multiImage?.images ?? [];
   return {
     author: post.author,
     commentary: post.commentary,
@@ -178,26 +189,41 @@ function remoteSemantic(post: LinkedInPostRecord, image?: LinkedInImageSpec): un
           description: article.description ?? null,
         }
       : null,
-    ...(image ? {
+    ...(payload.image ? {
       image: {
-        ...imageSemantic(image),
+        ...imageSemantic(payload.image),
         alt: post.content?.media?.altText ?? null,
       },
+    } : {}),
+    ...(payload.images ? {
+      images: payload.images.map((image, index) => ({
+        ...imageSemantic(image),
+        alt: multi[index]?.altText ?? null,
+      })),
     } : {}),
   };
 }
 
-interface LinkedInImageRemoteBaseline {
-  readonly schemaVersion: 1;
+interface LinkedInImageRemoteItem {
   readonly imageUrn: string;
   readonly imageFingerprint: string;
 }
 
-function encodeImageRemoteVersion(imageUrn: string, image: LinkedInImageSpec): string {
+interface LinkedInImageRemoteBaseline {
+  readonly schemaVersion: 2;
+  readonly images: readonly LinkedInImageRemoteItem[];
+}
+
+function encodeImageRemoteVersion(imageUrns: readonly string[], images: readonly LinkedInImageSpec[]): string {
+  if (imageUrns.length !== images.length || images.length === 0) {
+    throw new Error("LinkedIn remote image baseline requires matching non-empty image arrays");
+  }
   const baseline: LinkedInImageRemoteBaseline = {
-    schemaVersion: 1,
-    imageUrn,
-    imageFingerprint: fingerprint(imageSemantic(image)),
+    schemaVersion: 2,
+    images: images.map((image, index) => ({
+      imageUrn: imageUrns[index]!,
+      imageFingerprint: fingerprint(imageSemantic(image)),
+    })),
   };
   return Buffer.from(JSON.stringify(baseline), "utf8").toString("base64url");
 }
@@ -208,20 +234,46 @@ function parseImageRemoteVersion(value: string | undefined): LinkedInImageRemote
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
     const record = parsed as Readonly<Record<string, unknown>>;
-    if (
-      record.schemaVersion !== 1 ||
-      typeof record.imageUrn !== "string" ||
-      !/^urn:li:image:[A-Za-z0-9_-]+$/.test(record.imageUrn) ||
-      typeof record.imageFingerprint !== "string" ||
-      !record.imageFingerprint
-    ) {
+
+    if (record.schemaVersion === 1) {
+      if (
+        typeof record.imageUrn !== "string" ||
+        !/^urn:li:image:[A-Za-z0-9_-]+$/.test(record.imageUrn) ||
+        typeof record.imageFingerprint !== "string" ||
+        !record.imageFingerprint
+      ) {
+        return undefined;
+      }
+      return {
+        schemaVersion: 2,
+        images: [{
+          imageUrn: record.imageUrn,
+          imageFingerprint: record.imageFingerprint,
+        }],
+      };
+    }
+
+    if (record.schemaVersion !== 2 || !Array.isArray(record.images) || record.images.length === 0) {
       return undefined;
     }
-    return {
-      schemaVersion: 1,
-      imageUrn: record.imageUrn,
-      imageFingerprint: record.imageFingerprint,
-    };
+    const images: LinkedInImageRemoteItem[] = [];
+    for (const value of record.images) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+      const item = value as Readonly<Record<string, unknown>>;
+      if (
+        typeof item.imageUrn !== "string" ||
+        !/^urn:li:image:[A-Za-z0-9_-]+$/.test(item.imageUrn) ||
+        typeof item.imageFingerprint !== "string" ||
+        !item.imageFingerprint
+      ) {
+        return undefined;
+      }
+      images.push({
+        imageUrn: item.imageUrn,
+        imageFingerprint: item.imageFingerprint,
+      });
+    }
+    return { schemaVersion: 2, images };
   } catch {
     return undefined;
   }
@@ -249,8 +301,12 @@ function postPath(id: string): string {
 function creationBody(
   settings: LinkedInSettings,
   payload: LinkedInProjectionPayload,
-  imageUrn?: string,
+  imageUrns: readonly string[] = [],
 ): Readonly<Record<string, unknown>> {
+  const images = projectedImages(payload);
+  if (images.length !== imageUrns.length) {
+    throw new Error("LinkedIn post creation requires one remote Image URN per projected image");
+  }
   return {
     author: settings.authorUrn,
     commentary: payload.commentary,
@@ -260,26 +316,37 @@ function creationBody(
       targetEntities: [],
       thirdPartyDistributionChannels: [],
     },
-    ...(payload.image && imageUrn
+    ...(payload.images
       ? {
           content: {
-            media: {
-              id: imageUrn,
-              ...(payload.image.alt ? { altText: payload.image.alt.slice(0, 4086) } : {}),
+            multiImage: {
+              images: payload.images.map((image, index) => ({
+                id: imageUrns[index]!,
+                ...(image.alt ? { altText: image.alt.slice(0, 4086) } : {}),
+              })),
             },
           },
         }
-      : payload.article
+      : payload.image
         ? {
             content: {
-              article: {
-                source: payload.article.source,
-                title: payload.article.title,
-                ...(payload.article.description ? { description: payload.article.description } : {}),
+              media: {
+                id: imageUrns[0]!,
+                ...(payload.image.alt ? { altText: payload.image.alt.slice(0, 4086) } : {}),
               },
             },
           }
-        : {}),
+        : payload.article
+          ? {
+              content: {
+                article: {
+                  source: payload.article.source,
+                  title: payload.article.title,
+                  ...(payload.article.description ? { description: payload.article.description } : {}),
+                },
+              },
+            }
+          : {}),
     lifecycleState: "PUBLISHED",
     isReshareDisabledByAuthor: false,
   };
@@ -295,16 +362,31 @@ function structuralContentMatches(
   payload: LinkedInProjectionPayload,
   remoteVersion?: string,
 ): boolean {
-  if (payload.image) {
+  const images = projectedImages(payload);
+  if (images.length > 0) {
     const baseline = parseImageRemoteVersion(remoteVersion);
-    if (!baseline) return false;
-    if (baseline.imageFingerprint !== fingerprint(imageSemantic(payload.image))) return false;
+    if (!baseline || baseline.images.length !== images.length) return false;
+    for (let index = 0; index < images.length; index += 1) {
+      if (baseline.images[index]!.imageFingerprint !== fingerprint(imageSemantic(images[index]!))) {
+        return false;
+      }
+    }
+    if (payload.image) {
+      return (
+        post.content?.media?.id === baseline.images[0]!.imageUrn &&
+        post.content?.multiImage === undefined &&
+        post.content?.article === undefined
+      );
+    }
+    const remoteImages = post.content?.multiImage?.images ?? [];
     return (
-      post.content?.media?.id === baseline.imageUrn &&
+      remoteImages.length === baseline.images.length &&
+      remoteImages.every((item, index) => item.id === baseline.images[index]!.imageUrn) &&
+      post.content?.media === undefined &&
       post.content?.article === undefined
     );
   }
-  if (post.content?.media !== undefined) return false;
+  if (post.content?.media !== undefined || post.content?.multiImage !== undefined) return false;
   const actual = post.content?.article;
   if (!payload.article) return actual === undefined;
   return Boolean(
