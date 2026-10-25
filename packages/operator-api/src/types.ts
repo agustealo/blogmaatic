@@ -26,7 +26,6 @@ import type {
   ExtensionCapability,
   JsonValue,
   Publication,
-  PublicationBlock,
   PublicationGroup,
   PublicationRoute,
   PublicationStatus,
@@ -253,6 +252,8 @@ export interface SourceAuthorPage {
 export interface SourceAuthorAssignBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
+  readonly groupId?: string;
+  readonly routeId?: string;
 }
 
 export interface SourceAuthorAssignResult {
@@ -263,6 +264,8 @@ export interface SourceAuthorAssignResult {
 export interface SourcePublishingStateBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly status: string;
   readonly scheduledAt?: string;
 }
