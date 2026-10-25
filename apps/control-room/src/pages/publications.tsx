@@ -1287,7 +1287,7 @@ function SocialDestinationRoutePanel({
       if (!reset && nextMediaMode === "select" && imageAssetIds.length > route.maxImages) {
         throw new Error(
           isLinkedIn
-            ? "LinkedIn supports exactly one selected image in this publishing slice."
+            ? `LinkedIn supports at most ${route.maxImages} selected images.`
             : `This Facebook route allows at most ${route.maxImages} selected images.`,
         );
       }
@@ -1351,12 +1351,10 @@ function SocialDestinationRoutePanel({
           <select value={mediaMode} onChange={(event) => setMediaMode(event.target.value as "inherit" | "none" | "select")} disabled={busy}>
             <option value="inherit">Use automatically selected media</option>
             <option value="none">No social images</option>
-            {supportsImageSelection ? (
-              <option value="select">{isLinkedIn ? "Choose one canonical image" : "Choose canonical images"}</option>
-            ) : null}
+            {supportsImageSelection ? <option value="select">Choose canonical images</option> : null}
           </select>
           {isLinkedIn ? (
-            <small>LinkedIn supports one canonical local image here. The image must be inside the destination's allowed asset roots.</small>
+            <small>LinkedIn uses one selected image as an image post and 2–20 as native MultiImage. Local images must be inside the destination's allowed asset roots.</small>
           ) : null}
         </label>
 
@@ -1443,7 +1441,7 @@ function SocialDestinationSettings({
             const rawMax = route.variant?.maxImages;
             const maxImages = route.destination.extensionId === "blogmaatic.facebook-pages"
               ? Math.max(0, Math.min(10, Math.trunc(typeof rawMax === "number" && Number.isFinite(rawMax) ? rawMax : 10)))
-              : 1;
+              : 20;
             next.push({
               groupId: group.group.id,
               groupName: group.group.name,
