@@ -653,9 +653,11 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
   async compile({
     publication,
     route,
+    groupId,
   }: {
     publication: Publication;
     route: PublicationRoute;
+    groupId?: string;
   }): Promise<CompiledProjection> {
     const connection = this.#connections.requireActive(
       WORDPRESS_REST_EXTENSION_ID,
@@ -708,7 +710,8 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     };
     const fingerprint = projectionFingerprint(semanticPayload(payload, assets));
     return {
-      projectionId: `${publication.id}:${route.id}`,
+      projectionId: `${publication.id}:${groupId ?? "legacy"}:${route.id}`,
+      ...(groupId ? { groupId } : {}),
       publicationId: publication.id,
       sourceRevisionId: publication.current.id,
       routeId: route.id,
