@@ -1713,6 +1713,12 @@ test("WordPress managed REST meta compiles delivers and detects only managed-key
     const base = textPublication();
     const publication = {
       ...base,
+      provenance: {
+      source: "wordpress",
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-1",
+      remoteId: "55",
+    },
       current: {
         ...base.current,
         content: {
@@ -1785,6 +1791,12 @@ test("WordPress source REST meta applies only to matching connection and content
     const base = textPublication();
     const publication = {
       ...base,
+      provenance: {
+      source: "wordpress",
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-1",
+      remoteId: "55",
+    },
       current: {
         ...base.current,
         content: {
@@ -1870,6 +1882,12 @@ test("WordPress Page structure compiles, delivers, clears, and detects remote dr
     const base = textPublication();
     const publication = {
       ...base,
+      provenance: {
+      source: "wordpress",
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-1",
+      remoteId: "55",
+    },
       current: {
         ...base.current,
         content: {
@@ -1998,7 +2016,12 @@ test("WordPress Page structure applies only to the matching source connection an
           },
         },
       },
-      provenance: { source: "wordpress" },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
     };
 
     const matching = {
@@ -2082,7 +2105,12 @@ test("WordPress native editorial options deliver drift and remain source-isolate
           },
         },
       },
-      provenance: { source: "wordpress" },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
     };
 
     const projection = await publisher.compile({ publication, route: route() });
