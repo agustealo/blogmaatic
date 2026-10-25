@@ -351,11 +351,33 @@ export interface SourceAssetAttachBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
   readonly featured?: boolean;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
 }
 
 export interface SourceAssetAttachResult {
   readonly publication: PublicationWorkspaceEntry;
   readonly asset: SourceAssetRecord;
+}
+
+export type SourceFeaturedMediaMode = "inherit" | "none" | "asset";
+
+export interface SourceFeaturedMediaBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType: string;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly mode: SourceFeaturedMediaMode;
+  readonly assetId?: string;
+}
+
+export interface SourceFeaturedMediaResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly contentType: string;
+  readonly mode: SourceFeaturedMediaMode;
+  readonly assetId?: string;
 }
 
 export interface SourceAssetUploadInput {
@@ -365,6 +387,9 @@ export interface SourceAssetUploadInput {
   readonly mediaType: string;
   readonly bytes: Uint8Array;
   readonly featured?: boolean;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly alt?: string;
   readonly title?: string;
 }
@@ -499,6 +524,7 @@ export interface OperatorSourceContentManager {
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;
+  setFeaturedMedia(connectionId: string, body: SourceFeaturedMediaBody): Promise<SourceFeaturedMediaResult>;
   listTaxonomyDefinitions(connectionId: string, contentType: string): Promise<readonly SourceTaxonomyDefinitionRecord[]>;
   listTaxonomy(connectionId: string, query: SourceTaxonomyQuery): Promise<SourceTaxonomyPage>;
   createTaxonomy(connectionId: string, body: SourceTaxonomyCreateBody): Promise<SourceTaxonomyRecord>;
