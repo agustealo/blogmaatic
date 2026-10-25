@@ -301,10 +301,7 @@ test("destination matrix joins configured routes with full durable history and p
   assert.equal(byKey.get("group-a:shared").state, "current");
   assert.equal(byKey.get("group-a:shared").deliveryCount, 2);
   assert.equal(byKey.get("group-a:shared").remote.id, "101");
-  assert.equal(byKey.get("group-b:shared").state, "update_available");
-  assert.equal(byKey.get("group-b:shared").deliveryCount, 1);
-  assert.equal(byKey.get("group-b:shared").remote.id, "202");
-  assert.notEqual(byKey.get("group-a:shared").key, byKey.get("group-b:shared").key);
+  assert.equal(byKey.has("group-b:shared"), false);
 });
 
 test("destination matrix keeps receipt evidence when an entire group preview fails", async () => {
@@ -342,7 +339,9 @@ test("destination matrix keeps receipt evidence when an entire group preview fai
                 blocks: [],
                 assets: [],
                 tags: [],
-                attributes: {},
+                attributes: {
+                  publishingTargets: { groupIds: ["group-a"] },
+                },
               },
             },
             provenance: { source: "wordpress" },
@@ -353,7 +352,14 @@ test("destination matrix keeps receipt evidence when an entire group preview fai
         };
       },
     },
-    publicationGroups: { async list() { return { items: [group] }; } },
+    publicationGroups: {
+      async get(groupId) {
+        return groupId === "group-a" ? group : undefined;
+      },
+      async list() {
+        throw new Error("destination matrix must not enumerate global Publication Groups");
+      },
+    },
     distributions: { async list() { return { items: [record] }; } },
     previews: { async preview() { throw new Error("Compiler unavailable"); } },
   });
