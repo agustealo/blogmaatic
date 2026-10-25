@@ -850,6 +850,84 @@ export class PublicationWorkspaceManager {
     }, expectedVersion, now);
   }
 
+  async setSourceFeaturedMedia(
+    publicationId: string,
+    expectedVersion: number,
+    state: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly contentType: string;
+      readonly groupId: string;
+      readonly routeId: string;
+      readonly mode: "inherit" | "none" | "asset";
+      readonly assetId?: string;
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    const groupId = state.groupId.trim();
+    const routeId = state.routeId.trim();
+    const contentType = state.contentType.trim();
+    if (!groupId || !routeId) throw new Error("Route-scoped WordPress featured media requires groupId and routeId");
+    if (!contentType) throw new Error("WordPress featured media content type is required");
+    const targetRoute = await this.#publishingTargetRoute(current.publication, groupId, routeId);
+    if (
+      targetRoute.destination.extensionId !== state.extensionId ||
+      targetRoute.destination.connectionId !== state.connectionId ||
+      targetRoute.destination.channel !== contentType
+    ) {
+      throw new Error("WordPress featured media route does not match the requested destination/content type");
+    }
+    if (!["inherit", "none", "asset"].includes(state.mode)) {
+      throw new Error(`Unsupported featured media mode: ${state.mode}`);
+    }
+
+    let assetId: string | undefined;
+    if (state.mode === "asset") {
+      assetId = state.assetId?.trim();
+      if (!assetId) throw new Error("Featured media asset mode requires assetId");
+      const asset = current.publication.current.content.assets.find((candidate) => candidate.id === assetId);
+      if (!asset) throw new Error(`Featured asset does not exist: ${assetId}`);
+      if (asset.kind !== "image") throw new Error(`Featured asset must be an image: ${assetId}`);
+    } else if (state.assetId !== undefined) {
+      throw new Error("Featured media assetId is only allowed when mode is asset");
+    }
+
+    const nextState: JsonValue = {
+      extensionId: state.extensionId,
+      connectionId: state.connectionId,
+      contentType,
+      mode: state.mode,
+      ...(assetId ? { assetId } : {}),
+    };
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = withDestinationOverride(
+      oldAttributes,
+      groupId,
+      routeId,
+      targetRoute.destination,
+      { featuredMedia: nextState },
+    );
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
+
+    const now = this.#now();
+    return this.#store.update({
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...current.publication.current.content,
+          attributes: nextAttributes,
+        },
+      },
+    }, expectedVersion, now);
+  }
+
   async setSourceStandardTaxonomy(
     publicationId: string,
     expectedVersion: number,
