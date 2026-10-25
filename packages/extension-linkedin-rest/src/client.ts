@@ -78,13 +78,28 @@ export class LinkedInRestClient {
   async uploadBytes(urlValue: string, bytes: Uint8Array, mediaType: string): Promise<void> {
     const url = new URL(urlValue);
     const hostname = url.hostname.toLowerCase();
+    const configured = new URL(this.#settings.apiRoot);
+    const configuredLoopback =
+      configured.hostname === "localhost" ||
+      configured.hostname === "127.0.0.1" ||
+      configured.hostname === "::1";
+    const uploadLoopback =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1";
     const trustedHost =
       hostname === "linkedin.com" ||
       hostname.endsWith(".linkedin.com") ||
       hostname === "licdn.com" ||
       hostname.endsWith(".licdn.com");
-    if (url.protocol !== "https:" || !trustedHost) {
-      throw new Error("LinkedIn upload URL must be an HTTPS linkedin.com or licdn.com host");
+    const localDevelopmentUpload =
+      configuredLoopback &&
+      uploadLoopback &&
+      url.protocol === "http:";
+    if (!(url.protocol === "https:" && trustedHost) && !localDevelopmentUpload) {
+      throw new Error(
+        "LinkedIn upload URL must be an HTTPS linkedin.com/licdn.com host, except loopback development uploads",
+      );
     }
     await this.#secrets.withUtf8(this.#settings.accessTokenRef, async (token) => {
       const response = await fetch(url, {
