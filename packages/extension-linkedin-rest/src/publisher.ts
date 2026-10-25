@@ -17,7 +17,10 @@ import {
   type ManagedPublisherExtension,
 } from "@blogmaatic/extension-sdk";
 import { SecretAuthority } from "@blogmaatic/secrets";
-import { adaptPublicationForSocial } from "@blogmaatic/variants";
+import {
+  adaptPublicationForSocial,
+  socialDestinationVariantOverride,
+} from "@blogmaatic/variants";
 
 import { LinkedInHttpError, LinkedInRestClient } from "./client.js";
 import { fingerprint } from "./fingerprint.js";
@@ -236,6 +239,10 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     const settings = parseSettings(connection);
     const routeVariant = variant(route);
     const mode = projectionMode(route);
+    const socialOverride = socialDestinationVariantOverride(publication, route, groupId);
+    if (socialOverride?.mediaMode === "select") {
+      throw new Error("LinkedIn v0.1 does not support per-publication image selection");
+    }
     const adapted = adaptPublicationForSocial(
       publication,
       {
@@ -269,9 +276,15 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
       throw new Error("LinkedIn article mode requires a canonical publication URL");
     }
 
+    const commentary = socialOverride?.commentaryMode === "override"
+      ? socialOverride.commentary ?? ""
+      : adapted.commentary;
+    if (commentary.length > 3000) {
+      throw new Error("LinkedIn commentary must not exceed 3000 characters");
+    }
     const payload: LinkedInProjectionPayload = {
       mode,
-      commentary: adapted.commentary,
+      commentary,
       ...(adapted.article ? { article: adapted.article } : {}),
       fidelity: adapted.fidelity,
     };
