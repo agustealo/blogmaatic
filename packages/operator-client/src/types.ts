@@ -40,6 +40,8 @@ import type {
   PublicationProjectionPreview,
   PublicationProjectionPreviewItem,
   ProjectionPreviewSummary,
+  PublicationWorkspaceBlock,
+  PublicationWorkspaceBlock,
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
   PublicationWorkspaceDispatchResult,
