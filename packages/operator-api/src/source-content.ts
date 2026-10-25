@@ -80,6 +80,21 @@ function optionalString(input: Record<string, unknown>, key: string): string | u
   return value.trim();
 }
 
+function routeScope(input: Record<string, unknown>): {
+  readonly groupId?: string;
+  readonly routeId?: string;
+} {
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
+  return {
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
+  };
+}
+
 function optionalInteger(
   input: Record<string, unknown>,
   key: string,
@@ -194,7 +209,7 @@ function parseMetaValuesBody(body: unknown): SourceMetaValuesBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "values"]);
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "values", "groupId", "routeId"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   const publicationId = input.publicationId;
@@ -212,7 +227,9 @@ function parseMetaValuesBody(body: unknown): SourceMetaValuesBody {
   if (values === null || typeof values !== "object" || Array.isArray(values)) {
     throw new OperatorRequestError("values must be an object");
   }
+  const scope = routeScope(input);
   return {
+    ...scope,
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
     contentType: contentType.trim(),
@@ -304,7 +321,7 @@ function parseTaxonomySelectionBody(body: unknown): SourceTaxonomySelectionBody 
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "selections"]);
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "selections", "groupId", "routeId"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   if (typeof input.publicationId !== "string" || !input.publicationId.trim()) {
@@ -329,7 +346,9 @@ function parseTaxonomySelectionBody(body: unknown): SourceTaxonomySelectionBody 
     if (names.length > 200) throw new OperatorRequestError(`taxonomy selection ${taxonomyKey} is too large`);
     selections[taxonomyKey] = names;
   }
+  const scope = routeScope(input);
   return {
+    ...scope,
     publicationId: input.publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
     contentType,
@@ -460,8 +479,7 @@ function parsePageStructureBody(body: unknown): SourcePageStructureBody {
     "contentType",
     "parentRemoteId",
     "template",
-    "menuOrder",
-  ]);
+    "menuOrder", "groupId", "routeId"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
 
@@ -493,7 +511,9 @@ function parsePageStructureBody(body: unknown): SourcePageStructureBody {
     throw new OperatorRequestError("menuOrder must be a non-negative integer");
   }
 
+  const scope = routeScope(input);
   return {
+    ...scope,
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
     contentType,
@@ -510,8 +530,7 @@ function parseEditorialOptionsBody(body: unknown): SourceEditorialOptionsBody {
   const input = body as Record<string, unknown>;
   const allowed = new Set([
     "publicationId", "expectedVersion", "contentType", "password",
-    "commentStatus", "pingStatus", "sticky", "format",
-  ]);
+    "commentStatus", "pingStatus", "sticky", "format", "groupId", "routeId"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   if (typeof input.publicationId !== "string" || !input.publicationId.trim()) {
@@ -541,7 +560,9 @@ function parseEditorialOptionsBody(body: unknown): SourceEditorialOptionsBody {
   if (input.sticky === true && input.password.length > 0) {
     throw new OperatorRequestError("sticky posts cannot be password protected");
   }
+  const scope = routeScope(input);
   return {
+    ...scope,
     publicationId: input.publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
     contentType: input.contentType.trim(),
