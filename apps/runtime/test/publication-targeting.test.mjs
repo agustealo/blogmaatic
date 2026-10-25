@@ -178,3 +178,20 @@ test("missing disabled and unroutable targets fail closed before approval or dis
     assert.equal(current().version, 1);
   }
 }
+
+
+test("publishing targets survive unrelated content revisions", async () => {
+  const { manager } = harness();
+  const created = await manager.create({
+    title: "Persistent targets",
+    body: "Original body",
+    publishingTargetGroupIds: ["group-a", "group-b"],
+  });
+  const updated = await manager.update(created.publication.id, {
+    expectedVersion: created.version,
+    title: "Persistent targets revised",
+    body: "Revised body",
+  });
+  assert.equal(updated.publication.current.ordinal, 2);
+  assert.deepEqual(publicationTargetGroupIds(updated.publication), ["group-a", "group-b"]);
+});
