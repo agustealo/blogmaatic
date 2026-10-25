@@ -1244,6 +1244,8 @@ function SocialDestinationRoutePanel({
   const imageAssets = entry.publication.current.content.assets.filter((asset) => asset.kind === "image");
   const maxCommentary = route.extensionId === "blogmaatic.linkedin-rest" ? 3000 : 63000;
   const isFacebook = route.extensionId === "blogmaatic.facebook-pages";
+  const isLinkedIn = route.extensionId === "blogmaatic.linkedin-rest";
+  const supportsImageSelection = isFacebook || isLinkedIn;
   const dirty =
     commentaryMode !== canonical.commentaryMode ||
     commentary !== canonical.commentary ||
@@ -1282,8 +1284,12 @@ function SocialDestinationRoutePanel({
       if (!reset && nextMediaMode === "select" && imageAssetIds.length === 0) {
         throw new Error("Select at least one image or choose another media mode.");
       }
-      if (!reset && isFacebook && nextMediaMode === "select" && imageAssetIds.length > route.maxImages) {
-        throw new Error(`This Facebook route allows at most ${route.maxImages} selected images.`);
+      if (!reset && nextMediaMode === "select" && imageAssetIds.length > route.maxImages) {
+        throw new Error(
+          isLinkedIn
+            ? "LinkedIn supports exactly one selected image in this publishing slice."
+            : `This Facebook route allows at most ${route.maxImages} selected images.`,
+        );
       }
       const result = await client.setPublicationSocialVariant(entry.publication.id, {
         expectedVersion: entry.version,
@@ -1345,12 +1351,16 @@ function SocialDestinationRoutePanel({
           <select value={mediaMode} onChange={(event) => setMediaMode(event.target.value as "inherit" | "none" | "select")} disabled={busy}>
             <option value="inherit">Use automatically selected media</option>
             <option value="none">No social images</option>
-            {isFacebook ? <option value="select">Choose canonical images</option> : null}
+            {supportsImageSelection ? (
+              <option value="select">{isLinkedIn ? "Choose one canonical image" : "Choose canonical images"}</option>
+            ) : null}
           </select>
-          {!isFacebook ? <small>LinkedIn v0.1 currently supports commentary/article posts, not image selection.</small> : null}
+          {isLinkedIn ? (
+            <small>LinkedIn supports one canonical local image here. The image must be inside the destination's allowed asset roots.</small>
+          ) : null}
         </label>
 
-        {isFacebook && mediaMode === "select" ? (
+        {supportsImageSelection && mediaMode === "select" ? (
           <div className="social-media-selector">
             <div className="social-media-selector__selected">
               <strong>Selected order</strong>
@@ -1360,8 +1370,12 @@ function SocialDestinationRoutePanel({
                   <div className="social-media-selected-row" key={assetId}>
                     <span><b>{index + 1}</b>{asset?.alt?.trim() || assetId}</span>
                     <span>
-                      <button className="button button--quiet" type="button" onClick={() => move(assetId, -1)} disabled={busy || index === 0}>Up</button>
-                      <button className="button button--quiet" type="button" onClick={() => move(assetId, 1)} disabled={busy || index === imageAssetIds.length - 1}>Down</button>
+                      {route.maxImages > 1 ? (
+                        <>
+                          <button className="button button--quiet" type="button" onClick={() => move(assetId, -1)} disabled={busy || index === 0}>Up</button>
+                          <button className="button button--quiet" type="button" onClick={() => move(assetId, 1)} disabled={busy || index === imageAssetIds.length - 1}>Down</button>
+                        </>
+                      ) : null}
                       <button className="button button--quiet" type="button" onClick={() => toggleImage(assetId)} disabled={busy}>Remove</button>
                     </span>
                   </div>
@@ -1429,7 +1443,7 @@ function SocialDestinationSettings({
             const rawMax = route.variant?.maxImages;
             const maxImages = route.destination.extensionId === "blogmaatic.facebook-pages"
               ? Math.max(0, Math.min(10, Math.trunc(typeof rawMax === "number" && Number.isFinite(rawMax) ? rawMax : 10)))
-              : 0;
+              : 1;
             next.push({
               groupId: group.group.id,
               groupName: group.group.name,
