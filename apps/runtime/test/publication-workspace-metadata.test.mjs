@@ -1115,3 +1115,124 @@ test("workspace-native WordPress metadata stays isolated by group when route ids
   );
   assert.equal(current().version, 9);
 });
+
+
+test("route-scoped WordPress standard taxonomy stays isolated and normalized per destination", async () => {
+  const publication = {
+    id: "publication-standard-taxonomy-matrix",
+    createdAt: "2026-10-24T23:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-24T23:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Standard taxonomy matrix",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: ["shared-tag"],
+        attributes: {
+          categories: ["Shared Category"],
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") {
+        return {
+          enabled: true,
+          group: { id: "group-a", name: "Site A", policySetId: "allow", routes: [routeFor("wp-a")] },
+        };
+      }
+      if (groupId === "group-b") {
+        return {
+          enabled: true,
+          group: { id: "group-b", name: "Site B", policySetId: "allow", routes: [routeFor("wp-b")] },
+        };
+      }
+      return undefined;
+    },
+  };
+  const { manager, current } = managerWith(publication, groups);
+
+  const siteA = await manager.setSourceStandardTaxonomy("publication-standard-taxonomy-matrix", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+    categories: ["Local A", "Shared Category", " Local A "],
+    tags: ["site-a", "shared-tag", "site-a"],
+  });
+  assert.equal(siteA.version, 2);
+
+  const siteB = await manager.setSourceStandardTaxonomy("publication-standard-taxonomy-matrix", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    groupId: "group-b",
+    routeId: "wordpress",
+    categories: ["Local B"],
+    tags: ["site-b"],
+  });
+  assert.equal(siteB.version, 3);
+
+  const overrides = siteB.publication.current.content.attributes.destinationOverrides;
+  assert.deepEqual(overrides.groups["group-a"].routes.wordpress.standardTaxonomy, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "posts",
+    categories: ["Local A", "Shared Category"],
+    tags: ["shared-tag", "site-a"],
+  });
+  assert.deepEqual(overrides.groups["group-b"].routes.wordpress.standardTaxonomy, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    categories: ["Local B"],
+    tags: ["site-b"],
+  });
+  assert.deepEqual(siteB.publication.current.content.attributes.categories, ["Shared Category"]);
+  assert.deepEqual(siteB.publication.current.content.tags, ["shared-tag"]);
+
+  const retry = await manager.setSourceStandardTaxonomy("publication-standard-taxonomy-matrix", 3, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    groupId: "group-b",
+    routeId: "wordpress",
+    categories: ["Local B"],
+    tags: ["site-b"],
+  });
+  assert.equal(retry.version, 3);
+
+  await assert.rejects(
+    () => manager.setSourceStandardTaxonomy("publication-standard-taxonomy-matrix", 3, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      contentType: "pages",
+      groupId: "group-a",
+      routeId: "wordpress",
+      categories: [],
+      tags: [],
+    }),
+    /content type|destination\/content type/,
+  );
+  assert.equal(current().version, 3);
+});
