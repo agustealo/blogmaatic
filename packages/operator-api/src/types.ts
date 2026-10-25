@@ -525,6 +525,7 @@ export interface OperatorPublicationGroupManager {
 
 export type WorkspacePublicationStatus = Extract<PublicationStatus, "idea" | "draft" | "ready" | "approved" | "archived">;
 export type PublicationBodyFormat = "plain" | "html";
+export type PublicationWorkspaceBlock = PublicationBlock;
 
 export interface PublicationWorkspaceCreateBody {
   readonly title: string;
