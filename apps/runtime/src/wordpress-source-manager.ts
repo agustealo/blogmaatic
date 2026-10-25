@@ -150,6 +150,7 @@ function sourceRecord(
     ...(post.modifiedGmt ? { modifiedAt: post.modifiedGmt } : {}),
     managed: post.ownership.managed,
     ...(post.ownership.publicationId ? { publicationId: post.ownership.publicationId } : {}),
+    ...(post.ownership.groupId ? { groupId: post.ownership.groupId } : {}),
     ...(post.ownership.routeId ? { routeId: post.ownership.routeId } : {}),
     metadata,
   };
@@ -1264,6 +1265,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       await this.#projectionState.delete(
         current.ownership.publicationId,
         current.ownership.routeId,
+        current.ownership.groupId,
       );
     }
     return sourceRecord(connectionId, resolved, deleted);
