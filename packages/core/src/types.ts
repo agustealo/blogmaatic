@@ -130,6 +130,7 @@ export interface PolicyDecision {
 
 export interface CompiledProjection {
   readonly projectionId: string;
+  readonly groupId?: string;
   readonly publicationId: string;
   readonly sourceRevisionId: string;
   readonly routeId: string;
