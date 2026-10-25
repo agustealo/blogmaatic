@@ -177,8 +177,7 @@ test("missing disabled and unroutable targets fail closed before approval or dis
     assert.equal(current().publication.status, "draft");
     assert.equal(current().version, 1);
   }
-}
-
+});
 
 test("publishing targets survive unrelated content revisions", async () => {
   const { manager } = harness();
