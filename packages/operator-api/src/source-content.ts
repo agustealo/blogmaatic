@@ -250,13 +250,17 @@ function parseSeoValuesBody(body: unknown): SourceSeoValuesBody {
   if (values === null || typeof values !== "object" || Array.isArray(values)) {
     throw new OperatorRequestError("values must be an object");
   }
-  const allowedSemantics = new Set(["title", "description", "canonical", "focus_keyphrase"]);
+  const textSemantics = new Set(["title", "description", "canonical", "focus_keyphrase"]);
+  const booleanSemantics = new Set(["robots_index", "robots_follow"]);
   for (const [semantic, value] of Object.entries(values as Record<string, unknown>)) {
-    if (!allowedSemantics.has(semantic)) {
+    if (!textSemantics.has(semantic) && !booleanSemantics.has(semantic)) {
       throw new OperatorRequestError(`unsupported SEO field: ${semantic}`);
     }
-    if (typeof value !== "string") {
+    if (textSemantics.has(semantic) && typeof value !== "string") {
       throw new OperatorRequestError(`SEO value must be a string: ${semantic}`);
+    }
+    if (booleanSemantics.has(semantic) && typeof value !== "boolean") {
+      throw new OperatorRequestError(`SEO value must be a boolean: ${semantic}`);
     }
   }
   const groupId = optionalString(input, "groupId");
