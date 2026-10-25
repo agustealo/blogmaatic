@@ -41,6 +41,8 @@ import type {
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
   PublicationWorkspaceDispatchResult,
+  PublicationSocialVariantBody,
+  PublicationSocialVariantResult,
   PublicationWorkspaceEntry,
   PublicationWorkspaceListQuery,
   PublicationWorkspacePage,
@@ -643,6 +645,16 @@ export class OperatorClient {
       method: "PATCH",
       body: input,
     });
+  }
+
+  setPublicationSocialVariant(
+    publicationId: string,
+    input: PublicationSocialVariantBody,
+  ): Promise<PublicationSocialVariantResult> {
+    return this.#request<PublicationSocialVariantResult>(
+      `/v1/publications/${encodeURIComponent(publicationId)}/social-variant`,
+      { method: "POST", body: input },
+    );
   }
 
   publishPublication(publicationId: string, input: PublicationWorkspaceDispatchBody): Promise<PublicationWorkspaceDispatchResult> {
