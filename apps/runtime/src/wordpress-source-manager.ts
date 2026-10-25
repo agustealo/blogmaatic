@@ -30,6 +30,8 @@ import type {
   SourceAssetQuery,
   SourceAssetRecord,
   SourceAssetUploadInput,
+  SourceFeaturedMediaBody,
+  SourceFeaturedMediaResult,
   SourceAuthorAssignBody,
   SourceAuthorAssignResult,
   SourceAuthorPage,
@@ -275,6 +277,16 @@ function sourceAuthorRecord(connectionId: string, author: WordPressUserView): So
     ...(author.avatarUrl ? { avatarUrl: author.avatarUrl } : {}),
     metadata: { wordpressUserId: author.id },
   };
+}
+
+function canonicalWordPressAssetId(
+  connectionId: string,
+  mediaId: number,
+  routeScoped: boolean,
+): string {
+  return routeScoped
+    ? `wordpress-media-${encodeURIComponent(connectionId)}-${mediaId}`
+    : `wordpress-media-${mediaId}`;
 }
 
 function sourceAssetRecord(connectionId: string, media: WordPressMediaView): SourceAssetRecord {
@@ -992,6 +1004,47 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     };
   }
 
+  async #assertAssetContext(
+    current: Awaited<ReturnType<PublicationWorkspaceManager["get"]>>,
+    connectionId: string,
+    context: {
+      readonly contentType?: string;
+      readonly groupId?: string;
+      readonly routeId?: string;
+      readonly featured?: boolean;
+    },
+  ): Promise<void> {
+    if (!current) throw new Error("Publication is not registered");
+    const hasGroup = context.groupId !== undefined;
+    const hasRoute = context.routeId !== undefined;
+    if (hasGroup !== hasRoute) throw new Error("Route-scoped WordPress media requires both groupId and routeId");
+    if (hasGroup && context.groupId && context.routeId) {
+      if (context.featured) {
+        throw new Error("Route-scoped asset attach/upload cannot set the global featured image");
+      }
+      const route = await assertTargetWordPressRoute(
+        this.#publicationGroups,
+        current.publication,
+        connectionId,
+        context.groupId,
+        context.routeId,
+      );
+      const contentType = context.contentType?.trim();
+      if (!contentType) throw new Error("Route-scoped WordPress media requires contentType");
+      if (route.destination.channel !== contentType) {
+        throw new Error("WordPress route content type does not match media content type");
+      }
+      return;
+    }
+
+    if (
+      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      current.publication.provenance.connectionId !== connectionId
+    ) {
+      throw new Error("Source asset connection does not match the publication source");
+    }
+  }
+
   async listAssets(connectionId: string, query: SourceAssetQuery = {}): Promise<SourceAssetPage> {
     const page = await this.#content.listMedia(connectionId, {
       ...(query.search ? { search: query.search } : {}),
@@ -1017,12 +1070,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         `Publication ${input.publicationId} changed from version ${input.expectedVersion} to ${current.version}`,
       );
     }
-    if (
-      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
-      current.publication.provenance.connectionId !== connectionId
-    ) {
-      throw new Error("Source asset connection does not match the publication source");
-    }
+    await this.#assertAssetContext(current, connectionId, input);
 
     const media = await this.#content.uploadMedia(connectionId, {
       bytes: input.bytes,
@@ -1032,7 +1080,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       ...(input.title === undefined ? {} : { title: input.title }),
     });
     const asset: PublicationAsset = {
-      id: `wordpress-media-${media.id}`,
+      id: canonicalWordPressAssetId(connectionId, media.id, Boolean(input.groupId && input.routeId)),
       kind: "image",
       source: media.sourceUrl,
       ...(media.mediaType ? { mediaType: media.mediaType } : {}),
@@ -1079,16 +1127,16 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   ): Promise<SourceAssetAttachResult> {
     const current = await this.#publications.get(body.publicationId);
     if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
-    if (
-      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
-      current.publication.provenance.connectionId !== connectionId
-    ) {
-      throw new Error("Source asset connection does not match the publication source");
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
     }
+    await this.#assertAssetContext(current, connectionId, body);
 
     const media = await this.#content.getMedia(connectionId, remoteId);
     const asset: PublicationAsset = {
-      id: `wordpress-media-${media.id}`,
+      id: canonicalWordPressAssetId(connectionId, media.id, Boolean(body.groupId && body.routeId)),
       kind: "image",
       source: media.sourceUrl,
       ...(media.mediaType ? { mediaType: media.mediaType } : {}),
@@ -1109,6 +1157,72 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     return {
       publication,
       asset: sourceAssetRecord(connectionId, media),
+    };
+  }
+
+  async setFeaturedMedia(
+    connectionId: string,
+    body: SourceFeaturedMediaBody,
+  ): Promise<SourceFeaturedMediaResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
+    }
+    const route = await assertTargetWordPressRoute(
+      this.#publicationGroups,
+      current.publication,
+      connectionId,
+      body.groupId,
+      body.routeId,
+    );
+    if (route.destination.channel !== body.contentType) {
+      throw new Error("WordPress route content type does not match featured media content type");
+    }
+    if (body.mode === "asset") {
+      const asset = current.publication.current.content.assets.find((candidate) => candidate.id === body.assetId);
+      if (!asset) throw new Error(`Featured asset does not exist: ${String(body.assetId)}`);
+      if (asset.kind !== "image") throw new Error(`Featured asset must be an image: ${String(body.assetId)}`);
+      if (/^https?:\/\//i.test(asset.source)) {
+        const attributes = asset.attributes;
+        const sourceConnectionId = typeof attributes?.sourceConnectionId === "string"
+          ? attributes.sourceConnectionId
+          : undefined;
+        const wordpressMediaId = typeof attributes?.wordpressMediaId === "number" &&
+          Number.isSafeInteger(attributes.wordpressMediaId) &&
+          attributes.wordpressMediaId > 0
+          ? attributes.wordpressMediaId
+          : undefined;
+        const legacyOwned =
+          current.publication.provenance.extensionId === WORDPRESS_REST_EXTENSION_ID &&
+          current.publication.provenance.connectionId === connectionId &&
+          sourceConnectionId === undefined &&
+          wordpressMediaId !== undefined;
+        if (!(sourceConnectionId === connectionId && wordpressMediaId !== undefined) && !legacyOwned) {
+          throw new Error("Remote featured asset is not managed by the selected WordPress connection");
+        }
+      }
+    }
+    const publication = await this.#publications.setSourceFeaturedMedia(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType: body.contentType,
+        groupId: body.groupId,
+        routeId: body.routeId,
+        mode: body.mode,
+        ...(body.assetId === undefined ? {} : { assetId: body.assetId }),
+      },
+    );
+    return {
+      publication,
+      contentType: body.contentType,
+      mode: body.mode,
+      ...(body.assetId === undefined ? {} : { assetId: body.assetId }),
     };
   }
 

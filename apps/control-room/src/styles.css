@@ -1222,3 +1222,22 @@ a.data-table__row:hover { background: var(--surface-2); }
 @media (max-width: 700px) {
   .wordpress-standard-taxonomy__shared { grid-template-columns: 1fr; }
 }
+
+
+/* Route-scoped WordPress featured media */
+.wordpress-featured-media__body {
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+.wordpress-featured-media__body .field { min-width: 0; }
+.wordpress-featured-media__body small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+@media (max-width: 700px) {
+  .wordpress-featured-media__body { grid-template-columns: 1fr; }
+  .wordpress-featured-media__body > .button { width: 100%; }
+}

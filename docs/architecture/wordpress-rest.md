@@ -56,6 +56,31 @@ HTTP(S) publication assets remain external URLs and are not downloaded by Blogma
 
 A featured asset must resolve to a managed WordPress media item because WordPress `featured_media` requires an attachment id.
 
+### Route-scoped Media Library and featured image
+
+Canonical Publication assets remain the shared media pool. WordPress Media Library objects attached or uploaded through a destination route are added to that pool with source identity:
+
+- WordPress extension id
+- source connection id
+- remote media id
+- canonical source URL
+
+Route-scoped WordPress media operations require the exact Publication Group and route coordinates. The runtime verifies that the Publication targets the group, the group and route are enabled, the route points to the requested WordPress connection, and the route content type matches. Legacy imported-source media operations remain available when route coordinates are absent.
+
+WordPress media ids are only unique inside one site. Route-scoped attachments therefore use connection-qualified canonical asset ids, preventing Site A media `77` from colliding with Site B media `77`. Legacy imported assets retain their historical ids for backward compatibility.
+
+A destination's featured-image decision is stored under its exact `destinationOverrides.groups[groupId].routes[routeId].featuredMedia` section with one of three modes:
+
+- `inherit` — use the legacy route variant featured asset when present, otherwise the shared/global canonical featured image
+- `none` — explicitly publish no featured image for this WordPress destination
+- `asset` — use one canonical image asset for this destination
+
+The stored featured-media section freezes extension id, connection id, and content type. Compilation revalidates those fields and fails closed if the canonical destination identity no longer matches the route.
+
+Remote WordPress media may be selected as featured only by the connection that owns its WordPress media id. Local canonical images remain eligible because each destination can upload its own managed derivative. This preserves cross-site media isolation while still allowing one shared local image to fan out across multiple destinations.
+
+Content Studio renders Media Library and Featured image controls inside each selected WordPress Destination Settings card. Browse/upload/attach operations are therefore performed against the specific site's Media Library, while the shared global Featured image field remains the inheritance default.
+
 ## Author ownership
 
 WordPress author selection is exposed through the same provider-neutral source boundary as source content, taxonomy, and media. Control Room never calls `/wp/v2/users` directly.

@@ -506,7 +506,36 @@ function sourceEditorialOptions(
   };
 }
 
-function featuredAssetId(publication: Publication, route: PublicationRoute): string | undefined {
+function featuredAssetId(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+  groupId?: string,
+): string | undefined {
+  const scoped = destinationOverride(publication, route, groupId);
+  const featured = scoped?.featuredMedia;
+  if (isRecord(featured)) {
+    if (
+      featured.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+      featured.connectionId !== route.destination.connectionId ||
+      featured.contentType !== contentType
+    ) {
+      throw new Error("Canonical WordPress featured media identity no longer matches route");
+    }
+    if (featured.mode === "none") return undefined;
+    if (featured.mode === "asset") {
+      if (typeof featured.assetId !== "string" || !featured.assetId.trim()) {
+        throw new Error("Canonical WordPress featured media asset mode requires assetId");
+      }
+      return featured.assetId.trim();
+    }
+    if (featured.mode !== "inherit") {
+      throw new Error(`Unsupported canonical WordPress featured media mode: ${String(featured.mode)}`);
+    }
+  } else if (featured !== undefined) {
+    throw new Error("Canonical WordPress featured media override must be an object");
+  }
+
   const explicit = getString(variant(route), "featuredAssetId");
   if (explicit) return explicit;
   return publication.current.content.assets.find(
@@ -847,7 +876,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       imageTransform,
       route.destination.connectionId,
     );
-    const featured = featuredAssetId(publication, route);
+    const featured = featuredAssetId(publication, route, contentType, groupId);
     const authorId = sourceAuthorId(publication, route, groupId);
     const pageStructure = sourcePageStructure(publication, route, contentType, groupId);
     const editorial = sourceEditorialOptions(publication, route, contentType, groupId);

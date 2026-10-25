@@ -23,6 +23,8 @@ async function withApi(fn) {
   let attachCalls = 0;
   let uploadInput;
   let uploadCalls = 0;
+  let featuredInput;
+  let featuredCalls = 0;
   const asset = {
     connectionId: "wp-main",
     extensionId: "blogmaatic.wordpress-rest",
@@ -92,6 +94,17 @@ async function withApi(fn) {
       uploadInput = input;
       return { publication, asset };
     },
+    async setFeaturedMedia(connectionId, input) {
+      featuredCalls += 1;
+      assert.equal(connectionId, "wp-main");
+      featuredInput = input;
+      return {
+        publication,
+        contentType: input.contentType,
+        mode: input.mode,
+        ...(input.assetId === undefined ? {} : { assetId: input.assetId }),
+      };
+    },
     async list() { return { items: [], page: 1, limit: 30, hasMore: false }; },
     async get() { throw new Error("unused"); },
     async revisions() { return []; },
@@ -121,7 +134,15 @@ async function withApi(fn) {
     await fn({
       app,
       store,
-      state: () => ({ listQuery, attachInput, attachCalls, uploadInput, uploadCalls }),
+      state: () => ({
+        listQuery,
+        attachInput,
+        attachCalls,
+        uploadInput,
+        uploadCalls,
+        featuredInput,
+        featuredCalls,
+      }),
     });
   } finally {
     await app.close();
@@ -251,5 +272,122 @@ test("source asset binary upload validates metadata, forwards bytes, and records
     assert.equal(badFilename.statusCode, 400);
     assert.equal(badFilename.json().error.code, "INVALID_REQUEST");
     assert.equal(state().uploadCalls, 1);
+  });
+});
+
+
+test("route-scoped source asset attach preserves group route and content type in audit evidence", async () => {
+  await withApi(async ({ app, store, state }) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/assets/77/attach",
+      headers: bearer(),
+      payload: {
+        publicationId: "publication-wp",
+        expectedVersion: 4,
+        contentType: "posts",
+        groupId: "group-main",
+        routeId: "wordpress",
+        featured: false,
+      },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.deepEqual(state().attachInput, {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      featured: false,
+      contentType: "posts",
+      groupId: "group-main",
+      routeId: "wordpress",
+    });
+
+    const audit = await store.listAudit({ action: "source-asset.attach", limit: 10 });
+    const succeeded = audit.items.find((entry) => entry.phase === "succeeded");
+    assert.equal(succeeded.evidence.groupId, "group-main");
+    assert.equal(succeeded.evidence.routeId, "wordpress");
+    assert.equal(succeeded.evidence.contentType, "posts");
+  });
+});
+
+test("route-scoped binary upload forwards route coordinates without global featured ownership", async () => {
+  await withApi(async ({ app, store, state }) => {
+    const bytes = Buffer.from([9, 8, 7]);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/assets/upload?publicationId=publication-wp&expectedVersion=4&featured=false&filename=route.png&contentType=posts&groupId=group-main&routeId=wordpress",
+      headers: {
+        ...bearer(),
+        "content-type": "image/png",
+      },
+      payload: bytes,
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(state().uploadInput.featured, false);
+    assert.equal(state().uploadInput.contentType, "posts");
+    assert.equal(state().uploadInput.groupId, "group-main");
+    assert.equal(state().uploadInput.routeId, "wordpress");
+
+    const audit = await store.listAudit({ action: "source-asset.upload", limit: 10 });
+    const succeeded = audit.items.find((entry) => entry.phase === "succeeded");
+    assert.equal(succeeded.evidence.groupId, "group-main");
+    assert.equal(succeeded.evidence.routeId, "wordpress");
+    assert.equal(succeeded.evidence.contentType, "posts");
+  });
+});
+
+test("route-scoped featured media validates mode and records exact destination audit coordinates", async () => {
+  await withApi(async ({ app, store, state }) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/featured-media",
+      headers: bearer(),
+      payload: {
+        publicationId: "publication-wp",
+        expectedVersion: 4,
+        contentType: "posts",
+        groupId: "group-main",
+        routeId: "wordpress",
+        mode: "asset",
+        assetId: "wordpress-media-wp-main-77",
+      },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(state().featuredCalls, 1);
+    assert.deepEqual(state().featuredInput, {
+      publicationId: "publication-wp",
+      expectedVersion: 4,
+      contentType: "posts",
+      groupId: "group-main",
+      routeId: "wordpress",
+      mode: "asset",
+      assetId: "wordpress-media-wp-main-77",
+    });
+
+    const audit = await store.listAudit({ action: "source-featured-media.update", limit: 10 });
+    assert.equal(audit.items.length, 2);
+    const succeeded = audit.items.find((entry) => entry.phase === "succeeded");
+    assert.equal(succeeded.evidence.connectionId, "wp-main");
+    assert.equal(succeeded.evidence.groupId, "group-main");
+    assert.equal(succeeded.evidence.routeId, "wordpress");
+    assert.equal(succeeded.evidence.mode, "asset");
+    assert.equal(succeeded.evidence.assetId, "wordpress-media-wp-main-77");
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/featured-media",
+      headers: bearer(),
+      payload: {
+        publicationId: "publication-wp",
+        expectedVersion: 4,
+        contentType: "posts",
+        groupId: "group-main",
+        routeId: "wordpress",
+        mode: "none",
+        assetId: "should-not-be-here",
+      },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json().error.code, "INVALID_REQUEST");
+    assert.equal(state().featuredCalls, 1);
   });
 });
