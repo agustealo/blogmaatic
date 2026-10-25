@@ -2782,3 +2782,169 @@ test("WordPress merges shared, legacy route, and destination-scoped categories a
     /standard taxonomy identity no longer matches route/,
   );
 });
+
+
+test("WordPress featured media precedence is route-scoped with explicit none and inherit fallbacks", async () => {
+  const baseConnection = {
+    extensionId: "blogmaatic.wordpress-rest",
+    status: "active",
+    settings: {
+      siteUrl: "https://example.test",
+      username: "editor",
+    },
+    secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+    createdAt: "2026-10-25T00:20:00.000Z",
+    updatedAt: "2026-10-25T00:20:00.000Z",
+  };
+  const publisher = new WordPressRestPublisher(
+    new ConnectionAuthority([
+      { ...baseConnection, id: "wp-a", displayName: "Site A" },
+      { ...baseConnection, id: "wp-b", displayName: "Site B" },
+    ]),
+    new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+  );
+  const routeFor = (connectionId, variant = {}) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+    variant,
+  });
+  const item = {
+    id: "publication-featured-route-compile",
+    createdAt: "2026-10-25T00:20:00.000Z",
+    slug: "featured-route-compile",
+    status: "approved",
+    current: {
+      id: "revision-featured-route-compile",
+      ordinal: 1,
+      createdAt: "2026-10-25T00:20:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Featured route compile",
+        language: "en",
+        blocks: [],
+        assets: [
+          {
+            id: "shared",
+            kind: "image",
+            source: "https://cdn.test/shared.jpg",
+            mediaType: "image/jpeg",
+            attributes: { featured: true },
+          },
+          {
+            id: "site-a",
+            kind: "image",
+            source: "https://site-a.test/77.jpg",
+            mediaType: "image/jpeg",
+            attributes: {
+              wordpressMediaId: 77,
+              sourceConnectionId: "wp-a",
+              sourceRemoteId: "77",
+            },
+          },
+          {
+            id: "site-b",
+            kind: "image",
+            source: "https://site-b.test/77.jpg",
+            mediaType: "image/jpeg",
+            attributes: {
+              wordpressMediaId: 77,
+              sourceConnectionId: "wp-b",
+              sourceRemoteId: "77",
+            },
+          },
+        ],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+          destinationOverrides: {
+            schemaVersion: 1,
+            groups: {
+              "group-a": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-a",
+                    channel: "posts",
+                    featuredMedia: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "posts",
+                      mode: "asset",
+                      assetId: "site-a",
+                    },
+                  },
+                },
+              },
+              "group-b": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-b",
+                    channel: "posts",
+                    featuredMedia: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "posts",
+                      mode: "none",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+
+  const a = await publisher.compile({
+    publication: item,
+    route: routeFor("wp-a", { featuredAssetId: "site-b" }),
+    groupId: "group-a",
+  });
+  assert.equal(a.payload.featuredAssetId, "site-a");
+  assert.equal(a.payload.assets.find((asset) => asset.assetId === "site-a").wordpressMediaId, 77);
+  assert.equal(a.payload.assets.find((asset) => asset.assetId === "site-b").wordpressMediaId, undefined);
+
+  const b = await publisher.compile({
+    publication: item,
+    route: routeFor("wp-b", { featuredAssetId: "site-b" }),
+    groupId: "group-b",
+  });
+  assert.equal(b.payload.featuredAssetId, undefined);
+
+  const inheritVariant = structuredClone(item);
+  inheritVariant.current.content.attributes.destinationOverrides.groups["group-b"].routes.wordpress.featuredMedia.mode = "inherit";
+  const inheritedVariant = await publisher.compile({
+    publication: inheritVariant,
+    route: routeFor("wp-b", { featuredAssetId: "site-b" }),
+    groupId: "group-b",
+  });
+  assert.equal(inheritedVariant.payload.featuredAssetId, "site-b");
+
+  const inheritedShared = await publisher.compile({
+    publication: inheritVariant,
+    route: routeFor("wp-b"),
+    groupId: "group-b",
+  });
+  assert.equal(inheritedShared.payload.featuredAssetId, "shared");
+
+  const tampered = structuredClone(item);
+  tampered.current.content.attributes.destinationOverrides.groups["group-a"].routes.wordpress.featuredMedia.connectionId = "wp-b";
+  await assert.rejects(
+    publisher.compile({
+      publication: tampered,
+      route: routeFor("wp-a"),
+      groupId: "group-a",
+    }),
+    /featured media identity no longer matches route/,
+  );
+});
