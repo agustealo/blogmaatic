@@ -498,13 +498,24 @@ export interface SourceMetaValuesResult {
   readonly values: Readonly<Record<string, JsonValue>>;
 }
 
-export type SourceSeoSemantic = "title" | "description" | "canonical" | "focus_keyphrase";
+export type SourceSeoSemantic =
+  | "title"
+  | "description"
+  | "canonical"
+  | "focus_keyphrase"
+  | "robots_index"
+  | "robots_follow";
+
+export type SourceSeoValue = string | boolean;
 
 export interface SourceSeoFieldDefinition {
   readonly semantic: SourceSeoSemantic;
   readonly key: string;
   readonly label: string;
   readonly provider: string;
+  readonly valueKind: "text" | "boolean";
+  readonly trueValue?: string | boolean;
+  readonly falseValue?: string | boolean;
   readonly description?: string;
   readonly metadata: Readonly<Record<string, JsonValue>>;
 }
@@ -513,7 +524,7 @@ export interface SourceSeoValuesBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
   readonly contentType: string;
-  readonly values: Partial<Readonly<Record<SourceSeoSemantic, string>>>;
+  readonly values: Partial<Readonly<Record<SourceSeoSemantic, SourceSeoValue>>>;
   readonly groupId?: string;
   readonly routeId?: string;
 }
@@ -521,7 +532,7 @@ export interface SourceSeoValuesBody {
 export interface SourceSeoValuesResult {
   readonly publication: PublicationWorkspaceEntry;
   readonly contentType: string;
-  readonly values: Partial<Readonly<Record<SourceSeoSemantic, string>>>;
+  readonly values: Partial<Readonly<Record<SourceSeoSemantic, SourceSeoValue>>>;
 }
 
 export interface SourceTaxonomyPage {
