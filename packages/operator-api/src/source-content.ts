@@ -306,6 +306,47 @@ function parseTaxonomyQuery(request: FastifyRequest): SourceTaxonomyQuery {
   };
 }
 
+function parseStandardTaxonomyBody(body: unknown): SourceStandardTaxonomyBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set([
+    "publicationId", "expectedVersion", "contentType", "groupId", "routeId", "categories", "tags",
+  ]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = optionalString(input, "publicationId");
+  if (!publicationId) throw new OperatorRequestError("publicationId is required");
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if (!groupId || !routeId) throw new OperatorRequestError("groupId and routeId are required");
+
+  const normalize = (key: "categories" | "tags"): readonly string[] => {
+    const value = input[key];
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+      throw new OperatorRequestError(`${key} must be an array of strings`);
+    }
+    const items = [...new Set((value as string[]).map((entry) => entry.trim()).filter(Boolean))];
+    if (items.length > 200) throw new OperatorRequestError(`${key} is too large`);
+    return items;
+  };
+  return {
+    publicationId,
+    expectedVersion: input.expectedVersion as number,
+    contentType,
+    groupId,
+    routeId,
+    categories: normalize("categories"),
+    tags: normalize("tags"),
+  };
+}
+
 function parseTaxonomySelectionBody(body: unknown): SourceTaxonomySelectionBody {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new OperatorRequestError("request body must be an object");
@@ -819,6 +860,40 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     const contentType = optionalContentType(input.contentType);
     if (!contentType) throw new OperatorRequestError("contentType is required");
     return { items: await domainCall(() => manager(options).listTaxonomyDefinitions(connectionId, contentType)) };
+  });
+
+  app.post("/v1/connections/:connectionId/standard-taxonomy", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseStandardTaxonomyBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-taxonomy.standard.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        groupId: body.groupId,
+        routeId: body.routeId,
+        categoryCount: body.categories.length,
+        tagCount: body.tags.length,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setStandardTaxonomy(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          categoryCount: value.categories.length,
+          tagCount: value.tags.length,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
   });
 
   app.post("/v1/connections/:connectionId/taxonomy-selections", async (request, reply) => {
