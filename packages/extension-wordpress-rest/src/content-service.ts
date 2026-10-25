@@ -157,6 +157,7 @@ function ownership(post: WordPressPostRecord): WordPressPostView["ownership"] {
   return {
     managed: true,
     publicationId: marker.publicationId,
+    ...(marker.version === 2 ? { groupId: marker.groupId } : {}),
     routeId: marker.routeId,
     projectionFingerprint: marker.projectionFingerprint,
   };

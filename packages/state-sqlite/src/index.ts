@@ -41,6 +41,11 @@ interface StateRow {
   readonly updated_at: string;
 }
 
+function projectionStateRouteKey(routeId: string, groupId?: string): string {
+  if (!groupId) return routeId;
+  return `g:${Buffer.from(JSON.stringify([groupId, routeId]), "utf8").toString("base64url")}`;
+}
+
 function remoteFromRow(row: StateRow): RemoteIdentity {
   return {
     id: row.remote_id,
@@ -156,7 +161,11 @@ export class SqliteProjectionStateStore implements ProjectionStateStore, Distrib
     if (this.#closed) throw new Error("SQLite projection state store is closed");
   }
 
-  async get(publicationId: string, routeId: string): Promise<ProjectionStateRecord | undefined> {
+  async get(
+    publicationId: string,
+    routeId: string,
+    groupId?: string,
+  ): Promise<ProjectionStateRecord | undefined> {
     this.#assertOpen();
     const statement = this.#database.prepare(`
       SELECT publication_id, route_id, projection_id, extension_id, connection_id,
@@ -165,11 +174,12 @@ export class SqliteProjectionStateStore implements ProjectionStateStore, Distrib
       FROM projection_state
       WHERE publication_id = ? AND route_id = ?
     `);
-    const row = statement.get(publicationId, routeId) as StateRow | undefined;
+    const row = statement.get(publicationId, projectionStateRouteKey(routeId, groupId)) as StateRow | undefined;
     if (!row) return undefined;
     return {
       publicationId: row.publication_id,
-      routeId: row.route_id,
+      ...(groupId ? { groupId } : {}),
+      routeId,
       projectionId: row.projection_id,
       extensionId: row.extension_id,
       connectionId: row.connection_id,
@@ -201,7 +211,7 @@ export class SqliteProjectionStateStore implements ProjectionStateStore, Distrib
     `);
     statement.run(
       record.publicationId,
-      record.routeId,
+      projectionStateRouteKey(record.routeId, record.groupId),
       record.projectionId,
       record.extensionId,
       record.connectionId,
@@ -214,12 +224,12 @@ export class SqliteProjectionStateStore implements ProjectionStateStore, Distrib
     );
   }
 
-  async delete(publicationId: string, routeId: string): Promise<void> {
+  async delete(publicationId: string, routeId: string, groupId?: string): Promise<void> {
     this.#assertOpen();
     const statement = this.#database.prepare(
       "DELETE FROM projection_state WHERE publication_id = ? AND route_id = ?",
     );
-    statement.run(publicationId, routeId);
+    statement.run(publicationId, projectionStateRouteKey(routeId, groupId));
   }
 
   async append(record: DistributionHistoryRecord): Promise<void> {

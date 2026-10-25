@@ -146,6 +146,56 @@ function withPublishingTargets(
   return next;
 }
 
+function jsonRecord(value: JsonValue | undefined): Readonly<Record<string, JsonValue>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, JsonValue>>
+    : undefined;
+}
+
+function withDestinationOverride(
+  attributes: Readonly<Record<string, JsonValue>>,
+  groupId: string,
+  routeId: string,
+  identity: {
+    readonly extensionId: string;
+    readonly connectionId: string;
+    readonly channel: string;
+  },
+  patch: Readonly<Record<string, JsonValue>>,
+): Readonly<Record<string, JsonValue>> {
+  const existingRoot = jsonRecord(attributes.destinationOverrides);
+  const existingGroups = jsonRecord(existingRoot?.groups);
+  const existingGroup = jsonRecord(existingGroups?.[groupId]);
+  const existingRoutes = jsonRecord(existingGroup?.routes);
+  const existingRoute = jsonRecord(existingRoutes?.[routeId]);
+
+  const nextRoute: Record<string, JsonValue> = {
+    ...(existingRoute ?? {}),
+    extensionId: identity.extensionId,
+    connectionId: identity.connectionId,
+    channel: identity.channel,
+    ...patch,
+  };
+  const nextRoutes: Record<string, JsonValue> = {
+    ...(existingRoutes ?? {}),
+    [routeId]: nextRoute,
+  };
+  const nextGroups: Record<string, JsonValue> = {
+    ...(existingGroups ?? {}),
+    [groupId]: {
+      ...(existingGroup ?? {}),
+      routes: nextRoutes,
+    },
+  };
+  return {
+    ...attributes,
+    destinationOverrides: {
+      schemaVersion: 1,
+      groups: nextGroups,
+    },
+  };
+}
+
 function withCategories(
   attributes: Readonly<Record<string, JsonValue>>,
   categories: readonly string[],
@@ -220,6 +270,29 @@ export class PublicationWorkspaceManager {
 
   getVersion(publicationId: string, version: number): Promise<PublicationWorkspaceEntry | undefined> {
     return this.#store.getVersion(publicationId, version);
+  }
+
+  async #publishingTargetRoute(
+    publication: Publication,
+    groupId: string,
+    routeId: string,
+  ): Promise<PublicationGroup["routes"][number]> {
+    const normalizedGroupId = requireText(groupId, "Publishing target group id");
+    const normalizedRouteId = requireText(routeId, "Publishing target route id");
+    if (!publicationTargetGroupIds(publication).includes(normalizedGroupId)) {
+      throw new Error(`Publication does not target Publication Group: ${normalizedGroupId}`);
+    }
+    const groupEntry = await this.#publicationGroups.get(normalizedGroupId);
+    if (!groupEntry) throw new Error(`Publishing target is not registered: ${normalizedGroupId}`);
+    if (!groupEntry.enabled) throw new Error(`Publishing target is disabled: ${normalizedGroupId}`);
+    const route = groupEntry.group.routes.find((candidate) => candidate.id === normalizedRouteId);
+    if (!route) {
+      throw new Error(`Publishing target ${normalizedGroupId} does not contain route ${normalizedRouteId}`);
+    }
+    if (!route.enabled) {
+      throw new Error(`Publishing target route is disabled: ${normalizedGroupId}/${normalizedRouteId}`);
+    }
+    return route;
   }
 
   async findImportedSource(
@@ -735,6 +808,8 @@ export class PublicationWorkspaceManager {
       readonly connectionId: string;
       readonly status: string;
       readonly scheduledAt?: string;
+      readonly groupId?: string;
+      readonly routeId?: string;
     },
   ): Promise<PublicationWorkspaceEntry> {
     const current = await this.#store.get(publicationId);
@@ -742,7 +817,19 @@ export class PublicationWorkspaceManager {
     if (current.version !== expectedVersion) {
       throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
     }
-    if (
+    let targetRoute: PublicationGroup["routes"][number] | undefined;
+    if (state.groupId !== undefined || state.routeId !== undefined) {
+      if (!state.groupId || !state.routeId) {
+        throw new Error("Route-scoped source publishing state requires both groupId and routeId");
+      }
+      targetRoute = await this.#publishingTargetRoute(current.publication, state.groupId, state.routeId);
+      if (
+        targetRoute.destination.extensionId !== state.extensionId ||
+        targetRoute.destination.connectionId !== state.connectionId
+      ) {
+        throw new Error("Source publishing state route does not match the requested destination");
+      }
+    } else if (
       current.publication.provenance.extensionId !== state.extensionId ||
       current.publication.provenance.connectionId !== state.connectionId
     ) {
@@ -762,8 +849,17 @@ export class PublicationWorkspaceManager {
       status,
       ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
     };
-    const existing = current.publication.current.content.attributes.sourcePublishing;
-    if (JSON.stringify(existing) === JSON.stringify(nextState)) return current;
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = targetRoute && state.groupId && state.routeId
+      ? withDestinationOverride(
+        oldAttributes,
+        state.groupId,
+        state.routeId,
+        targetRoute.destination,
+        { publishing: nextState },
+      )
+      : { ...oldAttributes, sourcePublishing: nextState };
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
 
     const now = this.#now();
     const publication: Publication = {
@@ -775,8 +871,7 @@ export class PublicationWorkspaceManager {
         content: {
           ...current.publication.current.content,
           attributes: {
-            ...current.publication.current.content.attributes,
-            sourcePublishing: nextState,
+            ...nextAttributes,
           },
         },
       },
@@ -792,6 +887,8 @@ export class PublicationWorkspaceManager {
       readonly connectionId: string;
       readonly remoteId: string;
       readonly displayName: string;
+      readonly groupId?: string;
+      readonly routeId?: string;
     },
   ): Promise<PublicationWorkspaceEntry> {
     const current = await this.#store.get(publicationId);
@@ -799,7 +896,19 @@ export class PublicationWorkspaceManager {
     if (current.version !== expectedVersion) {
       throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
     }
-    if (
+    let targetRoute: PublicationGroup["routes"][number] | undefined;
+    if (author.groupId !== undefined || author.routeId !== undefined) {
+      if (!author.groupId || !author.routeId) {
+        throw new Error("Route-scoped source author requires both groupId and routeId");
+      }
+      targetRoute = await this.#publishingTargetRoute(current.publication, author.groupId, author.routeId);
+      if (
+        targetRoute.destination.extensionId !== author.extensionId ||
+        targetRoute.destination.connectionId !== author.connectionId
+      ) {
+        throw new Error("Source author route does not match the requested destination");
+      }
+    } else if (
       current.publication.provenance.extensionId !== author.extensionId ||
       current.publication.provenance.connectionId !== author.connectionId
     ) {
@@ -811,14 +920,22 @@ export class PublicationWorkspaceManager {
     if (!displayName) throw new Error("Source author display name is required");
 
     const oldContent = current.publication.current.content;
-    const existing = oldContent.attributes.sourceAuthor;
     const nextAuthor: JsonValue = {
       extensionId: author.extensionId,
       connectionId: author.connectionId,
       remoteId,
       displayName,
     };
-    if (JSON.stringify(existing) === JSON.stringify(nextAuthor)) return current;
+    const nextAttributes = targetRoute && author.groupId && author.routeId
+      ? withDestinationOverride(
+        oldContent.attributes,
+        author.groupId,
+        author.routeId,
+        targetRoute.destination,
+        { author: nextAuthor },
+      )
+      : { ...oldContent.attributes, sourceAuthor: nextAuthor };
+    if (JSON.stringify(oldContent.attributes) === JSON.stringify(nextAttributes)) return current;
 
     const now = this.#now();
     const publication: Publication = {
@@ -830,8 +947,7 @@ export class PublicationWorkspaceManager {
         content: {
           ...oldContent,
           attributes: {
-            ...oldContent.attributes,
-            sourceAuthor: nextAuthor,
+            ...nextAttributes,
           },
         },
       },

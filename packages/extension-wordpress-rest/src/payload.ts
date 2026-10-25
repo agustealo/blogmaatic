@@ -181,6 +181,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     ...(pingStatusRaw === undefined ? {} : { pingStatus: pingStatusRaw }),
     ...(stickyRaw === undefined ? {} : { sticky: stickyRaw }),
     ...(formatRaw === undefined ? {} : { format: formatRaw }),
+    ...(projection.payload.legacyOwnershipAllowed === true ? { legacyOwnershipAllowed: true } : {}),
     assetsParsed,
   };
 }

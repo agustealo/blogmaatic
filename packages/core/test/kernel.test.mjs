@@ -67,10 +67,11 @@ class ContractPublisher {
   deliveryCount = 0;
   lastExistingRemote = undefined;
 
-  async compile({ publication: item, route }) {
+  async compile({ publication: item, route, groupId }) {
     const fingerprint = `${item.current.id}:${item.current.content.title}`;
     return {
-      projectionId: `${item.id}:${route.id}`,
+      projectionId: `${item.id}:${groupId ?? "legacy"}:${route.id}`,
+      ...(groupId ? { groupId } : {}),
       publicationId: item.id,
       sourceRevisionId: item.current.id,
       routeId: route.id,
@@ -83,11 +84,12 @@ class ContractPublisher {
   async deliver(request) {
     this.deliveryCount += 1;
     this.lastExistingRemote = request.existingRemote;
+    const key = `${request.projection.groupId ?? "legacy"}:${request.projection.routeId}`;
     const remote = request.existingRemote ?? {
-      id: `remote-${request.projection.routeId}`,
+      id: `remote-${request.projection.groupId ?? "legacy"}-${request.projection.routeId}`,
       url: "https://publisher.invalid/post/1",
     };
-    this.#remote.set(request.projection.routeId, {
+    this.#remote.set(key, {
       remote,
       fingerprint: request.projection.fingerprint,
     });
@@ -99,7 +101,8 @@ class ContractPublisher {
   }
 
   async inspect({ projection }) {
-    const record = this.#remote.get(projection.routeId);
+    const key = `${projection.groupId ?? "legacy"}:${projection.routeId}`;
+    const record = this.#remote.get(key);
     if (!record) {
       return { state: "missing", observedAt: fixedClock.now() };
     }
@@ -112,10 +115,11 @@ class ContractPublisher {
     };
   }
 
-  forceFingerprint(routeId, fingerprint) {
-    const record = this.#remote.get(routeId);
+  forceFingerprint(routeId, fingerprint, groupId = "group-1") {
+    const key = `${groupId}:${routeId}`;
+    const record = this.#remote.get(key);
     if (!record) throw new Error("Cannot drift a missing route");
-    this.#remote.set(routeId, { ...record, fingerprint });
+    this.#remote.set(key, { ...record, fingerprint });
   }
 }
 
@@ -146,8 +150,15 @@ test("publishes, verifies, and emits a stable idempotency key", async () => {
   assert.equal(receipts[0].status, "verified");
   assert.equal(fixture.publisher.deliveryCount, 1);
 
-  const projection = await fixture.publisher.compile({ publication: item, route: publicationGroup.routes[0] });
-  assert.equal(receipts[0].idempotencyKey, deliveryIdempotencyKey(item, publicationGroup.routes[0], projection));
+  const projection = await fixture.publisher.compile({
+    publication: item,
+    route: publicationGroup.routes[0],
+    groupId: publicationGroup.id,
+  });
+  assert.equal(
+    receipts[0].idempotencyKey,
+    deliveryIdempotencyKey(item, publicationGroup.id, publicationGroup.routes[0], projection),
+  );
 });
 
 test("repeated publication is a no-op when the remote already matches", async () => {
@@ -161,7 +172,7 @@ test("repeated publication is a no-op when the remote already matches", async ()
   assert.equal(first[0].status, "verified");
   assert.equal(second[0].status, "verified");
   assert.equal(fixture.publisher.deliveryCount, 1);
-  assert.equal(second[0].remote.id, "remote-route-1");
+  assert.equal(second[0].remote.id, "remote-group-1-route-1");
 });
 
 test("drifted projections update the existing remote identity instead of creating a duplicate", async () => {
@@ -175,8 +186,8 @@ test("drifted projections update the existing remote identity instead of creatin
 
   assert.equal(receipts[0].status, "verified");
   assert.equal(fixture.publisher.deliveryCount, 2);
-  assert.equal(fixture.publisher.lastExistingRemote.id, "remote-route-1");
-  assert.equal(receipts[0].remote.id, "remote-route-1");
+  assert.equal(fixture.publisher.lastExistingRemote.id, "remote-group-1-route-1");
+  assert.equal(receipts[0].remote.id, "remote-group-1-route-1");
 });
 
 test("fails closed when a route requires a capability the extension does not provide", async () => {
@@ -279,4 +290,40 @@ test("records the exact group snapshot and run identity in distribution history"
   assert.equal(page.items[0].destination.connectionId, "connection-1");
   assert.deepEqual(page.items[0].groupSnapshot, publicationGroup);
   assert.equal(page.items[0].receipt.status, "verified");
+});
+
+
+test("same route id in different publication groups has isolated projection and remote identity", async () => {
+  const fixture = kernel();
+  const item = publication();
+  const firstGroup = group();
+  const secondGroup = {
+    ...group(),
+    id: "group-2",
+    name: "Secondary",
+    routes: [{
+      ...group().routes[0],
+      destination: {
+        ...group().routes[0].destination,
+        connectionId: "connection-2",
+      },
+    }],
+  };
+
+  const first = await fixture.kernel.publish({ publication: item, group: firstGroup });
+  const second = await fixture.kernel.publish({ publication: item, group: secondGroup });
+
+  assert.equal(first[0].status, "verified");
+  assert.equal(second[0].status, "verified");
+  assert.notEqual(first[0].projectionId, second[0].projectionId);
+  assert.notEqual(first[0].idempotencyKey, second[0].idempotencyKey);
+  assert.equal(first[0].remote.id, "remote-group-1-route-1");
+  assert.equal(second[0].remote.id, "remote-group-2-route-1");
+  assert.equal(fixture.publisher.deliveryCount, 2);
+
+  const repeatedFirst = await fixture.kernel.publish({ publication: item, group: firstGroup });
+  const repeatedSecond = await fixture.kernel.publish({ publication: item, group: secondGroup });
+  assert.equal(repeatedFirst[0].remote.id, "remote-group-1-route-1");
+  assert.equal(repeatedSecond[0].remote.id, "remote-group-2-route-1");
+  assert.equal(fixture.publisher.deliveryCount, 2);
 });
