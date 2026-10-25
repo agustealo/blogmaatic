@@ -102,13 +102,17 @@ export class LinkedInRestClient {
       );
     }
     await this.#secrets.withUtf8(this.#settings.accessTokenRef, async (token) => {
+      const body = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer;
       const response = await fetch(url, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": mediaType,
         },
-        body: bytes,
+        body,
         signal: AbortSignal.timeout(this.#settings.timeoutMs),
       });
       if (!response.ok) {
