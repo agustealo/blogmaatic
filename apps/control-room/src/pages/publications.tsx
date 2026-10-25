@@ -8,6 +8,7 @@ import type {
   PublicationDestinationMatrixItem,
   PublicationGroupRegistryEntry,
   PublicationProjectionPreview,
+  PublicationWorkspaceBlock,
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchResult,
   PublicationWorkspaceEntry,
@@ -37,6 +38,7 @@ import {
 import { useConnection } from "../connection";
 import { formatInstant, safeJson } from "../format";
 import { usePagedCollection } from "../hooks";
+import { PublicationBlockEditor } from "../publication-block-editor";
 import { WordPressImportWorkspace } from "../wordpress-content-library";
 
 type EditorMode = "create" | "edit";
@@ -47,8 +49,7 @@ interface PublicationEditor {
   readonly expectedVersion?: number;
   readonly title: string;
   readonly summary: string;
-  readonly body: string;
-  readonly bodyFormat: "plain" | "html";
+  readonly blocks: readonly PublicationWorkspaceBlock[];
   readonly tags: string;
   readonly categories: string;
   readonly featuredAssetId: string;
@@ -69,30 +70,20 @@ const statusOptions: readonly { readonly value: WorkspacePublicationStatus; read
   { value: "archived", label: "Archived" },
 ];
 
-function editableBody(entry: PublicationWorkspaceEntry): {
-  readonly body: string;
-  readonly format: "plain" | "html";
-  readonly unsupported: boolean;
-} {
-  const blocks = entry.publication.current.content.blocks;
-  if (blocks.length === 0) return { body: "", format: "plain", unsupported: false };
+const knownBlockKinds = new Set([
+  "heading",
+  "paragraph",
+  "image",
+  "gallery",
+  "quote",
+  "code",
+  "embed",
+  "table",
+  "callout",
+]);
 
-  if (blocks.every((block) => block.kind === "paragraph")) {
-    const paragraphs = blocks.flatMap((block) => {
-      const text = block.data.text;
-      return typeof text === "string" && text.trim() ? [text.trim()] : [];
-    });
-    return { body: paragraphs.join("\n\n"), format: "plain", unsupported: false };
-  }
-
-  if (blocks.length === 1 && blocks[0]?.kind === "embed") {
-    const html = blocks[0].data.html;
-    if (typeof html === "string") {
-      return { body: html, format: "html", unsupported: false };
-    }
-  }
-
-  return { body: "", format: "plain", unsupported: true };
+function hasUnknownBlocks(entry: PublicationWorkspaceEntry): boolean {
+  return entry.publication.current.content.blocks.some((block) => !knownBlockKinds.has(block.kind as string));
 }
 
 function editorForCreate(): PublicationEditor {
@@ -100,8 +91,7 @@ function editorForCreate(): PublicationEditor {
     mode: "create",
     title: "",
     summary: "",
-    body: "",
-    bodyFormat: "plain",
+    blocks: [{ id: "paragraph-1", kind: "paragraph", data: { text: "" } }],
     tags: "",
     categories: "",
     featuredAssetId: "",
@@ -124,15 +114,13 @@ function canonicalPublishingTargetGroupIds(entry: PublicationWorkspaceEntry): re
 }
 
 function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
-  const body = editableBody(entry);
   return {
     mode: "edit",
     publicationId: entry.publication.id,
     expectedVersion: entry.version,
     title: entry.publication.current.content.title,
     summary: entry.publication.current.content.summary ?? "",
-    body: body.body,
-    bodyFormat: body.format,
+    blocks: entry.publication.current.content.blocks,
     tags: entry.publication.current.content.tags.join(", "),
     categories: Array.isArray(entry.publication.current.content.attributes.categories)
       ? entry.publication.current.content.attributes.categories
@@ -154,7 +142,7 @@ function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
     slug: entry.publication.slug ?? "",
     canonicalUrl: entry.publication.canonicalUrl ?? "",
     status: entry.publication.status as WorkspacePublicationStatus,
-    hasUnsupportedBlocks: body.unsupported,
+    hasUnsupportedBlocks: hasUnknownBlocks(entry),
   };
 }
 
@@ -2373,12 +2361,11 @@ export function PublicationsPage() {
     try {
       if (!editor.title.trim()) throw new Error("Title is required");
       if (editor.hasUnsupportedBlocks && editor.mode === "edit") {
-        throw new Error("This publication contains block types the simple editor cannot safely rewrite. Create a new publication or use a block-aware editor before changing its body.");
+        throw new Error("This publication contains future block types this Studio version cannot safely rewrite.");
       }
       const common = {
         title: editor.title.trim(),
-        body: editor.body,
-        bodyFormat: editor.bodyFormat,
+        blocks: editor.blocks,
         summary: editor.summary,
         language: editor.language.trim() || "en",
         tags: listFromInput(editor.tags),
@@ -2536,24 +2523,22 @@ export function PublicationsPage() {
             <form className="publication-editor__form" onSubmit={save}>
               {editor.hasUnsupportedBlocks ? (
                 <div className="warning-banner" role="alert">
-                  <strong>This publication contains mixed or unsupported blocks.</strong>
-                  <span>The body remains read-only here so Blogmaatic does not flatten structured content. WordPress HTML imports are editable separately in HTML mode.</span>
+                  <strong>This publication contains a future block type this Studio version does not understand.</strong>
+                  <span>The canonical revision remains readable and preserved. Saving body changes is blocked until this Studio understands every block kind.</span>
                 </div>
               ) : null}
               <label className="field"><span>Title *</span><input value={editor.title} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, title: event.target.value } : current); }} required autoComplete="off" /></label>
               <label className="field"><span>Summary</span><textarea rows={3} value={editor.summary} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, summary: event.target.value } : current); }} /></label>
-              <label className="field publication-body-field">
-                <span>{editor.bodyFormat === "html" ? "Body HTML" : "Body"}</span>
-                <textarea
-                  rows={16}
-                  value={editor.body}
-                  readOnly={editor.hasUnsupportedBlocks}
-                  onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, body: event.target.value } : current); }}
-                  placeholder={editor.bodyFormat === "html" ? "Edit the imported WordPress HTML source." : "Write the publication body. Blank lines create paragraph blocks."}
-                />
-                {editor.bodyFormat === "html" ? <small>This publication preserves imported WordPress HTML losslessly. Saving creates a new canonical Blogmaatic revision without flattening the markup.</small> : null}
-              </label>
-              <PublishingTargetsField
+              <PublicationBlockEditor
+                blocks={editor.blocks}
+                imageAssets={editor.imageAssets}
+                disabled={busy !== null || editor.hasUnsupportedBlocks}
+                onChange={(blocks) => {
+                  setPendingPublish(false);
+                  setEditor((current) => current ? { ...current, blocks } : current);
+                }}
+              />
+                            <PublishingTargetsField
                 selected={editor.publishingTargetGroupIds}
                 onChange={(groupIds) => {
                   setPendingPublish(false);
