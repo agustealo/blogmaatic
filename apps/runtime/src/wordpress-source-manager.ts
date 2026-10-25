@@ -1171,6 +1171,30 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     if (route.destination.channel !== body.contentType) {
       throw new Error("WordPress route content type does not match featured media content type");
     }
+    if (body.mode === "asset") {
+      const asset = current.publication.current.content.assets.find((candidate) => candidate.id === body.assetId);
+      if (!asset) throw new Error(`Featured asset does not exist: ${String(body.assetId)}`);
+      if (asset.kind !== "image") throw new Error(`Featured asset must be an image: ${String(body.assetId)}`);
+      if (/^https?:\/\//i.test(asset.source)) {
+        const attributes = asset.attributes;
+        const sourceConnectionId = typeof attributes?.sourceConnectionId === "string"
+          ? attributes.sourceConnectionId
+          : undefined;
+        const wordpressMediaId = typeof attributes?.wordpressMediaId === "number" &&
+          Number.isSafeInteger(attributes.wordpressMediaId) &&
+          attributes.wordpressMediaId > 0
+          ? attributes.wordpressMediaId
+          : undefined;
+        const legacyOwned =
+          current.publication.provenance.extensionId === WORDPRESS_REST_EXTENSION_ID &&
+          current.publication.provenance.connectionId === connectionId &&
+          sourceConnectionId === undefined &&
+          wordpressMediaId !== undefined;
+        if (!(sourceConnectionId === connectionId && wordpressMediaId !== undefined) && !legacyOwned) {
+          throw new Error("Remote featured asset is not managed by the selected WordPress connection");
+        }
+      }
+    }
     const publication = await this.#publications.setSourceFeaturedMedia(
       body.publicationId,
       body.expectedVersion,
