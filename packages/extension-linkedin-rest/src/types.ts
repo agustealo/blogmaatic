@@ -10,7 +10,7 @@ export interface LinkedInSettings {
   readonly timeoutMs: number;
 }
 
-export type LinkedInProjectionMode = "text" | "article";
+export type LinkedInProjectionMode = "text" | "article" | "image";
 
 export interface LinkedInImageSpec {
   readonly assetId: string;
