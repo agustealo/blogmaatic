@@ -1,12 +1,23 @@
 import { createHash } from "node:crypto";
 
-export interface OwnershipMarker {
+export interface OwnershipMarkerV1 {
   readonly version: 1;
   readonly publicationId: string;
   readonly routeId: string;
   readonly projectionFingerprint: string;
   readonly renderedHash: string;
 }
+
+export interface OwnershipMarkerV2 {
+  readonly version: 2;
+  readonly publicationId: string;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly projectionFingerprint: string;
+  readonly renderedHash: string;
+}
+
+export type OwnershipMarker = OwnershipMarkerV1 | OwnershipMarkerV2;
 
 const MARKER_PATTERN = /<!--\s*blogmaatic:([A-Za-z0-9_-]+)\s*-->/;
 
@@ -38,13 +49,14 @@ export function parseMarker(content: string): OwnershipMarker | undefined {
   const match = MARKER_PATTERN.exec(content);
   if (!match?.[1]) return undefined;
   try {
-    const value = JSON.parse(Buffer.from(match[1], "base64url").toString("utf8")) as Partial<OwnershipMarker>;
+    const value = JSON.parse(Buffer.from(match[1], "base64url").toString("utf8")) as Partial<OwnershipMarkerV2> & Partial<OwnershipMarkerV1>;
     if (
-      value.version !== 1 ||
+      (value.version !== 1 && value.version !== 2) ||
       typeof value.publicationId !== "string" ||
       typeof value.routeId !== "string" ||
       typeof value.projectionFingerprint !== "string" ||
-      typeof value.renderedHash !== "string"
+      typeof value.renderedHash !== "string" ||
+      (value.version === 2 && (typeof value.groupId !== "string" || !value.groupId.trim()))
     ) {
       return undefined;
     }
