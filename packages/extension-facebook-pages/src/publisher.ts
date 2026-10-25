@@ -19,7 +19,11 @@ import {
 } from "@blogmaatic/extension-sdk";
 import type { ImageTransformSpec } from "@blogmaatic/media";
 import { SecretAuthority } from "@blogmaatic/secrets";
-import { adaptPublicationForSocial } from "@blogmaatic/variants";
+import {
+  adaptPublicationForSocial,
+  selectedSocialImageAssets,
+  socialDestinationVariantOverride,
+} from "@blogmaatic/variants";
 
 import { compileFacebookAssets, localAssetBlob } from "./assets.js";
 import { FacebookGraphClient, FacebookGraphError } from "./client.js";
@@ -309,7 +313,14 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
   }): Promise<CompiledProjection> {
     const connection = this.#connections.requireActive(FACEBOOK_PAGES_EXTENSION_ID, route.destination.connectionId);
     const settings = parseSettings(connection);
-    const mode = desiredMode(publication, route);
+    const socialOverride = socialDestinationVariantOverride(publication, route, groupId);
+    const inheritedMode = desiredMode(publication, route);
+    const mode: FacebookProjectionMode =
+      socialOverride?.mediaMode === "select"
+        ? "image"
+        : socialOverride?.mediaMode === "none" && inheritedMode === "image"
+          ? "text"
+          : inheritedMode;
     if (mode === "link" && !publication.canonicalUrl) {
       throw new Error("Facebook link mode requires publication.canonicalUrl");
     }
@@ -337,16 +348,30 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
     if (adapted.fidelity.score < minimumFidelity) {
       throw new Error(`Facebook projection fidelity ${adapted.fidelity.score} is below required ${minimumFidelity}`);
     }
+    const selectedImageAssets = socialOverride?.mediaMode === "select"
+      ? selectedSocialImageAssets(publication, socialOverride.imageAssetIds ?? [])
+      : socialOverride?.mediaMode === "none"
+        ? []
+        : adapted.imageAssets;
+    if (socialOverride?.mediaMode === "select" && selectedImageAssets.length > maxImages) {
+      throw new Error(`Facebook social media override selects ${selectedImageAssets.length} images but route maxImages is ${maxImages}`);
+    }
     const images = mode === "image"
-      ? await compileFacebookAssets(adapted.imageAssets, settings, imageTransformSpec(route))
+      ? await compileFacebookAssets(selectedImageAssets, settings, imageTransformSpec(route))
       : [];
     if (mode === "image" && images.length === 0) {
       throw new Error("Facebook image mode requires at least one image in the publication projection");
     }
+    const message = socialOverride?.commentaryMode === "override"
+      ? socialOverride.commentary ?? ""
+      : adapted.commentary;
+    if (message.length > 63000) {
+      throw new Error("Facebook commentary must not exceed 63000 characters");
+    }
     const schedule = scheduledAt(route);
     const payload: FacebookProjectionPayload = {
       mode,
-      message: adapted.commentary,
+      message,
       ...(mode === "link" && adapted.article ? { link: adapted.article.source } : {}),
       images,
       fidelity: adapted.fidelity,
