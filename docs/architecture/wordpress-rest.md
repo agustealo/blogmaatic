@@ -154,6 +154,31 @@ Control Room mirrors the same ownership model. **WordPress destination settings*
 
 Operator audit evidence includes the group and route coordinates for route-scoped native mutations, allowing an individual settings change to be traced to the exact publishing destination.
 
+## SEO capability discovery
+
+Blogmaatic does not assume that an installed SEO plugin exposes writable REST fields.
+
+The first SEO adapter is deliberately conservative: it derives semantic SEO fields from WordPress post meta that the connected site itself exposes as writable REST schema. Supported semantic roles are:
+
+- SEO title
+- meta description
+- canonical URL
+- focus keyphrase
+
+The adapter recognizes a small set of exact generic and compatibility aliases, but an alias is surfaced only when the live WordPress content-type schema exposes that meta key as writable and string-compatible. If multiple writable keys compete for the same semantic role, Blogmaatic omits that semantic field rather than guessing which plugin owns it.
+
+Yoast's official SEO REST endpoint is read-only. Fields such as `yoast_head` and `yoast_head_json` are therefore never presented as editable merely because they appear in WordPress responses. A Yoast-compatible private meta key is writable through this adapter only when the site has separately registered that key for writable core REST meta access.
+
+SEO values reuse the existing destination-scoped WordPress REST-meta state. There is no second SEO persistence tree:
+
+- the exact Publication Group + route owns the values
+- saves create immutable canonical Publication revisions
+- unrelated managed REST meta is preserved during SEO updates
+- the existing WordPress projection fingerprint and remote drift hash already cover those managed meta values
+- SEO audit events record semantic field names, not the SEO text itself
+
+Control Room renders an SEO panel only when the selected WordPress destination advertises at least one unambiguous writable semantic field. Unsupported or read-only SEO integrations do not produce editable controls.
+
 ## Native WordPress editorial options
 
 WordPress-native access, discussion, and presentation fields are modeled separately from Blogmaatic workflow status. A matching source Publication may carry `PublicationIR.attributes.sourceEditorial` with the WordPress connection, content type, post password, discussion state, sticky state, and post format.
@@ -384,4 +409,4 @@ Credentials never appear in health evidence.
 
 ## Deferred WordPress-specific work
 
-Future WordPress slices may add explicit support for plugin-specific SEO metadata, richer relationship/media widgets for REST meta, arbitrary top-level custom REST fields, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.
+Future WordPress slices may add direct plugin-specific SEO adapters where stable writable contracts can be verified, richer relationship/media widgets for REST meta, arbitrary top-level custom REST fields, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.
