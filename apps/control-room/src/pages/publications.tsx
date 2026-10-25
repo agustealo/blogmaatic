@@ -669,7 +669,9 @@ function SourcePageStructurePanel({
         limit: 50,
         ...(parentSearch.trim() ? { search: parentSearch.trim() } : {}),
       });
-      const selfId = entry.publication.provenance.remoteId;
+      const selfId = entry.publication.provenance.connectionId === connectionId
+        ? entry.publication.provenance.remoteId
+        : undefined;
       setParents(page.items.filter((item) => item.remoteId !== selfId));
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error("WordPress parent pages could not be loaded"));
