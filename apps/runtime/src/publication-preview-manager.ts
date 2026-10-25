@@ -145,7 +145,7 @@ export class PublicationPreviewManager implements OperatorPublicationPreviewMana
 
       try {
         this.#extensions.publishers.assertCapabilities(route.destination.extensionId, route.requiredCapabilities);
-        const projection = await extension.compile({ publication, route });
+        const projection = await extension.compile({ publication, route, groupId: groupEntry.group.id });
         const sanitizedPayload = sanitizeJson(projection.payload);
         items.push({
           status: "ready",
