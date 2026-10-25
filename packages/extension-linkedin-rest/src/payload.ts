@@ -74,7 +74,9 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
 
   let image: LinkedInProjectionPayload["image"];
   if (mode === "image") {
-    image = parseImage(projection.payload.image, "image projection");
+    const value = projection.payload.image;
+    if (value === undefined) throw new Error("LinkedIn image projection requires image metadata");
+    image = parseImage(value, "image projection");
   }
 
   let images: LinkedInProjectionPayload["images"];
