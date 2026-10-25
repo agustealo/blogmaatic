@@ -75,6 +75,55 @@ export class LinkedInRestClient {
     });
   }
 
+  async uploadBytes(urlValue: string, bytes: Uint8Array, mediaType: string): Promise<void> {
+    const url = new URL(urlValue);
+    const hostname = url.hostname.toLowerCase();
+    const configured = new URL(this.#settings.apiRoot);
+    const configuredLoopback =
+      configured.hostname === "localhost" ||
+      configured.hostname === "127.0.0.1" ||
+      configured.hostname === "::1";
+    const uploadLoopback =
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1";
+    const trustedHost =
+      hostname === "linkedin.com" ||
+      hostname.endsWith(".linkedin.com") ||
+      hostname === "licdn.com" ||
+      hostname.endsWith(".licdn.com");
+    const localDevelopmentUpload =
+      configuredLoopback &&
+      uploadLoopback &&
+      url.protocol === "http:";
+    if (!(url.protocol === "https:" && trustedHost) && !localDevelopmentUpload) {
+      throw new Error(
+        "LinkedIn upload URL must be an HTTPS linkedin.com/licdn.com host, except loopback development uploads",
+      );
+    }
+    await this.#secrets.withUtf8(this.#settings.accessTokenRef, async (token) => {
+      const body = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer;
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": mediaType,
+        },
+        body,
+        signal: AbortSignal.timeout(this.#settings.timeoutMs),
+      });
+      if (!response.ok) {
+        const text = (await response.text()).slice(0, 400);
+        throw new Error(
+          `LinkedIn image upload failed (${response.status})${text ? `: ${text}` : ""}`,
+        );
+      }
+    });
+  }
+
   connectionId(): string {
     return this.#connection.id;
   }

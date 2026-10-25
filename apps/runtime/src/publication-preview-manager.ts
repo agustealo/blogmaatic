@@ -53,9 +53,15 @@ function previewSummary(payload: JsonValue): ProjectionPreviewSummary {
   const text = SUMMARY_TEXT_KEYS.map((key) => stringValue(record, key)).find(Boolean);
   const imageItems = Array.isArray(record.images) ? record.images : [];
   const assetItems = Array.isArray(record.assets) ? record.assets : [];
-  const images = imageItems.length;
+  const singleImage = jsonRecord(record.image ?? null);
+  const images = imageItems.length + (singleImage ? 1 : 0);
   const assets = assetItems.length;
-  const media = [...imageItems, ...assetItems].flatMap((item) => {
+  const mediaItems: JsonValue[] = [
+    ...imageItems,
+    ...assetItems,
+    ...(singleImage ? [singleImage as unknown as JsonValue] : []),
+  ];
+  const media = mediaItems.flatMap((item) => {
     const asset = jsonRecord(item);
     if (!asset) return [];
     const transform = jsonRecord(asset.transform ?? null);

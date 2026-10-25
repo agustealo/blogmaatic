@@ -1,19 +1,32 @@
+import type { ImageTransformPlan } from "@blogmaatic/media";
 import type { FidelityReport, SocialArticleVariant } from "@blogmaatic/variants";
 
 export interface LinkedInSettings {
   readonly apiRoot: string;
   readonly apiVersion: string;
   readonly authorUrn: string;
+  readonly assetSourceRoots: readonly string[];
   readonly accessTokenRef: string;
   readonly timeoutMs: number;
 }
 
-export type LinkedInProjectionMode = "text" | "article";
+export type LinkedInProjectionMode = "text" | "article" | "image";
+
+export interface LinkedInImageSpec {
+  readonly assetId: string;
+  readonly source: string;
+  readonly localPath: string;
+  readonly mediaType: "image/jpeg" | "image/png" | "image/webp";
+  readonly alt?: string;
+  readonly fingerprint: string;
+  readonly transform: ImageTransformPlan;
+}
 
 export interface LinkedInProjectionPayload {
   readonly mode: LinkedInProjectionMode;
   readonly commentary: string;
   readonly article?: SocialArticleVariant;
+  readonly image?: LinkedInImageSpec;
   readonly fidelity: FidelityReport;
 }
 
@@ -35,5 +48,27 @@ export interface LinkedInPostRecord {
       readonly title?: string;
       readonly description?: string;
     };
+    readonly media?: {
+      readonly id?: string;
+      readonly altText?: string;
+      readonly title?: string;
+    };
   };
+}
+
+
+export interface LinkedInImageInitializeResponse {
+  readonly value?: {
+    readonly uploadUrl?: string;
+    readonly uploadUrlExpiresAt?: number;
+    readonly image?: string;
+  };
+}
+
+export interface LinkedInImageRecord {
+  readonly id: string;
+  readonly owner?: string;
+  readonly status?: "WAITING_UPLOAD" | "PROCESSING" | "PROCESSING_FAILED" | "AVAILABLE" | string;
+  readonly downloadUrl?: string;
+  readonly downloadUrlExpiresAt?: number;
 }

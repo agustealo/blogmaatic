@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import type { JsonValue } from "@blogmaatic/core";
 import type { ConnectionContract, ConnectionRecord } from "@blogmaatic/extension-sdk";
 
@@ -12,6 +14,7 @@ export const LINKEDIN_CONNECTION_CONTRACT: ConnectionContract = {
     { key: "authorUrn", label: "Organization URN", kind: "text", required: true, placeholder: "urn:li:organization:123456", description: "LinkedIn organization that will author published posts." },
     { key: "apiRoot", label: "API root", kind: "url", defaultValue: "https://api.linkedin.com/rest", description: "LinkedIn REST API root." },
     { key: "apiVersion", label: "LinkedIn API version", kind: "text", defaultValue: DEFAULT_LINKEDIN_API_VERSION, description: "Pinned YYYYMM LinkedIn API version." },
+    { key: "assetSourceRoots", label: "Allowed local asset roots", kind: "string-list", description: "Absolute directories from which LinkedIn image assets may be read and rendered." },
     { key: "timeoutMs", label: "Request timeout (ms)", kind: "integer", defaultValue: 15000, min: 1000, max: 120000 },
   ],
   secretFields: [
@@ -27,6 +30,12 @@ export const LINKEDIN_CONNECTION_CONTRACT: ConnectionContract = {
 function getString(record: Readonly<Record<string, JsonValue>>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function getStringArray(record: Readonly<Record<string, JsonValue>>, key: string): readonly string[] {
+  const value = record[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
 }
 
 function getNumber(record: Readonly<Record<string, JsonValue>>, key: string): number | undefined {
@@ -62,10 +71,14 @@ export function parseSettings(connection: ConnectionRecord): LinkedInSettings {
   if (!/^20\d{4}$/.test(apiVersion)) {
     throw new Error("LinkedIn apiVersion must use YYYYMM format");
   }
+  const assetSourceRoots = getStringArray(connection.settings, "assetSourceRoots");
+  if (assetSourceRoots.some((root) => !isAbsolute(root))) {
+    throw new Error("LinkedIn assetSourceRoots must contain only absolute paths");
+  }
   const timeoutMs = Math.trunc(getNumber(connection.settings, "timeoutMs") ?? 15000);
   if (timeoutMs < 1000 || timeoutMs > 120000) {
     throw new Error("LinkedIn timeoutMs must be between 1000 and 120000 milliseconds");
   }
 
-  return { apiRoot, apiVersion, authorUrn, accessTokenRef, timeoutMs };
+  return { apiRoot, apiVersion, authorUrn, assetSourceRoots, accessTokenRef, timeoutMs };
 }
