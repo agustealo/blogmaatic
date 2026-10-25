@@ -267,6 +267,7 @@ export interface WordPressPostQuery {
 export interface WordPressManagedOwnership {
   readonly managed: boolean;
   readonly publicationId?: string;
+  readonly groupId?: string;
   readonly routeId?: string;
   readonly projectionFingerprint?: string;
 }
