@@ -1886,3 +1886,224 @@ test("WordPress import preserves only filtered REST meta from canonical revision
     values: { isbn: "978-1-234", rating: 4.5 },
   });
 });
+
+
+test("workspace-native WordPress routes attach and upload connection-namespaced media without cross-site featured leakage", async () => {
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") {
+        return { enabled: true, group: { id: "group-a", name: "A", policySetId: "allow", routes: [routeFor("wp-a")] } };
+      }
+      if (groupId === "group-b") {
+        return { enabled: true, group: { id: "group-b", name: "B", policySetId: "allow", routes: [routeFor("wp-b")] } };
+      }
+      return undefined;
+    },
+  };
+  let current = {
+    publication: {
+      id: "publication-route-media",
+      createdAt: "2026-10-25T00:10:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-25T00:10:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Route media",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: { publishingTargets: { groupIds: ["group-a", "group-b"] } },
+        },
+      },
+      provenance: { source: "blogmaatic.publication-workspace" },
+    },
+    version: 4,
+    recordedAt: "2026-10-25T00:10:00.000Z",
+    updatedAt: "2026-10-25T00:10:00.000Z",
+  };
+  let mediaReads = 0;
+  let uploads = 0;
+  let featuredState;
+  const publications = {
+    async get(id) {
+      return id === "publication-route-media" ? current : undefined;
+    },
+    async attachAsset(publicationId, expectedVersion, asset, featured) {
+      assert.equal(publicationId, "publication-route-media");
+      assert.equal(expectedVersion, current.version);
+      assert.equal(featured, false);
+      const existing = current.publication.current.content.assets.find((candidate) => candidate.id === asset.id);
+      if (existing) return current;
+      current = {
+        ...current,
+        version: current.version + 1,
+        publication: {
+          ...current.publication,
+          current: {
+            ...current.publication.current,
+            id: `revision-${current.version + 1}`,
+            ordinal: current.publication.current.ordinal + 1,
+            content: {
+              ...current.publication.current.content,
+              assets: [...current.publication.current.content.assets, asset],
+            },
+          },
+        },
+      };
+      return current;
+    },
+    async setSourceFeaturedMedia(publicationId, expectedVersion, state) {
+      assert.equal(publicationId, "publication-route-media");
+      assert.equal(expectedVersion, current.version);
+      featuredState = state;
+      return {
+        ...current,
+        version: current.version + 1,
+        publication: {
+          ...current.publication,
+          current: {
+            ...current.publication.current,
+            id: `revision-${current.version + 1}`,
+            ordinal: current.publication.current.ordinal + 1,
+          },
+        },
+      };
+    },
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async getMedia(connectionId, remoteId) {
+        mediaReads += 1;
+        assert.equal(remoteId, "77");
+        return {
+          id: 77,
+          sourceUrl: `https://${connectionId}.test/uploads/77.jpg`,
+          slug: "hero",
+          mediaType: "image/jpeg",
+          mediaKind: "image",
+          title: `Hero ${connectionId}`,
+          alt: `Hero ${connectionId}`,
+        };
+      },
+      async uploadMedia(connectionId, input) {
+        uploads += 1;
+        assert.equal(connectionId, "wp-a");
+        assert.equal(input.filename, "fresh.png");
+        return {
+          id: 88,
+          sourceUrl: "https://wp-a.test/uploads/88.png",
+          slug: "fresh",
+          mediaType: "image/png",
+          mediaKind: "image",
+          title: "Fresh",
+          alt: "",
+        };
+      },
+      async deleteMediaPermanent() {
+        throw new Error("cleanup should not run");
+      },
+    },
+    publisher: {},
+    publicationGroups: groups,
+    publications,
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const a = await manager.attachAsset("wp-a", "77", {
+    publicationId: "publication-route-media",
+    expectedVersion: 4,
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+    featured: false,
+  });
+  assert.equal(a.publication.version, 5);
+  assert.equal(a.publication.publication.current.content.assets[0].id, "wordpress-media-wp-a-77");
+
+  const b = await manager.attachAsset("wp-b", "77", {
+    publicationId: "publication-route-media",
+    expectedVersion: 5,
+    contentType: "posts",
+    groupId: "group-b",
+    routeId: "wordpress",
+  });
+  assert.equal(b.publication.version, 6);
+  assert.equal(b.publication.publication.current.content.assets[1].id, "wordpress-media-wp-b-77");
+  assert.equal(mediaReads, 2);
+
+  await assert.rejects(
+    () => manager.attachAsset("wp-a", "77", {
+      publicationId: "publication-route-media",
+      expectedVersion: 6,
+      contentType: "posts",
+      groupId: "group-b",
+      routeId: "wordpress",
+    }),
+    /does not match the requested connection/,
+  );
+  assert.equal(mediaReads, 2);
+
+  const uploaded = await manager.uploadAsset("wp-a", {
+    publicationId: "publication-route-media",
+    expectedVersion: 6,
+    filename: "fresh.png",
+    mediaType: "image/png",
+    bytes: new Uint8Array([1, 2, 3]),
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+  });
+  assert.equal(uploaded.publication.version, 7);
+  assert.equal(uploaded.publication.publication.current.content.assets[2].id, "wordpress-media-wp-a-88");
+  assert.equal(uploads, 1);
+
+  await assert.rejects(
+    () => manager.setFeaturedMedia("wp-b", {
+      publicationId: "publication-route-media",
+      expectedVersion: 7,
+      contentType: "posts",
+      groupId: "group-b",
+      routeId: "wordpress",
+      mode: "asset",
+      assetId: "wordpress-media-wp-a-77",
+    }),
+    /not managed by the selected WordPress connection/,
+  );
+  assert.equal(featuredState, undefined);
+
+  const featured = await manager.setFeaturedMedia("wp-a", {
+    publicationId: "publication-route-media",
+    expectedVersion: 7,
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+    mode: "asset",
+    assetId: "wordpress-media-wp-a-77",
+  });
+  assert.equal(featured.publication.version, 8);
+  assert.deepEqual(featuredState, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+    mode: "asset",
+    assetId: "wordpress-media-wp-a-77",
+  });
+});
