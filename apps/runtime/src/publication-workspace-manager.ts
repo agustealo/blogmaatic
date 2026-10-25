@@ -925,20 +925,22 @@ export class PublicationWorkspaceManager {
       targetRoute.destination,
       { socialVariant },
     );
-    const publication = JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)
-      ? current
-      : await this.#store.update({
+    let publication = current;
+    if (JSON.stringify(oldAttributes) !== JSON.stringify(nextAttributes)) {
+      const now = this.#now();
+      publication = await this.#store.update({
         ...current.publication,
         current: {
           id: `revision_${this.#id()}`,
           ordinal: current.publication.current.ordinal + 1,
-          createdAt: this.#now(),
+          createdAt: now,
           content: {
             ...current.publication.current.content,
             attributes: nextAttributes,
           },
         },
-      }, input.expectedVersion, this.#now());
+      }, input.expectedVersion, now);
+    }
 
     return {
       publication,
