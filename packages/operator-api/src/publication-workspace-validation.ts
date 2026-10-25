@@ -53,6 +53,15 @@ function stringList(input: Record<string, unknown>, key: "tags" | "categories"):
   return value as readonly string[];
 }
 
+function publishingTargetGroupIds(input: Record<string, unknown>): readonly string[] | undefined {
+  const value = input.publishingTargetGroupIds;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((groupId) => typeof groupId !== "string" || !groupId.trim())) {
+    throw new OperatorRequestError("publishingTargetGroupIds must be an array of non-empty strings");
+  }
+  return [...new Set((value as readonly string[]).map((groupId) => groupId.trim()))];
+}
+
 function featuredAssetId(input: Record<string, unknown>): string | null | undefined {
   const value = input.featuredAssetId;
   if (value === undefined || value === null) return value;
@@ -102,9 +111,10 @@ function optionalQueryString(input: Record<string, unknown>, key: string): strin
 
 export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationWorkspaceCreateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["title", "body", "bodyFormat", "summary", "language", "tags", "categories", "publishingTargetGroupIds", "slug", "canonicalUrl", "status"], "request body");
   const parsedTags = stringList(input, "tags");
   const parsedCategories = stringList(input, "categories");
+  const parsedPublishingTargetGroupIds = publishingTargetGroupIds(input);
   const parsedStatus = status(input);
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -123,6 +133,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
     ...(language === undefined ? {} : { language }),
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
     ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
+    ...(parsedPublishingTargetGroupIds === undefined ? {} : { publishingTargetGroupIds: parsedPublishingTargetGroupIds }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),
@@ -131,7 +142,7 @@ export function parsePublicationWorkspaceCreateBody(body: unknown): PublicationW
 
 export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationWorkspaceUpdateBody {
   const input = record(body, "request body");
-  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "featuredAssetId", "slug", "canonicalUrl", "status"], "request body");
+  rejectUnknown(input, ["expectedVersion", "title", "body", "bodyFormat", "summary", "language", "tags", "categories", "featuredAssetId", "publishingTargetGroupIds", "slug", "canonicalUrl", "status"], "request body");
   const title = optionalString(input, "title");
   const bodyValue = optionalString(input, "body");
   const parsedBodyFormat = bodyFormat(input);
@@ -143,6 +154,7 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
   const parsedTags = stringList(input, "tags");
   const parsedCategories = stringList(input, "categories");
   const parsedFeaturedAssetId = featuredAssetId(input);
+  const parsedPublishingTargetGroupIds = publishingTargetGroupIds(input);
   const slug = optionalString(input, "slug");
   const canonicalUrl = optionalString(input, "canonicalUrl");
   const parsedStatus = status(input);
@@ -156,6 +168,7 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
     ...(parsedTags === undefined ? {} : { tags: parsedTags }),
     ...(parsedCategories === undefined ? {} : { categories: parsedCategories }),
     ...(parsedFeaturedAssetId === undefined ? {} : { featuredAssetId: parsedFeaturedAssetId }),
+    ...(parsedPublishingTargetGroupIds === undefined ? {} : { publishingTargetGroupIds: parsedPublishingTargetGroupIds }),
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),

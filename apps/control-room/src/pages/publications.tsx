@@ -52,6 +52,7 @@ interface PublicationEditor {
   readonly tags: string;
   readonly categories: string;
   readonly featuredAssetId: string;
+  readonly publishingTargetGroupIds: readonly string[];
   readonly imageAssets: readonly { readonly id: string; readonly label: string; readonly source: string }[];
   readonly language: string;
   readonly slug: string;
@@ -104,6 +105,7 @@ function editorForCreate(): PublicationEditor {
     tags: "",
     categories: "",
     featuredAssetId: "",
+    publishingTargetGroupIds: [],
     imageAssets: [],
     language: "en",
     slug: "",
@@ -111,6 +113,14 @@ function editorForCreate(): PublicationEditor {
     status: "draft",
     hasUnsupportedBlocks: false,
   };
+}
+
+function canonicalPublishingTargetGroupIds(entry: PublicationWorkspaceEntry): readonly string[] {
+  const value = entry.publication.current.content.attributes.publishingTargets;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  const groupIds = (value as Readonly<Record<string, unknown>>).groupIds;
+  if (!Array.isArray(groupIds)) return [];
+  return [...new Set(groupIds.filter((groupId): groupId is string => typeof groupId === "string" && Boolean(groupId.trim())).map((groupId) => groupId.trim()))].sort();
 }
 
 function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
@@ -132,6 +142,7 @@ function editorForEntry(entry: PublicationWorkspaceEntry): PublicationEditor {
     featuredAssetId: entry.publication.current.content.assets.find(
       (asset) => asset.kind === "image" && asset.attributes?.featured === true,
     )?.id ?? "",
+    publishingTargetGroupIds: canonicalPublishingTargetGroupIds(entry),
     imageAssets: entry.publication.current.content.assets
       .filter((asset) => asset.kind === "image")
       .map((asset) => ({
@@ -1829,6 +1840,99 @@ function destinationMatrixLabel(state: PublicationDestinationMatrixItem["state"]
   }
 }
 
+function PublishingTargetsField({
+  selected,
+  onChange,
+}: {
+  readonly selected: readonly string[];
+  readonly onChange: (groupIds: readonly string[]) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [groups, setGroups] = useState<readonly PublicationGroupRegistryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const items: PublicationGroupRegistryEntry[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await client.listPublicationGroups({
+            enabled: true,
+            limit: 100,
+            ...(cursor ? { cursor } : {}),
+          });
+          items.push(...page.items.filter((entry) => entry.group.routes.some((route) => route.enabled)));
+          cursor = page.nextCursor;
+        } while (cursor);
+        if (active) setGroups(items);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause : new Error("Publishing targets could not be loaded"));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [client]);
+
+  const availableIds = useMemo(() => new Set(groups.map((entry) => entry.group.id)), [groups]);
+  const unavailable = selected.filter((groupId) => !availableIds.has(groupId));
+
+  return (
+    <div className="publication-targets-field">
+      <div className="publication-targets-field__heading">
+        <span>
+          <strong>Publishing targets</strong>
+          <small>Choose exactly which Publication Groups may receive this publication. No target means publishing is blocked.</small>
+        </span>
+        <StatusPill value={selected.length ? `${selected.length} selected` : "none selected"} tone={selected.length ? "good" : "warn"} />
+      </div>
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : null}
+      {!loading && groups.length === 0 ? (
+        <EmptyState title="No enabled Publication Groups">Create or enable a Publishing route before this publication can be dispatched.</EmptyState>
+      ) : null}
+      {!loading && groups.length ? (
+        <div className="publication-targets-list">
+          {groups.map((entry) => {
+            const checked = selected.includes(entry.group.id);
+            const enabledRoutes = entry.group.routes.filter((route) => route.enabled);
+            return (
+              <label className="publication-target-option" key={entry.group.id}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(event) => {
+                    const next = event.target.checked
+                      ? [...selected, entry.group.id]
+                      : selected.filter((groupId) => groupId !== entry.group.id);
+                    onChange([...new Set(next)].sort());
+                  }}
+                />
+                <span>
+                  <strong>{entry.group.name}</strong>
+                  <small>{enabledRoutes.length} enabled route{enabledRoutes.length === 1 ? "" : "s"} · {enabledRoutes.map((route) => `${destinationLabel(route.destination.extensionId)} / ${route.destination.connectionId} / ${route.destination.channel}`).join(" · ")}</small>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+      {unavailable.length ? (
+        <div className="warning-banner" role="alert">
+          <strong>{unavailable.length} saved target{unavailable.length === 1 ? " is" : "s are"} unavailable.</strong>
+          <span>{unavailable.join(", ")}. Remove or re-enable these targets before publishing.</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PublishingSummaryPanel({ entry, nonce }: { readonly entry: PublicationWorkspaceEntry; readonly nonce: number }) {
   const { session } = useConnection();
   const client = session!.client;
@@ -2279,6 +2383,7 @@ export function PublicationsPage() {
         language: editor.language.trim() || "en",
         tags: listFromInput(editor.tags),
         categories: listFromInput(editor.categories),
+        publishingTargetGroupIds: editor.publishingTargetGroupIds,
         slug: editor.slug,
         canonicalUrl: editor.canonicalUrl,
         status: editor.status,
@@ -2331,7 +2436,14 @@ export function PublicationsPage() {
     }
   }, [client, editor]);
 
-  const canPublish = editor?.mode === "edit" && editor.status !== "archived" && !editor.hasUnsupportedBlocks;
+  const savedTargetIds = activeEntry ? canonicalPublishingTargetGroupIds(activeEntry) : [];
+  const targetSelectionSaved = editor?.mode === "edit" &&
+    JSON.stringify([...editor.publishingTargetGroupIds].sort()) === JSON.stringify([...savedTargetIds].sort());
+  const canPublish = editor?.mode === "edit" &&
+    editor.status !== "archived" &&
+    !editor.hasUnsupportedBlocks &&
+    editor.publishingTargetGroupIds.length > 0 &&
+    targetSelectionSaved;
 
   return (
     <>
@@ -2441,6 +2553,13 @@ export function PublicationsPage() {
                 />
                 {editor.bodyFormat === "html" ? <small>This publication preserves imported WordPress HTML losslessly. Saving creates a new canonical Blogmaatic revision without flattening the markup.</small> : null}
               </label>
+              <PublishingTargetsField
+                selected={editor.publishingTargetGroupIds}
+                onChange={(groupIds) => {
+                  setPendingPublish(false);
+                  setEditor((current) => current ? { ...current, publishingTargetGroupIds: groupIds } : current);
+                }}
+              />
               <div className="publication-editor__grid">
                 <label className="field"><span>Tags</span><input value={editor.tags} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, tags: event.target.value } : current); }} placeholder="news, launch, product" /></label>
                 <label className="field"><span>Categories</span><input value={editor.categories} onChange={(event) => { setPendingPublish(false); setEditor((current) => current ? { ...current, categories: event.target.value } : current); }} placeholder="Publishing, Tutorials" /></label>
@@ -2463,11 +2582,13 @@ export function PublicationsPage() {
                 <button className="button button--quiet" type="button" onClick={() => { setActiveEntry(null); setEditor(null); setPendingPublish(false); setDispatchResult(null); navigate("/publications"); }} disabled={busy !== null}>Close</button>
                 <button className="button button--primary" type="submit" disabled={busy !== null || !editor.title.trim() || editor.hasUnsupportedBlocks}>{busy === "save" ? "Saving…" : editor.mode === "create" ? "Create Draft" : "Save New Version"}</button>
                 {canPublish && !pendingPublish ? <button className="button publication-publish-button" type="button" onClick={() => setPendingPublish(true)} disabled={busy !== null}>{busy === "publish" ? "Publishing…" : "Approve & Publish"}</button> : null}
+                {editor.mode === "edit" && editor.publishingTargetGroupIds.length === 0 ? <small className="publication-publish-lock">Select and save at least one publishing target.</small> : null}
+                {editor.mode === "edit" && editor.publishingTargetGroupIds.length > 0 && !targetSelectionSaved ? <small className="publication-publish-lock">Save target changes before publishing.</small> : null}
               </div>
               {canPublish && pendingPublish ? (
                 <div className="confirmation-strip confirmation-strip--primary" role="group" aria-label="Confirm publication approval and dispatch">
                   <strong>Approve and publish “{editor.title}”?</strong>
-                  <span>This dispatches every enabled <code>publication.approved</code> Automation that matches the canonical event. The saved workspace snapshot is used for the dispatch.</span>
+                  <span>This dispatches only the {editor.publishingTargetGroupIds.length} saved Publication Group target{editor.publishingTargetGroupIds.length === 1 ? "" : "s"}. Matching <code>publication.approved</code> Automations receive only those selected groups.</span>
                   <div>
                     <button className="button button--quiet" type="button" onClick={() => setPendingPublish(false)} disabled={busy !== null}>Cancel</button>
                     <button className="button button--primary" type="button" onClick={() => void publish()} disabled={busy !== null} autoFocus>{busy === "publish" ? "Publishing…" : "Confirm publish"}</button>

@@ -57,3 +57,45 @@ test("publication metadata rejects malformed category and featured image values"
     /featuredAssetId must be a non-empty string or null/,
   );
 });
+
+
+test("publication targeting accepts normalized group ids on create and update", () => {
+  assert.deepEqual(
+    parsePublicationWorkspaceCreateBody({
+      title: "Targeted",
+      publishingTargetGroupIds: [" group-b ", "group-a", "group-b"],
+    }),
+    {
+      title: "Targeted",
+      publishingTargetGroupIds: ["group-b", "group-a"],
+    },
+  );
+
+  assert.deepEqual(
+    parsePublicationWorkspaceUpdateBody({
+      expectedVersion: 4,
+      publishingTargetGroupIds: [],
+    }),
+    {
+      expectedVersion: 4,
+      publishingTargetGroupIds: [],
+    },
+  );
+});
+
+test("publication targeting rejects malformed group ids", () => {
+  assert.throws(
+    () => parsePublicationWorkspaceCreateBody({
+      title: "Bad",
+      publishingTargetGroupIds: ["group-a", ""],
+    }),
+    /publishingTargetGroupIds must be an array of non-empty strings/,
+  );
+  assert.throws(
+    () => parsePublicationWorkspaceUpdateBody({
+      expectedVersion: 1,
+      publishingTargetGroupIds: "group-a",
+    }),
+    /publishingTargetGroupIds must be an array of non-empty strings/,
+  );
+});

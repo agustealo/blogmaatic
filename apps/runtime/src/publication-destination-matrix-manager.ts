@@ -9,7 +9,7 @@ import type {
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
 import type { PublicationPreviewManager } from "./publication-preview-manager.js";
-import type { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
+import { publicationTargetGroupIds, type PublicationWorkspaceManager } from "./publication-workspace-manager.js";
 
 export interface PublicationDestinationMatrixManagerOptions {
   readonly publications: PublicationWorkspaceManager;
@@ -67,16 +67,10 @@ export class PublicationDestinationMatrixManager implements OperatorPublicationD
     if (!publicationEntry) throw new Error(`Publication is not registered: ${publicationId}`);
 
     const groups = [];
-    let groupCursor: string | undefined;
-    do {
-      const page = await this.#publicationGroups.list({
-        enabled: true,
-        limit: 100,
-        ...(groupCursor ? { cursor: groupCursor } : {}),
-      });
-      groups.push(...page.items);
-      groupCursor = page.nextCursor;
-    } while (groupCursor);
+    for (const groupId of publicationTargetGroupIds(publicationEntry.publication)) {
+      const entry = await this.#publicationGroups.get(groupId);
+      if (entry) groups.push(entry);
+    }
 
     const history: DistributionHistoryRecord[] = [];
     let historyCursor: string | undefined;
