@@ -8,7 +8,7 @@ import { deflateSync } from "node:zlib";
 
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
-import { WordPressContentService, WordPressRestPublisher } from "../dist/index.js";
+import { WordPressContentService, WordPressRestPublisher, discoverSeoFields } from "../dist/index.js";
 
 function makeServer() {
   const posts = new Map();
@@ -2946,5 +2946,53 @@ test("WordPress featured media precedence is route-scoped with explicit none and
       groupId: "group-a",
     }),
     /featured media identity no longer matches route/,
+  );
+});
+
+
+test("SEO discovery exposes only unique writable string semantics", () => {
+  const fields = discoverSeoFields([
+    { key: "seo_title", type: "string", nullable: false, title: "Custom SEO title" },
+    { key: "seo_description", type: "string", nullable: false },
+    { key: "seo_canonical_url", type: "string", nullable: true },
+    { key: "seo_focus_keyphrase", type: "string", nullable: true },
+    { key: "rank_math_title", type: "string", nullable: false },
+    { key: "seo_description_count", type: "integer", nullable: false },
+  ]);
+  assert.deepEqual(fields.map((field) => field.semantic), [
+    "canonical",
+    "focus_keyphrase",
+    "description",
+  ]);
+  assert.equal(fields.some((field) => field.semantic === "title"), false);
+  assert.equal(fields.find((field) => field.semantic === "description").key, "seo_description");
+});
+
+test("SEO discovery recognizes compatible registered Yoast and Rank Math meta without assuming plugin APIs", () => {
+  const yoast = discoverSeoFields([
+    { key: "_yoast_wpseo_title", type: "string", nullable: false },
+    { key: "_yoast_wpseo_metadesc", type: "string", nullable: false },
+    { key: "_yoast_wpseo_canonical", type: "string", nullable: true },
+    { key: "_yoast_wpseo_focuskw", type: "string", nullable: true },
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(yoast.map((field) => [field.semantic, field.provider])),
+    {
+      canonical: "yoast-compatible-meta",
+      description: "yoast-compatible-meta",
+      focus_keyphrase: "yoast-compatible-meta",
+      title: "yoast-compatible-meta",
+    },
+  );
+
+  const rankMath = discoverSeoFields([
+    { key: "rank_math_title", type: "string", nullable: false },
+    { key: "rank_math_description", type: "string", nullable: false },
+    { key: "rank_math_canonical_url", type: "string", nullable: true },
+    { key: "rank_math_focus_keyword", type: "string", nullable: true },
+  ]);
+  assert.deepEqual(
+    new Set(rankMath.map((field) => field.semantic)),
+    new Set(["title", "description", "canonical", "focus_keyphrase"]),
   );
 });
