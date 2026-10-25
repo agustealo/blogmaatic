@@ -487,7 +487,9 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     const client = new LinkedInRestClient(connection, settings, this.#secrets);
     try {
       const post = await fetchPost(client, input.remote.id);
-      const remote = remoteIdentity(post);
+      const baseline = parseRemoteVersion(input.remote.version);
+      const remoteHash = remoteStateHash(post);
+      const remote = remoteIdentity(post, input.remote.version);
       if (post.author !== settings.authorUrn) {
         return {
           state: "unreachable",
@@ -504,6 +506,35 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
           detail: "Stored LinkedIn article source no longer matches this publication",
         };
       }
+      if (payload.image && !baseline) {
+        return {
+          state: "drifted",
+          remote,
+          fingerprint: remoteHash,
+          observedAt,
+          detail: "LinkedIn image projection lacks a verified Blogmaatic media baseline",
+        };
+      }
+      if (baseline) {
+        const mediaMatches = payload.image
+          ? baseline.mediaFingerprint === payload.image.fingerprint &&
+            baseline.mediaUrn === post.content?.media?.id
+          : baseline.mediaFingerprint === undefined && post.content?.media === undefined;
+        const synchronized =
+          baseline.desired === input.projection.fingerprint &&
+          baseline.remote === remoteHash &&
+          mediaMatches;
+        return {
+          state: synchronized ? "synchronized" : "drifted",
+          remote,
+          fingerprint: synchronized ? input.projection.fingerprint : baseline.desired,
+          observedAt,
+          detail: synchronized
+            ? "LinkedIn projection matches its verified Blogmaatic baseline"
+            : "LinkedIn post, media, or desired projection changed after verified delivery",
+        };
+      }
+
       const actual = fingerprint(remoteSemantic(post));
       const synchronized = actual === input.projection.fingerprint;
       return {
@@ -538,16 +569,42 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     const client = new LinkedInRestClient(connection, settings, this.#secrets);
 
     if (!request.existingRemote) {
+      let imageUrn: string | undefined;
+      let mediaEvidence: Readonly<Record<string, JsonValue>> | undefined;
+      if (payload.image) {
+        const rendered = await renderLinkedInImage(payload.image);
+        const initialized = await initializeImage(client, settings);
+        await client.uploadImageBytes(initialized.uploadUrl, rendered.bytes, rendered.mediaType);
+        await waitForImageAvailable(client, settings, initialized.imageUrn);
+        imageUrn = initialized.imageUrn;
+        mediaEvidence = {
+          assetId: payload.image.assetId,
+          imageUrn,
+          transformationFingerprint: payload.image.transform?.transformationFingerprint ?? null,
+          derivedAssetId: payload.image.transform?.derivedAssetId ?? null,
+          outputFingerprint: rendered.outputFingerprint,
+          mediaType: rendered.mediaType,
+          width: rendered.width,
+          height: rendered.height,
+          cacheHit: rendered.cacheHit,
+        };
+      }
+
       const response = await client.request<unknown>("/posts", {
         method: "POST",
-        body: JSON.stringify(creationBody(settings, payload)),
+        body: JSON.stringify(creationBody(settings, payload, imageUrn)),
       });
       const id = response.headers.get("x-restli-id");
       if (!id) throw new Error("LinkedIn create response did not include x-restli-id");
-      const remote: RemoteIdentity = {
-        id,
-        url: `https://www.linkedin.com/feed/update/${id}`,
-      };
+      const created = await fetchPost(client, id);
+      const remoteHash = remoteStateHash(created);
+      const version = encodeRemoteVersion(
+        request.projection.fingerprint,
+        remoteHash,
+        payload.image?.fingerprint,
+        imageUrn,
+      );
+      const remote = remoteIdentity(created, version);
       return {
         remote,
         acceptedAt: new Date().toISOString(),
@@ -556,6 +613,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
           apiVersion: settings.apiVersion,
           fidelityScore: payload.fidelity.score,
           fidelityExact: payload.fidelity.exact,
+          ...(mediaEvidence ? { media: mediaEvidence as JsonValue } : {}),
           idempotencyKey: request.idempotencyKey,
         },
       };
@@ -570,29 +628,67 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
         "LinkedIn structural post content drift cannot be updated safely in place; create a new publication route or repair the remote post explicitly",
       );
     }
-    const currentSemantic = remoteSemantic(current) as Readonly<Record<string, unknown>>;
-    const desired = desiredSemantic(settings, payload) as Readonly<Record<string, unknown>>;
-    const structuralCurrent = { ...currentSemantic, commentary: payload.commentary };
-    if (fingerprint(structuralCurrent) !== fingerprint(desired)) {
+
+    const baseline = parseRemoteVersion(request.existingRemote.version);
+    if (baseline && baseline.remote !== remoteStateHash(current)) {
+      throw new Error("LinkedIn remote state changed after the last verified delivery");
+    }
+    if (payload.image) {
+      if (
+        !baseline ||
+        baseline.mediaFingerprint !== payload.image.fingerprint ||
+        !baseline.mediaUrn ||
+        current.content?.media?.id !== baseline.mediaUrn
+      ) {
+        throw new Error(
+          "LinkedIn image content changed and cannot be updated safely in place; create a new publication route or restore the prior media selection",
+        );
+      }
+    } else if (current.content?.media) {
       throw new Error(
-        "LinkedIn remote state differs in fields that the Posts API does not safely update in place",
+        "LinkedIn remote post contains media that is absent from the desired projection",
       );
     }
-    if (current.commentary !== payload.commentary) {
+
+    if (!baseline) {
+      const currentSemantic = remoteSemantic(current) as Readonly<Record<string, unknown>>;
+      const desired = desiredSemantic(settings, payload) as Readonly<Record<string, unknown>>;
+      const structuralCurrent = { ...currentSemantic, commentary: payload.commentary };
+      if (fingerprint(structuralCurrent) !== fingerprint(desired)) {
+        throw new Error(
+          "LinkedIn remote state differs in fields that the Posts API does not safely update in place",
+        );
+      }
+    }
+
+    const commentaryChanged = current.commentary !== payload.commentary;
+    if (commentaryChanged) {
       await client.request<unknown>(`/posts/${encodeURIComponent(request.existingRemote.id)}`, {
         method: "POST",
         headers: { "X-RestLi-Method": "PARTIAL_UPDATE" },
         body: JSON.stringify({ patch: { $set: { commentary: payload.commentary } } }),
       });
     }
+
+    const verified = commentaryChanged
+      ? await fetchPost(client, request.existingRemote.id)
+      : current;
+    const mediaUrn = payload.image ? baseline?.mediaUrn : undefined;
+    const version = encodeRemoteVersion(
+      request.projection.fingerprint,
+      remoteStateHash(verified),
+      payload.image?.fingerprint,
+      mediaUrn,
+    );
     return {
-      remote: request.existingRemote,
+      remote: remoteIdentity(verified, version),
       acceptedAt: new Date().toISOString(),
       evidence: {
-        operation: current.commentary === payload.commentary ? "noop-update" : "commentary-update",
+        operation: commentaryChanged ? "commentary-update" : "noop-update",
         apiVersion: settings.apiVersion,
         fidelityScore: payload.fidelity.score,
         fidelityExact: payload.fidelity.exact,
+        ...(mediaUrn ? { imageUrn: mediaUrn } : {}),
         idempotencyKey: request.idempotencyKey,
       },
     };
