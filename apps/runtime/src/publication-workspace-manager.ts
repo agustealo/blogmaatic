@@ -850,6 +850,97 @@ export class PublicationWorkspaceManager {
     }, expectedVersion, now);
   }
 
+  async setDestinationSocialVariant(
+    publicationId: string,
+    expectedVersion: number,
+    state: {
+      readonly groupId: string;
+      readonly routeId: string;
+      readonly commentaryMode: "inherit" | "override";
+      readonly commentary?: string;
+      readonly mediaMode: "inherit" | "none" | "select";
+      readonly imageAssetIds?: readonly string[];
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    const groupId = state.groupId.trim();
+    const routeId = state.routeId.trim();
+    if (!groupId || !routeId) throw new Error("Social destination variant requires groupId and routeId");
+    const route = await this.#publishingTargetRoute(current.publication, groupId, routeId);
+
+    if (state.commentaryMode !== "inherit" && state.commentaryMode !== "override") {
+      throw new Error(`Unsupported social commentary mode: ${state.commentaryMode}`);
+    }
+    if (state.commentaryMode === "override") {
+      if (state.commentary === undefined) throw new Error("Social commentary override requires commentary");
+      if (state.commentary.length > 63000) throw new Error("Social commentary override must not exceed 63000 characters");
+    } else if (state.commentary !== undefined) {
+      throw new Error("Social commentary is only allowed when commentaryMode is override");
+    }
+
+    if (!["inherit", "none", "select"].includes(state.mediaMode)) {
+      throw new Error(`Unsupported social media mode: ${state.mediaMode}`);
+    }
+    let imageAssetIds: readonly string[] | undefined;
+    if (state.mediaMode === "select") {
+      const ids = state.imageAssetIds ?? [];
+      if (ids.length === 0) throw new Error("Social media select mode requires at least one image asset");
+      if (ids.length > 10) throw new Error("Social media select mode supports at most 10 images");
+      const seen = new Set<string>();
+      const normalized: string[] = [];
+      for (const rawId of ids) {
+        const assetId = rawId.trim();
+        if (!assetId || seen.has(assetId)) continue;
+        const asset = current.publication.current.content.assets.find((candidate) => candidate.id === assetId);
+        if (!asset) throw new Error(`Social image asset does not exist: ${assetId}`);
+        if (asset.kind !== "image") throw new Error(`Social media selection must contain only images: ${assetId}`);
+        seen.add(assetId);
+        normalized.push(assetId);
+      }
+      if (normalized.length === 0) throw new Error("Social media select mode requires at least one image asset");
+      imageAssetIds = normalized;
+    } else if (state.imageAssetIds !== undefined) {
+      throw new Error("Social imageAssetIds are only allowed when mediaMode is select");
+    }
+
+    const nextState: JsonValue = {
+      extensionId: route.destination.extensionId,
+      connectionId: route.destination.connectionId,
+      channel: route.destination.channel,
+      commentaryMode: state.commentaryMode,
+      ...(state.commentaryMode === "override" ? { commentary: state.commentary ?? "" } : {}),
+      mediaMode: state.mediaMode,
+      ...(imageAssetIds ? { imageAssetIds: [...imageAssetIds] } : {}),
+    };
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = withDestinationOverride(
+      oldAttributes,
+      groupId,
+      routeId,
+      route.destination,
+      { socialVariant: nextState },
+    );
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
+
+    const now = this.#now();
+    return this.#store.update({
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...current.publication.current.content,
+          attributes: nextAttributes,
+        },
+      },
+    }, expectedVersion, now);
+  }
+
   async setSourceFeaturedMedia(
     publicationId: string,
     expectedVersion: number,
