@@ -756,6 +756,32 @@ export interface OperatorPublicationDestinationMatrixManager {
   get(publicationId: string): Promise<PublicationDestinationMatrix>;
 }
 
+export type PublicationSocialCommentaryMode = "inherit" | "override";
+export type PublicationSocialMediaMode = "inherit" | "none" | "select";
+
+export interface PublicationSocialVariantBody {
+  readonly expectedVersion: number;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly commentaryMode: PublicationSocialCommentaryMode;
+  readonly commentary?: string;
+  readonly mediaMode: PublicationSocialMediaMode;
+  readonly imageAssetIds?: readonly string[];
+}
+
+export interface PublicationSocialVariantResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly extensionId: string;
+  readonly connectionId: string;
+  readonly channel: string;
+  readonly commentaryMode: PublicationSocialCommentaryMode;
+  readonly commentary?: string;
+  readonly mediaMode: PublicationSocialMediaMode;
+  readonly imageAssetIds?: readonly string[];
+}
+
 export interface OperatorPublicationWorkspaceManager {
   list(query?: PublicationWorkspaceListQuery): Promise<Page<PublicationWorkspaceEntry>>;
   get(publicationId: string): Promise<PublicationWorkspaceEntry | undefined>;
@@ -763,6 +789,11 @@ export interface OperatorPublicationWorkspaceManager {
   getVersion(publicationId: string, version: number): Promise<PublicationWorkspaceEntry | undefined>;
   create(input: PublicationWorkspaceCreateBody): Promise<PublicationWorkspaceEntry>;
   update(publicationId: string, input: PublicationWorkspaceUpdateBody): Promise<PublicationWorkspaceEntry>;
+  setDestinationSocialVariant(
+    publicationId: string,
+    expectedVersion: number,
+    state: Omit<PublicationSocialVariantBody, "expectedVersion">,
+  ): Promise<PublicationWorkspaceEntry>;
   approveAndDispatch(publicationId: string, expectedVersion: number): Promise<PublicationWorkspaceDispatchResult>;
 }
 
