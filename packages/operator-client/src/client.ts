@@ -71,6 +71,8 @@ import type {
   SourceContentTypeRecord,
   SourceEditorialOptionsBody,
   SourceEditorialOptionsResult,
+  SourceFeaturedMediaBody,
+  SourceFeaturedMediaResult,
   SourceRevisionRestoreBody,
   SourceRevisionRestoreResult,
   SourceMetaFieldDefinition,
@@ -409,6 +411,9 @@ export class OperatorClient {
       expectedVersion: input.expectedVersion,
       filename: input.filename,
       ...(input.featured === undefined ? {} : { featured: input.featured }),
+      ...(input.contentType === undefined ? {} : { contentType: input.contentType }),
+      ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
+      ...(input.routeId === undefined ? {} : { routeId: input.routeId }),
       ...(input.alt === undefined ? {} : { alt: input.alt }),
       ...(input.title === undefined ? {} : { title: input.title }),
     };
@@ -419,6 +424,16 @@ export class OperatorClient {
         rawBody: input.bytes,
         contentType: input.mediaType,
       },
+    );
+  }
+
+  setSourceFeaturedMedia(
+    connectionId: string,
+    input: SourceFeaturedMediaBody,
+  ): Promise<SourceFeaturedMediaResult> {
+    return this.#request<SourceFeaturedMediaResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/featured-media`,
+      { method: "POST", body: input },
     );
   }
 
