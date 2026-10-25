@@ -4,6 +4,7 @@ export interface LinkedInSettings {
   readonly apiRoot: string;
   readonly apiVersion: string;
   readonly authorUrn: string;
+  readonly assetSourceRoots: readonly string[];
   readonly accessTokenRef: string;
   readonly timeoutMs: number;
 }
