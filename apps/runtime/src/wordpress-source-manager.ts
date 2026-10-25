@@ -279,6 +279,16 @@ function sourceAuthorRecord(connectionId: string, author: WordPressUserView): So
   };
 }
 
+function canonicalWordPressAssetId(
+  connectionId: string,
+  mediaId: number,
+  routeScoped: boolean,
+): string {
+  return routeScoped
+    ? `wordpress-media-${encodeURIComponent(connectionId)}-${mediaId}`
+    : `wordpress-media-${mediaId}`;
+}
+
 function sourceAssetRecord(connectionId: string, media: WordPressMediaView): SourceAssetRecord {
   return {
     connectionId,
@@ -1070,7 +1080,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       ...(input.title === undefined ? {} : { title: input.title }),
     });
     const asset: PublicationAsset = {
-      id: `wordpress-media-${media.id}`,
+      id: canonicalWordPressAssetId(connectionId, media.id, Boolean(input.groupId && input.routeId)),
       kind: "image",
       source: media.sourceUrl,
       ...(media.mediaType ? { mediaType: media.mediaType } : {}),
@@ -1126,7 +1136,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
 
     const media = await this.#content.getMedia(connectionId, remoteId);
     const asset: PublicationAsset = {
-      id: `wordpress-media-${media.id}`,
+      id: canonicalWordPressAssetId(connectionId, media.id, Boolean(body.groupId && body.routeId)),
       kind: "image",
       source: media.sourceUrl,
       ...(media.mediaType ? { mediaType: media.mediaType } : {}),
