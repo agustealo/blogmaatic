@@ -348,6 +348,16 @@ export class OperatorClient {
     return response.items;
   }
 
+  setSourceStandardTaxonomy(
+    connectionId: string,
+    input: SourceStandardTaxonomyBody,
+  ): Promise<SourceStandardTaxonomyResult> {
+    return this.#request<SourceStandardTaxonomyResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/standard-taxonomy`,
+      { method: "POST", body: input },
+    );
+  }
+
   setSourceTaxonomySelections(
     connectionId: string,
     input: SourceTaxonomySelectionBody,
