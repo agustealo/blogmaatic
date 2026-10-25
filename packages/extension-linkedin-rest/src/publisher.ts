@@ -536,13 +536,16 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
       throw new Error(`Unsupported LinkedIn social media mode: ${mediaMode}`);
     }
 
-    const wantsImage = mediaMode === "select" || (mediaMode !== "none" && routeMode === "image");
+    const selectedAssets = mediaMode === "select"
+      ? selectedImageAssets(publication, social!)
+      : [];
+    const wantsImage = selectedAssets.length > 0 || (mediaMode !== "none" && routeMode === "image");
     const adapted = adaptPublicationForSocial(
       publication,
       {
         id: LINKEDIN_REST_EXTENSION_ID,
         maxCommentaryChars: 3000,
-        maxImages: wantsImage ? 1 : 0,
+        maxImages: mediaMode === "select" ? 20 : wantsImage ? 1 : 0,
         supportsArticleCard: routeMode === "article",
         supportedBlockKinds: wantsImage ? ["paragraph", "image", "gallery"] : ["paragraph"],
       },
@@ -578,31 +581,35 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     if (!commentary) throw new Error("LinkedIn commentary override is missing commentary");
     if (commentary.length > 3000) throw new Error("LinkedIn commentary override exceeds 3000 characters");
 
-    let imageAsset: PublicationAsset | undefined;
-    if (mediaMode === "select") {
-      imageAsset = selectedImageAsset(publication, social!);
-    } else if (mediaMode !== "none" && routeMode === "image") {
-      imageAsset = adapted.imageAssets[0];
-      if (!imageAsset) throw new Error("LinkedIn image mode requires one canonical image");
+    let imageAssets: readonly PublicationAsset[] = selectedAssets;
+    if (mediaMode !== "select" && mediaMode !== "none" && routeMode === "image") {
+      const inherited = adapted.imageAssets[0];
+      if (!inherited) throw new Error("LinkedIn image mode requires one canonical image");
+      imageAssets = [inherited];
     }
 
-    const mode: LinkedInProjectionMode = imageAsset
-      ? "image"
-      : routeMode === "article"
-        ? "article"
-        : "text";
+    const mode: LinkedInProjectionMode = imageAssets.length > 1
+      ? "multiImage"
+      : imageAssets.length === 1
+        ? "image"
+        : routeMode === "article"
+          ? "article"
+          : "text";
     if (mode === "article" && !adapted.article) {
       throw new Error("LinkedIn article mode requires a canonical publication URL");
     }
 
-    const image = imageAsset
-      ? await compileLinkedInImage(imageAsset, settings, imageTransformSpec(route))
-      : undefined;
+    const compiledImages: LinkedInImageSpec[] = [];
+    for (const asset of imageAssets) {
+      compiledImages.push(await compileLinkedInImage(asset, settings, imageTransformSpec(route)));
+    }
+
     const payload: LinkedInProjectionPayload = {
       mode,
       commentary,
       ...(mode === "article" && adapted.article ? { article: adapted.article } : {}),
-      ...(image ? { image } : {}),
+      ...(mode === "image" ? { image: compiledImages[0]! } : {}),
+      ...(mode === "multiImage" ? { images: compiledImages } : {}),
       fidelity: adapted.fidelity,
     };
     const hash = fingerprint(desiredSemantic(settings, payload));
@@ -626,6 +633,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     );
     const settings = parseSettings(connection);
     const payload = parsePayload(input.projection);
+    const images = projectedImages(payload);
 
     if (!input.remote) {
       return {
@@ -638,7 +646,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     const client = new LinkedInRestClient(connection, settings, this.#secrets);
     try {
       const post = await fetchPost(client, input.remote.id);
-      const remote = remoteIdentity(post, payload.image ? input.remote.version : undefined);
+      const remote = remoteIdentity(post, images.length > 0 ? input.remote.version : undefined);
       if (post.author !== settings.authorUrn) {
         return {
           state: "unreachable",
@@ -648,30 +656,32 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
         };
       }
 
-      if (payload.image) {
+      if (images.length > 0) {
         const baseline = parseImageRemoteVersion(input.remote.version);
-        if (!baseline) {
+        if (!baseline || baseline.images.length !== images.length) {
           return {
             state: "drifted",
             remote,
             observedAt,
-            detail: "LinkedIn image post lacks a Blogmaatic image ownership baseline",
+            detail: "LinkedIn media post lacks the expected Blogmaatic image ownership baseline",
           };
         }
-        if (baseline.imageFingerprint !== fingerprint(imageSemantic(payload.image))) {
-          return {
-            state: "drifted",
-            remote,
-            observedAt,
-            detail: "LinkedIn desired image identity changed after delivery",
-          };
+        for (let index = 0; index < images.length; index += 1) {
+          if (baseline.images[index]!.imageFingerprint !== fingerprint(imageSemantic(images[index]!))) {
+            return {
+              state: "drifted",
+              remote,
+              observedAt,
+              detail: "LinkedIn desired image identity or order changed after delivery",
+            };
+          }
         }
-        if (post.content?.media?.id !== baseline.imageUrn || post.content?.article !== undefined) {
+        if (!structuralContentMatches(post, payload, input.remote.version)) {
           return {
             state: "drifted",
             remote,
             observedAt,
-            detail: "LinkedIn remote media no longer matches the uploaded Blogmaatic image",
+            detail: "LinkedIn remote media no longer matches the uploaded Blogmaatic image set",
           };
         }
       } else if (payload.article && post.content?.article?.source !== payload.article.source) {
@@ -681,7 +691,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
           observedAt,
           detail: "Stored LinkedIn article source no longer matches this publication",
         };
-      } else if (post.content?.media !== undefined) {
+      } else if (post.content?.media !== undefined || post.content?.multiImage !== undefined) {
         return {
           state: "drifted",
           remote,
@@ -690,7 +700,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
         };
       }
 
-      const actual = fingerprint(remoteSemantic(post, payload.image));
+      const actual = fingerprint(remoteSemantic(post, payload));
       const synchronized = actual === input.projection.fingerprint;
       return {
         state: synchronized ? "synchronized" : "drifted",
@@ -721,20 +731,21 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     );
     const settings = parseSettings(connection);
     const payload = parsePayload(request.projection);
+    const images = projectedImages(payload);
     const client = new LinkedInRestClient(connection, settings, this.#secrets);
 
     if (!request.existingRemote) {
-      let imageUrn: string | undefined;
-      let mediaEvidence: Readonly<Record<string, JsonValue>> | undefined;
-      if (payload.image) {
-        const rendered = await renderLinkedInImage(payload.image);
+      const imageUrns: string[] = [];
+      const mediaEvidence: JsonValue[] = [];
+      for (const image of images) {
+        const rendered = await renderLinkedInImage(image);
         const initialized = await initializeImage(client, settings);
         await client.uploadBytes(initialized.uploadUrl, rendered.bytes, rendered.mediaType);
         await waitForImageAvailable(client, initialized.imageUrn);
-        imageUrn = initialized.imageUrn;
-        mediaEvidence = {
-          linkedInImageUrn: imageUrn,
-          assetId: payload.image.assetId,
+        imageUrns.push(initialized.imageUrn);
+        mediaEvidence.push({
+          linkedInImageUrn: initialized.imageUrn,
+          assetId: image.assetId,
           transformationFingerprint: rendered.transformationFingerprint,
           derivedAssetId: rendered.derivedAssetId,
           outputFingerprint: rendered.outputFingerprint,
@@ -742,20 +753,20 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
           width: rendered.width,
           height: rendered.height,
           cacheHit: rendered.cacheHit,
-        };
+        });
       }
 
       const response = await client.request<unknown>("/posts", {
         method: "POST",
-        body: JSON.stringify(creationBody(settings, payload, imageUrn)),
+        body: JSON.stringify(creationBody(settings, payload, imageUrns)),
       });
       const id = response.headers.get("x-restli-id");
       if (!id) throw new Error("LinkedIn create response did not include x-restli-id");
       const remote: RemoteIdentity = {
         id,
         url: `https://www.linkedin.com/feed/update/${id}`,
-        ...(payload.image && imageUrn
-          ? { version: encodeImageRemoteVersion(imageUrn, payload.image) }
+        ...(images.length > 0
+          ? { version: encodeImageRemoteVersion(imageUrns, images) }
           : {}),
       };
       return {
@@ -767,7 +778,8 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
           fidelityScore: payload.fidelity.score,
           fidelityExact: payload.fidelity.exact,
           idempotencyKey: request.idempotencyKey,
-          ...(mediaEvidence ? { media: mediaEvidence as JsonValue } : {}),
+          ...(mediaEvidence.length === 1 ? { media: mediaEvidence[0]! } : {}),
+          ...(mediaEvidence.length > 1 ? { mediaItems: mediaEvidence, imageCount: mediaEvidence.length } : {}),
         },
       };
     }
@@ -782,7 +794,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
       );
     }
 
-    const currentSemantic = remoteSemantic(current, payload.image) as Readonly<Record<string, unknown>>;
+    const currentSemantic = remoteSemantic(current, payload) as Readonly<Record<string, unknown>>;
     const desired = desiredSemantic(settings, payload) as Readonly<Record<string, unknown>>;
     const structuralCurrent = { ...currentSemantic, commentary: payload.commentary };
     if (fingerprint(structuralCurrent) !== fingerprint(desired)) {
@@ -797,6 +809,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
         body: JSON.stringify({ patch: { $set: { commentary: payload.commentary } } }),
       });
     }
+    const baseline = parseImageRemoteVersion(request.existingRemote.version);
     return {
       remote: request.existingRemote,
       acceptedAt: new Date().toISOString(),
@@ -806,14 +819,23 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
         fidelityScore: payload.fidelity.score,
         fidelityExact: payload.fidelity.exact,
         idempotencyKey: request.idempotencyKey,
-        ...(payload.image ? {
+        ...(images.length === 1 ? {
           media: {
-            linkedInImageUrn: parseImageRemoteVersion(request.existingRemote.version)?.imageUrn ?? null,
-            assetId: payload.image.assetId,
+            linkedInImageUrn: baseline?.images[0]?.imageUrn ?? null,
+            assetId: images[0]!.assetId,
             reused: true,
           },
+        } : {}),
+        ...(images.length > 1 ? {
+          mediaItems: images.map((image, index) => ({
+            linkedInImageUrn: baseline?.images[index]?.imageUrn ?? null,
+            assetId: image.assetId,
+            reused: true,
+          })),
+          imageCount: images.length,
         } : {}),
       },
     };
   }
+
 }
