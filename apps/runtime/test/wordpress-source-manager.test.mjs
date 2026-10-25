@@ -2107,3 +2107,198 @@ test("workspace-native WordPress routes attach and upload connection-namespaced 
     assetId: "wordpress-media-wp-a-77",
   });
 });
+
+
+test("semantic SEO discovery and updates reuse destination REST meta without erasing unrelated fields", async () => {
+  const route = {
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  };
+  let current = {
+    publication: {
+      id: "publication-seo",
+      createdAt: "2026-10-25T21:40:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-10-25T21:40:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "SEO proof",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            publishingTargets: { groupIds: ["group-main"] },
+            destinationOverrides: {
+              schemaVersion: 1,
+              groups: {
+                "group-main": {
+                  routes: {
+                    wordpress: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-main",
+                      channel: "posts",
+                      meta: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-main",
+                        contentType: "posts",
+                        values: {
+                          custom_score: 9,
+                          seo_title: "Old SEO title",
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      provenance: { source: "blogmaatic.publication-workspace" },
+    },
+    version: 4,
+    recordedAt: "2026-10-25T21:40:00.000Z",
+    updatedAt: "2026-10-25T21:40:00.000Z",
+  };
+  let persisted;
+  const fields = [
+    { key: "custom_score", type: "integer", nullable: false },
+    { key: "seo_title", type: "string", nullable: false, title: "Search title" },
+    { key: "seo_description", type: "string", nullable: false },
+    { key: "seo_canonical_url", type: "string", nullable: true },
+  ];
+  const manager = new WordPressSourceManager({
+    content: {
+      async listRestMetaFields(connectionId, contentType) {
+        assert.equal(connectionId, "wp-main");
+        assert.equal(contentType, "posts");
+        return fields;
+      },
+    },
+    publisher: {},
+    publicationGroups: {
+      async get(groupId) {
+        assert.equal(groupId, "group-main");
+        return {
+          enabled: true,
+          group: { id: "group-main", name: "Main", policySetId: "allow", routes: [route] },
+        };
+      },
+    },
+    publications: {
+      async get(id) {
+        return id === "publication-seo" ? current : undefined;
+      },
+      async setSourceMetaValues(publicationId, expectedVersion, state) {
+        assert.equal(publicationId, "publication-seo");
+        assert.equal(expectedVersion, 4);
+        persisted = state;
+        current = {
+          ...current,
+          version: 5,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+            },
+          },
+        };
+        return current;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const discovered = await manager.listSeoFields("wp-main", "posts");
+  assert.deepEqual(
+    discovered.map((field) => [field.semantic, field.key]),
+    [
+      ["description", "seo_description"],
+      ["title", "seo_title"],
+      ["canonical", "seo_canonical_url"],
+    ].sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+  );
+
+  await assert.rejects(
+    () => manager.setSeoValues("wp-main", {
+      publicationId: "publication-seo",
+      expectedVersion: 4,
+      contentType: "posts",
+      groupId: "group-main",
+      routeId: "wordpress",
+      values: { canonical: "javascript:alert(1)" },
+    }),
+    /must use http or https/,
+  );
+  assert.equal(persisted, undefined);
+
+  const result = await manager.setSeoValues("wp-main", {
+    publicationId: "publication-seo",
+    expectedVersion: 4,
+    contentType: "posts",
+    groupId: "group-main",
+    routeId: "wordpress",
+    values: {
+      title: "New SEO title",
+      description: "A useful description",
+      canonical: "https://example.test/articles/seo-proof",
+    },
+  });
+  assert.equal(result.publication.version, 5);
+  assert.deepEqual(result.values, {
+    title: "New SEO title",
+    description: "A useful description",
+    canonical: "https://example.test/articles/seo-proof",
+  });
+  assert.deepEqual(persisted, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "posts",
+    groupId: "group-main",
+    routeId: "wordpress",
+    values: {
+      custom_score: 9,
+      seo_title: "New SEO title",
+      seo_description: "A useful description",
+      seo_canonical_url: "https://example.test/articles/seo-proof",
+    },
+  });
+});
+
+test("semantic SEO refuses fields that are not uniquely writable on the connected site", async () => {
+  const manager = new WordPressSourceManager({
+    content: {
+      async listRestMetaFields() {
+        return [
+          { key: "seo_title", type: "string", nullable: false },
+          { key: "rank_math_title", type: "string", nullable: false },
+          { key: "seo_description", type: "string", nullable: false },
+        ];
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get() { throw new Error("must not read publication"); },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const fields = await manager.listSeoFields("wp-main", "posts");
+  assert.deepEqual(fields.map((field) => field.semantic), ["description"]);
+});
