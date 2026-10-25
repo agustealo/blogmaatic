@@ -201,6 +201,29 @@ function routeDestinationOverride(
   return objectRecord(routes?.[routeId]);
 }
 
+function legacySourceRouteMatchesUi(
+  entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  groupId?: string,
+  routeId?: string,
+): boolean {
+  if (
+    entry.publication.provenance.extensionId !== "blogmaatic.wordpress-rest" ||
+    entry.publication.provenance.connectionId !== connectionId
+  ) {
+    return false;
+  }
+  if (!groupId || !routeId) return true;
+  const wordpress = objectRecord(entry.publication.current.content.attributes.wordpress);
+  const importedGroupId = typeof wordpress?.groupId === "string" ? wordpress.groupId : undefined;
+  const importedRouteId = typeof wordpress?.routeId === "string" ? wordpress.routeId : undefined;
+  if (importedGroupId || importedRouteId) {
+    return importedGroupId === groupId && importedRouteId === routeId;
+  }
+  const targets = canonicalPublishingTargetGroupIds(entry);
+  return targets.length === 1 && targets[0] === groupId;
+}
+
 function canonicalSourceAuthor(
   entry: PublicationWorkspaceEntry,
   groupId?: string,
@@ -364,22 +387,29 @@ function wordpressContentType(entry: PublicationWorkspaceEntry): string | undefi
   return undefined;
 }
 
-function canonicalSourceEditorial(entry: PublicationWorkspaceEntry): {
+function canonicalSourceEditorial(
+  entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  groupId?: string,
+  routeId?: string,
+): {
   readonly password: string;
   readonly commentStatus?: "open" | "closed";
   readonly pingStatus?: "open" | "closed";
   readonly sticky?: boolean;
   readonly format?: string;
 } {
-  const value = entry.publication.current.content.attributes.sourceEditorial;
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-    const record = value as Readonly<Record<string, unknown>>;
+  const scoped = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.editorial);
+  const value = scoped ?? (legacySourceRouteMatchesUi(entry, connectionId, groupId, routeId)
+    ? objectRecord(entry.publication.current.content.attributes.sourceEditorial)
+    : undefined);
+  if (value) {
     return {
-      password: typeof record.password === "string" ? record.password : "",
-      ...(record.commentStatus === "open" || record.commentStatus === "closed" ? { commentStatus: record.commentStatus } : {}),
-      ...(record.pingStatus === "open" || record.pingStatus === "closed" ? { pingStatus: record.pingStatus } : {}),
-      ...(typeof record.sticky === "boolean" ? { sticky: record.sticky } : {}),
-      ...(typeof record.format === "string" ? { format: record.format } : {}),
+      password: typeof value.password === "string" ? value.password : "",
+      ...(value.commentStatus === "open" || value.commentStatus === "closed" ? { commentStatus: value.commentStatus } : {}),
+      ...(value.pingStatus === "open" || value.pingStatus === "closed" ? { pingStatus: value.pingStatus } : {}),
+      ...(typeof value.sticky === "boolean" ? { sticky: value.sticky } : {}),
+      ...(typeof value.format === "string" ? { format: value.format } : {}),
     };
   }
   return { password: "" };
@@ -393,16 +423,22 @@ function sourceTypeSupports(type: SourceContentTypeRecord | null): readonly stri
 function SourceEditorialOptionsPanel({
   entry,
   connectionId,
+  contentType: explicitContentType,
+  groupId,
+  routeId,
   onUpdated,
 }: {
   readonly entry: PublicationWorkspaceEntry;
   readonly connectionId: string;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
 }) {
   const { session } = useConnection();
   const client = session!.client;
-  const contentType = wordpressContentType(entry);
-  const canonical = canonicalSourceEditorial(entry);
+  const contentType = explicitContentType ?? wordpressContentType(entry);
+  const canonical = canonicalSourceEditorial(entry, connectionId, groupId, routeId);
   const [type, setType] = useState<SourceContentTypeRecord | null>(null);
   const [password, setPassword] = useState(canonical.password);
   const [commentStatus, setCommentStatus] = useState<"open" | "closed">(canonical.commentStatus ?? "open");
@@ -414,13 +450,13 @@ function SourceEditorialOptionsPanel({
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const next = canonicalSourceEditorial(entry);
+    const next = canonicalSourceEditorial(entry, connectionId, groupId, routeId);
     setPassword(next.password);
     setCommentStatus(next.commentStatus ?? "open");
     setPingStatus(next.pingStatus ?? "open");
     setSticky(next.sticky ?? false);
     setFormat(next.format ?? "standard");
-  }, [entry.publication.current.id]);
+  }, [connectionId, entry.publication.current.id, groupId, routeId]);
 
   useEffect(() => {
     let active = true;
@@ -465,6 +501,8 @@ function SourceEditorialOptionsPanel({
         ...(supportsDiscussion ? { commentStatus, pingStatus } : {}),
         ...(supportsSticky ? { sticky } : {}),
         ...(supportsFormats ? { format } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
       });
       onUpdated(result.publication);
     } catch (cause) {
@@ -540,19 +578,26 @@ function SourceEditorialOptionsPanel({
   );
 }
 
-function canonicalSourcePage(entry: PublicationWorkspaceEntry): {
+function canonicalSourcePage(
+  entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  groupId?: string,
+  routeId?: string,
+): {
   readonly parentRemoteId: string | null;
   readonly template: string | null;
   readonly menuOrder: number;
 } {
-  const value = entry.publication.current.content.attributes.sourcePage;
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-    const record = value as Readonly<Record<string, unknown>>;
+  const scoped = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.pageStructure);
+  const value = scoped ?? (legacySourceRouteMatchesUi(entry, connectionId, groupId, routeId)
+    ? objectRecord(entry.publication.current.content.attributes.sourcePage)
+    : undefined);
+  if (value) {
     return {
-      parentRemoteId: typeof record.parentRemoteId === "string" ? record.parentRemoteId : null,
-      template: typeof record.template === "string" ? record.template : null,
-      menuOrder: typeof record.menuOrder === "number" && Number.isSafeInteger(record.menuOrder) && record.menuOrder >= 0
-        ? record.menuOrder
+      parentRemoteId: typeof value.parentRemoteId === "string" ? value.parentRemoteId : null,
+      template: typeof value.template === "string" ? value.template : null,
+      menuOrder: typeof value.menuOrder === "number" && Number.isSafeInteger(value.menuOrder) && value.menuOrder >= 0
+        ? value.menuOrder
         : 0,
     };
   }
@@ -562,16 +607,22 @@ function canonicalSourcePage(entry: PublicationWorkspaceEntry): {
 function SourcePageStructurePanel({
   entry,
   connectionId,
+  contentType: explicitContentType,
+  groupId,
+  routeId,
   onUpdated,
 }: {
   readonly entry: PublicationWorkspaceEntry;
   readonly connectionId: string;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
 }) {
   const { session } = useConnection();
   const client = session!.client;
-  const contentType = wordpressContentType(entry);
-  const canonical = canonicalSourcePage(entry);
+  const contentType = explicitContentType ?? wordpressContentType(entry);
+  const canonical = canonicalSourcePage(entry, connectionId, groupId, routeId);
   const [type, setType] = useState<SourceContentTypeRecord | null>(null);
   const [parents, setParents] = useState<readonly SourceContentRecord[]>([]);
   const [parentSearch, setParentSearch] = useState("");
@@ -584,11 +635,11 @@ function SourcePageStructurePanel({
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const next = canonicalSourcePage(entry);
+    const next = canonicalSourcePage(entry, connectionId, groupId, routeId);
     setParentRemoteId(next.parentRemoteId ?? "");
     setTemplate(next.template ?? "");
     setMenuOrder(String(next.menuOrder));
-  }, [entry.publication.current.id]);
+  }, [connectionId, entry.publication.current.id, groupId, routeId]);
 
   useEffect(() => {
     let active = true;
@@ -650,6 +701,8 @@ function SourcePageStructurePanel({
         parentRemoteId: parentRemoteId || null,
         template: template.trim() || null,
         menuOrder: parsedOrder,
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
       });
       onUpdated(result.publication);
     } catch (cause) {
@@ -916,7 +969,7 @@ function WordPressDestinationSettings({
       <div className="wordpress-destination-settings__heading">
         <span>
           <strong>WordPress destination settings</strong>
-          <small>Each selected WordPress route owns its author and native publishing state independently.</small>
+          <small>Each selected WordPress route owns its author, publishing, taxonomy, REST meta, editorial, and page settings independently.</small>
         </span>
         <StatusPill value={loading ? "loading" : `${routes.length} route${routes.length === 1 ? "" : "s"}`} tone={routes.length ? "good" : "warn"} />
       </div>
@@ -943,6 +996,38 @@ function WordPressDestinationSettings({
             groupId={route.groupId}
             routeId={route.routeId}
             onAssigned={onUpdated}
+          />
+          <SourceEditorialOptionsPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
+          <SourcePageStructurePanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
+          <SourceCustomTaxonomyPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
+          <SourceRestMetaPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
           />
         </section>
       ))}
@@ -1100,15 +1185,20 @@ function SourceTaxonomyPanel({
 
 function canonicalCustomTaxonomySelections(
   entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  groupId?: string,
+  routeId?: string,
 ): Readonly<Record<string, readonly string[]>> {
-  const source = entry.publication.current.content.attributes.sourceTaxonomies;
-  if (source === null || typeof source !== "object" || Array.isArray(source)) return {};
-  const taxonomies = (source as Readonly<Record<string, unknown>>).taxonomies;
-  if (taxonomies === null || typeof taxonomies !== "object" || Array.isArray(taxonomies)) return {};
+  const scoped = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.taxonomies);
+  const source = scoped ?? (legacySourceRouteMatchesUi(entry, connectionId, groupId, routeId)
+    ? objectRecord(entry.publication.current.content.attributes.sourceTaxonomies)
+    : undefined);
+  const taxonomies = objectRecord(source?.taxonomies);
+  if (!taxonomies) return {};
   const result: Record<string, readonly string[]> = {};
-  for (const [taxonomyKey, value] of Object.entries(taxonomies as Readonly<Record<string, unknown>>)) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
-    const names = (value as Readonly<Record<string, unknown>>).names;
+  for (const [taxonomyKey, value] of Object.entries(taxonomies)) {
+    const record = objectRecord(value);
+    const names = record?.names;
     if (!Array.isArray(names)) continue;
     result[taxonomyKey] = names.filter((name): name is string => typeof name === "string");
   }
@@ -1132,18 +1222,24 @@ function normalizeTaxonomySelections(
 function SourceCustomTaxonomyPanel({
   entry,
   connectionId,
+  contentType: explicitContentType,
+  groupId,
+  routeId,
   onUpdated,
 }: {
   readonly entry: PublicationWorkspaceEntry;
   readonly connectionId: string;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
 }) {
   const { session } = useConnection();
   const client = session!.client;
-  const contentType = wordpressContentType(entry);
+  const contentType = explicitContentType ?? wordpressContentType(entry);
   const canonical = useMemo(
-    () => normalizeTaxonomySelections(canonicalCustomTaxonomySelections(entry)),
-    [entry.publication.current.id],
+    () => normalizeTaxonomySelections(canonicalCustomTaxonomySelections(entry, connectionId, groupId, routeId)),
+    [connectionId, entry.publication.current.id, groupId, routeId],
   );
   const [definitions, setDefinitions] = useState<readonly SourceTaxonomyDefinitionRecord[]>([]);
   const [taxonomyKey, setTaxonomyKey] = useState("");
@@ -1269,6 +1365,8 @@ function SourceCustomTaxonomyPanel({
         expectedVersion: entry.version,
         contentType,
         selections: normalizeTaxonomySelections(selections),
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
       });
       onUpdated(result.publication);
     } catch (cause) {
@@ -1373,27 +1471,42 @@ function SourceCustomTaxonomyPanel({
 
 type SourceMetaValue = SourceMetaValuesBody["values"][string];
 
-function canonicalSourceMetaValues(entry: PublicationWorkspaceEntry): Readonly<Record<string, SourceMetaValue>> {
-  const source = entry.publication.current.content.attributes.sourceMeta;
-  if (source === null || typeof source !== "object" || Array.isArray(source)) return {};
-  const values = (source as Readonly<Record<string, unknown>>).values;
-  if (values === null || typeof values !== "object" || Array.isArray(values)) return {};
-  return values as Readonly<Record<string, SourceMetaValue>>;
+function canonicalSourceMetaValues(
+  entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  groupId?: string,
+  routeId?: string,
+): Readonly<Record<string, SourceMetaValue>> {
+  const scoped = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.meta);
+  const source = scoped ?? (legacySourceRouteMatchesUi(entry, connectionId, groupId, routeId)
+    ? objectRecord(entry.publication.current.content.attributes.sourceMeta)
+    : undefined);
+  const values = objectRecord(source?.values);
+  return values ? values as Readonly<Record<string, SourceMetaValue>> : {};
 }
 
 function SourceRestMetaPanel({
   entry,
   connectionId,
+  contentType: explicitContentType,
+  groupId,
+  routeId,
   onUpdated,
 }: {
   readonly entry: PublicationWorkspaceEntry;
   readonly connectionId: string;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
 }) {
   const { session } = useConnection();
   const client = session!.client;
-  const contentType = wordpressContentType(entry);
-  const canonical = useMemo(() => canonicalSourceMetaValues(entry), [entry.publication.current.id]);
+  const contentType = explicitContentType ?? wordpressContentType(entry);
+  const canonical = useMemo(
+    () => canonicalSourceMetaValues(entry, connectionId, groupId, routeId),
+    [connectionId, entry.publication.current.id, groupId, routeId],
+  );
   const [fields, setFields] = useState<readonly SourceMetaFieldDefinition[]>([]);
   const [values, setValues] = useState<Readonly<Record<string, SourceMetaValue>>>(canonical);
   const [complexDrafts, setComplexDrafts] = useState<Readonly<Record<string, string>>>({});
@@ -1473,6 +1586,8 @@ function SourceRestMetaPanel({
         expectedVersion: entry.version,
         contentType,
         values: next,
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
       });
       onUpdated(result.publication);
     } catch (cause) {
@@ -2739,26 +2854,8 @@ export function PublicationsPage() {
           {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
           typeof activeEntry.publication.provenance.connectionId === "string" ? (
             <>
-              <SourceEditorialOptionsPanel
-                entry={activeEntry}
-                connectionId={activeEntry.publication.provenance.connectionId}
-                onUpdated={(next) => {
-                  setActiveEntry(next);
-                  setEditor(editorForEntry(next));
-                  setPendingPublish(false);
-                  setChangeNonce((value) => value + 1);
-                }}
-              />
-              <SourcePageStructurePanel
-                entry={activeEntry}
-                connectionId={activeEntry.publication.provenance.connectionId}
-                onUpdated={(next) => {
-                  setActiveEntry(next);
-                  setEditor(editorForEntry(next));
-                  setPendingPublish(false);
-                  setChangeNonce((value) => value + 1);
-                }}
-              />
+              
+              
               <SourceTaxonomyPanel
                 connectionId={activeEntry.publication.provenance.connectionId}
                 onSelect={(kind, name) => {
@@ -2771,26 +2868,8 @@ export function PublicationsPage() {
                   } : current);
                 }}
               />
-              <SourceCustomTaxonomyPanel
-                entry={activeEntry}
-                connectionId={activeEntry.publication.provenance.connectionId}
-                onUpdated={(next) => {
-                  setActiveEntry(next);
-                  setEditor(editorForEntry(next));
-                  setPendingPublish(false);
-                  setChangeNonce((value) => value + 1);
-                }}
-              />
-              <SourceRestMetaPanel
-                entry={activeEntry}
-                connectionId={activeEntry.publication.provenance.connectionId}
-                onUpdated={(next) => {
-                  setActiveEntry(next);
-                  setEditor(editorForEntry(next));
-                  setPendingPublish(false);
-                  setChangeNonce((value) => value + 1);
-                }}
-              />
+              
+              
               {typeof activeEntry.publication.provenance.remoteId === "string" ? (
                 <SourceRevisionRecoveryPanel
                   entry={activeEntry}
