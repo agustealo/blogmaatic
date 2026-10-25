@@ -82,6 +82,9 @@ import type {
   SourceMetaValuesResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceSeoFieldDefinition,
+  SourceSeoValuesBody,
+  SourceSeoValuesResult,
   SourceStandardTaxonomyBody,
   SourceStandardTaxonomyResult,
   SourcePageStructureBody,
@@ -320,6 +323,26 @@ export class OperatorClient {
   ): Promise<SourceAuthorAssignResult> {
     return this.#request<SourceAuthorAssignResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/authors/${encodeURIComponent(remoteId)}/assign`,
+      { method: "POST", body: input },
+    );
+  }
+
+  async listSourceSeoFields(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceSeoFieldDefinition[]> {
+    const response = await this.#request<{ readonly items: readonly SourceSeoFieldDefinition[] }>(
+      pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/seo-fields`, { contentType }),
+    );
+    return response.items;
+  }
+
+  setSourceSeoValues(
+    connectionId: string,
+    input: SourceSeoValuesBody,
+  ): Promise<SourceSeoValuesResult> {
+    return this.#request<SourceSeoValuesResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/seo-values`,
       { method: "POST", body: input },
     );
   }
