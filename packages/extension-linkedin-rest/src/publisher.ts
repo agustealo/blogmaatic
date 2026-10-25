@@ -16,11 +16,18 @@ import {
   type ExtensionHealth,
   type ManagedPublisherExtension,
 } from "@blogmaatic/extension-sdk";
+import { imageTransformSpecFromJson } from "@blogmaatic/media";
 import { SecretAuthority } from "@blogmaatic/secrets";
 import { adaptPublicationForSocial } from "@blogmaatic/variants";
 
+import { compileLinkedInImage, renderLinkedInImage } from "./assets.js";
 import { LinkedInHttpError, LinkedInRestClient } from "./client.js";
-import { fingerprint } from "./fingerprint.js";
+import {
+  encodeRemoteVersion,
+  fingerprint,
+  parseRemoteVersion,
+  remoteStateHash,
+} from "./fingerprint.js";
 import { parsePayload } from "./payload.js";
 import { LINKEDIN_REST_EXTENSION_ID, parseSettings } from "./settings.js";
 import type {
@@ -88,7 +95,7 @@ function destinationSocialVariant(
 
 function projectionMode(route: PublicationRoute): LinkedInProjectionMode {
   const mode = stringValue(variant(route), "mode") ?? "text";
-  if (mode !== "text" && mode !== "article") {
+  if (mode !== "text" && mode !== "article" && mode !== "image") {
     throw new Error(`Unsupported LinkedIn route.variant.mode: ${mode}`);
   }
   return mode;
@@ -96,7 +103,7 @@ function projectionMode(route: PublicationRoute): LinkedInProjectionMode {
 
 function desiredSemantic(
   settings: LinkedInSettings,
-  payload: Pick<LinkedInProjectionPayload, "commentary" | "article">,
+  payload: Pick<LinkedInProjectionPayload, "commentary" | "article" | "image">,
 ): unknown {
   return {
     author: settings.authorUrn,
@@ -109,6 +116,15 @@ function desiredSemantic(
           source: payload.article.source,
           title: payload.article.title,
           description: payload.article.description ?? null,
+        }
+      : null,
+    image: payload.image
+      ? {
+          assetId: payload.image.assetId,
+          mediaType: payload.image.mediaType,
+          alt: payload.image.alt ?? null,
+          fingerprint: payload.image.fingerprint,
+          transformFingerprint: payload.image.transform?.transformationFingerprint ?? null,
         }
       : null,
   };
@@ -129,14 +145,25 @@ function remoteSemantic(post: LinkedInPostRecord): unknown {
           description: article.description ?? null,
         }
       : null,
+    image: post.content?.media
+      ? {
+          id: post.content.media.id ?? null,
+          title: post.content.media.title ?? null,
+          altText: post.content.media.altText ?? null,
+        }
+      : null,
   };
 }
 
-function remoteIdentity(post: LinkedInPostRecord): RemoteIdentity {
+function remoteIdentity(post: LinkedInPostRecord, version?: string): RemoteIdentity {
   return {
     id: post.id,
     url: `https://www.linkedin.com/feed/update/${post.id}`,
-    ...(typeof post.lastModifiedAt === "number" ? { version: String(post.lastModifiedAt) } : {}),
+    ...(version
+      ? { version }
+      : typeof post.lastModifiedAt === "number"
+        ? { version: String(post.lastModifiedAt) }
+        : {}),
   };
 }
 
@@ -147,7 +174,11 @@ function postPath(id: string): string {
   return `/posts/${encodeURIComponent(id)}?viewContext=AUTHOR`;
 }
 
-function creationBody(settings: LinkedInSettings, payload: LinkedInProjectionPayload): Readonly<Record<string, unknown>> {
+function creationBody(
+  settings: LinkedInSettings,
+  payload: LinkedInProjectionPayload,
+  imageUrn?: string,
+): Readonly<Record<string, unknown>> {
   return {
     author: settings.authorUrn,
     commentary: payload.commentary,
@@ -157,20 +188,86 @@ function creationBody(settings: LinkedInSettings, payload: LinkedInProjectionPay
       targetEntities: [],
       thirdPartyDistributionChannels: [],
     },
-    ...(payload.article
+    ...(imageUrn && payload.image
       ? {
           content: {
-            article: {
-              source: payload.article.source,
-              title: payload.article.title,
-              ...(payload.article.description ? { description: payload.article.description } : {}),
+            media: {
+              id: imageUrn,
+              ...(payload.image.alt ? { altText: payload.image.alt } : {}),
             },
           },
         }
-      : {}),
+      : payload.article
+        ? {
+            content: {
+              article: {
+                source: payload.article.source,
+                title: payload.article.title,
+                ...(payload.article.description ? { description: payload.article.description } : {}),
+              },
+            },
+          }
+        : {}),
     lifecycleState: "PUBLISHED",
     isReshareDisabledByAuthor: false,
   };
+}
+
+interface LinkedInImageInitializeResponse {
+  readonly value?: {
+    readonly uploadUrl?: string;
+    readonly image?: string;
+  };
+}
+
+interface LinkedInImageStatusResponse {
+  readonly id?: string;
+  readonly status?: string;
+  readonly owner?: string;
+}
+
+async function initializeImage(
+  client: LinkedInRestClient,
+  settings: LinkedInSettings,
+): Promise<{ readonly uploadUrl: string; readonly imageUrn: string }> {
+  const response = await client.request<LinkedInImageInitializeResponse>("/images?action=initializeUpload", {
+    method: "POST",
+    body: JSON.stringify({
+      initializeUploadRequest: {
+        owner: settings.authorUrn,
+      },
+    }),
+  });
+  const uploadUrl = response.body.value?.uploadUrl;
+  const imageUrn = response.body.value?.image;
+  if (!uploadUrl || !imageUrn || !/^urn:li:image:[A-Za-z0-9_-]+$/.test(imageUrn)) {
+    throw new Error("LinkedIn image initialize response is missing a valid uploadUrl/image URN");
+  }
+  return { uploadUrl, imageUrn };
+}
+
+async function waitForImageAvailable(
+  client: LinkedInRestClient,
+  settings: LinkedInSettings,
+  imageUrn: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const response = await client.request<LinkedInImageStatusResponse>(
+      `/images/${encodeURIComponent(imageUrn)}`,
+    );
+    if (response.body.owner && response.body.owner !== settings.authorUrn) {
+      throw new Error("LinkedIn uploaded image belongs to a different owner");
+    }
+    if (response.body.status === "AVAILABLE") return;
+    if (response.body.status === "PROCESSING_FAILED") {
+      throw new Error("LinkedIn image processing failed");
+    }
+    if (!["WAITING_UPLOAD", "PROCESSING"].includes(response.body.status ?? "")) {
+      throw new Error(`LinkedIn image returned unexpected status: ${String(response.body.status ?? "missing")}`);
+    }
+    if (attempt < 7) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("LinkedIn image did not become AVAILABLE before the verification deadline");
 }
 
 async function fetchPost(client: LinkedInRestClient, id: string): Promise<LinkedInPostRecord> {
@@ -202,6 +299,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
       "article.update",
       "article.inspect",
       "canonical.publish",
+      "asset.publish",
     ],
   } as const;
 
@@ -273,22 +371,31 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     const settings = parseSettings(connection);
     const routeVariant = variant(route);
     const social = destinationSocialVariant(publication, route, groupId);
-    const mode = projectionMode(route);
+    const inheritedMode = projectionMode(route);
+    const mediaMode = social ? stringValue(social, "mediaMode") : undefined;
+    if (mediaMode !== undefined && !["inherit", "none", "select"].includes(mediaMode)) {
+      throw new Error(`Unsupported LinkedIn social media mode: ${mediaMode}`);
+    }
+    const mode: LinkedInProjectionMode = mediaMode === "select"
+      ? "image"
+      : mediaMode === "none" && inheritedMode === "image"
+        ? "text"
+        : inheritedMode;
     const adapted = adaptPublicationForSocial(
       publication,
       {
         id: LINKEDIN_REST_EXTENSION_ID,
         maxCommentaryChars: 3000,
-        maxImages: 0,
+        maxImages: mode === "image" ? 1 : 0,
         supportsArticleCard: mode === "article",
         supportedBlockKinds: ["paragraph"],
       },
       {
-        mode,
+        mode: mode === "article" ? "article" : "text",
         includeTitle: booleanValue(routeVariant, "includeTitle") ?? true,
         includeSummary: booleanValue(routeVariant, "includeSummary") ?? false,
         includeCanonicalUrl:
-          booleanValue(routeVariant, "includeCanonicalUrl") ?? (mode === "text"),
+          booleanValue(routeVariant, "includeCanonicalUrl") ?? (mode !== "article"),
         includeHashtags: booleanValue(routeVariant, "includeHashtags") ?? true,
         maxHashtags: Math.max(0, Math.trunc(numberValue(routeVariant, "maxHashtags") ?? 5)),
         overflow: stringValue(routeVariant, "overflow") === "error" ? "error" : "truncate",
@@ -317,18 +424,34 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     if (!commentary) throw new Error("LinkedIn commentary override is missing commentary");
     if (commentary.length > 3000) throw new Error("LinkedIn commentary override exceeds 3000 characters");
 
-    const mediaMode = social ? stringValue(social, "mediaMode") : undefined;
-    if (mediaMode !== undefined && !["inherit", "none", "select"].includes(mediaMode)) {
-      throw new Error(`Unsupported LinkedIn social media mode: ${mediaMode}`);
-    }
-    if (mediaMode === "select") {
-      throw new Error("LinkedIn v0.1 does not support selected social media assets");
+    let image: LinkedInProjectionPayload["image"];
+    if (mode === "image") {
+      let selected = adapted.imageAssets;
+      if (mediaMode === "select") {
+        const rawIds = social?.imageAssetIds;
+        if (!Array.isArray(rawIds) || rawIds.length !== 1 || typeof rawIds[0] !== "string" || !rawIds[0].trim()) {
+          throw new Error("LinkedIn single-image social selection requires exactly one imageAssetId");
+        }
+        const id = rawIds[0].trim();
+        const asset = publication.current.content.assets.find((candidate) => candidate.id === id);
+        if (!asset) throw new Error(`LinkedIn selected image asset does not exist: ${id}`);
+        selected = [asset];
+      }
+      if (selected.length !== 1) {
+        throw new Error("LinkedIn image mode requires exactly one canonical image");
+      }
+      image = await compileLinkedInImage(
+        selected[0]!,
+        settings,
+        imageTransformSpecFromJson(routeVariant.imageTransform),
+      );
     }
 
     const payload: LinkedInProjectionPayload = {
       mode,
       commentary,
-      ...(adapted.article ? { article: adapted.article } : {}),
+      ...(mode === "article" && adapted.article ? { article: adapted.article } : {}),
+      ...(image ? { image } : {}),
       fidelity: adapted.fidelity,
     };
     const hash = fingerprint(desiredSemantic(settings, payload));
