@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  parsePublicationSocialVariantBody,
   parsePublicationWorkspaceCreateBody,
   parsePublicationWorkspaceUpdateBody,
 } from "../dist/publication-workspace-validation.js";
@@ -97,5 +98,91 @@ test("publication targeting rejects malformed group ids", () => {
       publishingTargetGroupIds: "group-a",
     }),
     /publishingTargetGroupIds must be an array of non-empty strings/,
+  );
+});
+
+
+test("social destination variant validation preserves commentary and ordered unique image ids", () => {
+  assert.deepEqual(
+    parsePublicationSocialVariantBody({
+      expectedVersion: 4,
+      groupId: " group-a ",
+      routeId: " social ",
+      commentaryMode: "override",
+      commentary: "  Preserve exact spacing  ",
+      mediaMode: "select",
+      imageAssetIds: ["detail", " hero ", "detail"],
+    }),
+    {
+      expectedVersion: 4,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "override",
+      commentary: "  Preserve exact spacing  ",
+      mediaMode: "select",
+      imageAssetIds: ["detail", "hero"],
+    },
+  );
+  assert.deepEqual(
+    parsePublicationSocialVariantBody({
+      expectedVersion: 4,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "inherit",
+      mediaMode: "none",
+    }),
+    {
+      expectedVersion: 4,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "inherit",
+      mediaMode: "none",
+    },
+  );
+});
+
+test("social destination variant validation rejects contradictory modes and oversized input", () => {
+  assert.throws(
+    () => parsePublicationSocialVariantBody({
+      expectedVersion: 1,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "inherit",
+      commentary: "not allowed",
+      mediaMode: "inherit",
+    }),
+    /commentary is only allowed/,
+  );
+  assert.throws(
+    () => parsePublicationSocialVariantBody({
+      expectedVersion: 1,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "override",
+      mediaMode: "inherit",
+    }),
+    /commentary is required/,
+  );
+  assert.throws(
+    () => parsePublicationSocialVariantBody({
+      expectedVersion: 1,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "inherit",
+      mediaMode: "select",
+      imageAssetIds: [],
+    }),
+    /at least one asset/,
+  );
+  assert.throws(
+    () => parsePublicationSocialVariantBody({
+      expectedVersion: 1,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "override",
+      commentary: "x".repeat(63001),
+      mediaMode: "inherit",
+    }),
+    /63000/,
   );
 });
