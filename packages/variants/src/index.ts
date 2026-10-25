@@ -3,6 +3,7 @@ import type {
   PublicationAsset,
   PublicationBlock,
   PublicationBlockKind,
+  PublicationRoute,
 } from "@blogmaatic/core";
 
 export type FidelitySeverity = "info" | "warning" | "loss";
@@ -52,6 +53,110 @@ export interface AdaptedSocialVariant {
   readonly imageAssets: readonly PublicationAsset[];
   readonly article?: SocialArticleVariant;
   readonly fidelity: FidelityReport;
+}
+
+export interface SocialDestinationVariantOverride {
+  readonly commentaryMode: "inherit" | "override";
+  readonly commentary?: string;
+  readonly mediaMode: "inherit" | "none" | "select";
+  readonly imageAssetIds?: readonly string[];
+}
+
+function recordValue(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : undefined;
+}
+
+export function socialDestinationVariantOverride(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId?: string,
+): SocialDestinationVariantOverride | undefined {
+  if (!groupId) return undefined;
+  const root = recordValue(publication.current.content.attributes.destinationOverrides);
+  const groups = recordValue(root?.groups);
+  const group = recordValue(groups?.[groupId]);
+  const routes = recordValue(group?.routes);
+  const scopedRoute = recordValue(routes?.[route.id]);
+  if (!scopedRoute) return undefined;
+  if (
+    scopedRoute.extensionId !== route.destination.extensionId ||
+    scopedRoute.connectionId !== route.destination.connectionId ||
+    scopedRoute.channel !== route.destination.channel
+  ) {
+    throw new Error("Canonical destination override identity no longer matches social route");
+  }
+  const social = recordValue(scopedRoute.socialVariant);
+  if (!social) return scopedRoute.socialVariant === undefined
+    ? undefined
+    : (() => { throw new Error("Canonical social destination variant must be an object"); })();
+
+  if (
+    social.extensionId !== route.destination.extensionId ||
+    social.connectionId !== route.destination.connectionId ||
+    social.channel !== route.destination.channel
+  ) {
+    throw new Error("Canonical social variant identity no longer matches route");
+  }
+  const commentaryMode = social.commentaryMode;
+  if (commentaryMode !== "inherit" && commentaryMode !== "override") {
+    throw new Error("Canonical social commentary mode is invalid");
+  }
+  let commentary: string | undefined;
+  if (commentaryMode === "override") {
+    if (typeof social.commentary !== "string") {
+      throw new Error("Canonical social commentary override requires commentary");
+    }
+    commentary = social.commentary;
+  } else if (social.commentary !== undefined) {
+    throw new Error("Canonical social commentary is only valid in override mode");
+  }
+
+  const mediaMode = social.mediaMode;
+  if (mediaMode !== "inherit" && mediaMode !== "none" && mediaMode !== "select") {
+    throw new Error("Canonical social media mode is invalid");
+  }
+  let imageAssetIds: readonly string[] | undefined;
+  if (mediaMode === "select") {
+    if (!Array.isArray(social.imageAssetIds) || social.imageAssetIds.length === 0) {
+      throw new Error("Canonical social media select mode requires imageAssetIds");
+    }
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    for (const value of social.imageAssetIds) {
+      if (typeof value !== "string" || !value.trim()) {
+        throw new Error("Canonical social imageAssetIds must contain non-empty strings");
+      }
+      const assetId = value.trim();
+      if (!seen.has(assetId)) {
+        seen.add(assetId);
+        normalized.push(assetId);
+      }
+    }
+    imageAssetIds = normalized;
+  } else if (social.imageAssetIds !== undefined) {
+    throw new Error("Canonical social imageAssetIds are only valid in select mode");
+  }
+
+  return {
+    commentaryMode,
+    ...(commentary === undefined ? {} : { commentary }),
+    mediaMode,
+    ...(imageAssetIds === undefined ? {} : { imageAssetIds }),
+  };
+}
+
+export function selectedSocialImageAssets(
+  publication: Publication,
+  imageAssetIds: readonly string[],
+): readonly PublicationAsset[] {
+  return imageAssetIds.map((assetId) => {
+    const asset = publication.current.content.assets.find((candidate) => candidate.id === assetId);
+    if (!asset) throw new Error(`Canonical social image asset does not exist: ${assetId}`);
+    if (asset.kind !== "image") throw new Error(`Canonical social media selection must contain only images: ${assetId}`);
+    return asset;
+  });
 }
 
 function stringValue(value: unknown): string | undefined {
