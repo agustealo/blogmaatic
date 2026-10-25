@@ -432,7 +432,7 @@ function SourceEditorialOptionsPanel({
     setPingStatus(next.pingStatus ?? "open");
     setSticky(next.sticky ?? false);
     setFormat(next.format ?? "standard");
-  }, [entry.publication.current.id, groupId, routeId]);
+  }, [entry.publication.current.id]);
 
   useEffect(() => {
     let active = true;
