@@ -92,6 +92,43 @@ Imported WordPress posts preserve their native status. Scheduled imports normali
 
 This state does not replace Blogmaatic Automation schedules. Automation determines when Blogmaatic runs; source-native state determines what WordPress status/date Blogmaatic asks WordPress to store when the matching route is compiled.
 
+## Destination-scoped WordPress native metadata
+
+WordPress-native editorial state is owned by the publishing destination, not by the Publication globally.
+
+For workspace-native Publications that target one or more Publication Groups, Blogmaatic stores destination-native WordPress state under the immutable canonical `destinationOverrides` tree keyed by **Publication Group id + route id**. Group identity is part of the key because two selected groups may legitimately contain the same route id.
+
+A WordPress route override records the route identity itself:
+
+- extension id
+- connection id
+- channel / REST content type
+
+and may independently carry:
+
+- author
+- native publishing status and schedule
+- custom taxonomy selections
+- REST-registered meta values
+- editorial options
+- hierarchical Page structure
+
+Every route-scoped mutation requires `groupId` and `routeId` together. Before canonical persistence, the runtime verifies that the Publication targets the group, the group and route are enabled, and the route's extension, connection, and content-type channel match the requested source state. Stale workspace versions fail before mutation.
+
+Compilation uses one precedence rule for all WordPress-native state:
+
+1. the exact `destinationOverrides.groups[groupId].routes[routeId]` section
+2. legacy singleton source metadata only when the Publication was actually imported from the same WordPress connection and imported route identity
+3. otherwise no source-native value
+
+The adapter also revalidates the stored override identity against the route being compiled. A stale or tampered override therefore fails closed rather than leaking settings to another destination.
+
+This preserves backward compatibility for imported WordPress Publications that already use `sourceAuthor`, `sourcePublishing`, `sourceTaxonomies`, `sourceMeta`, `sourceEditorial`, and `sourcePage`, while preventing those singleton fields from acting as global defaults for workspace-native multi-destination publishing.
+
+Control Room mirrors the same ownership model. **WordPress destination settings** renders the native controls inside each selected WordPress route card, so two sites can hold conflicting author, status, taxonomy, meta, editorial, and Page settings without overwriting one another.
+
+Operator audit evidence includes the group and route coordinates for route-scoped native mutations, allowing an individual settings change to be traced to the exact publishing destination.
+
 ## Native WordPress editorial options
 
 WordPress-native access, discussion, and presentation fields are modeled separately from Blogmaatic workflow status. A matching source Publication may carry `PublicationIR.attributes.sourceEditorial` with the WordPress connection, content type, post password, discussion state, sticky state, and post format.
