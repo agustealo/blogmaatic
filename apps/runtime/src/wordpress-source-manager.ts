@@ -63,7 +63,10 @@ import type {
 } from "@blogmaatic/operator-api";
 
 import type { PublicationGroupManager } from "./publication-group-manager.js";
-import type { PublicationWorkspaceManager } from "./publication-workspace-manager.js";
+import {
+  publicationTargetGroupIds,
+  type PublicationWorkspaceManager,
+} from "./publication-workspace-manager.js";
 
 export interface WordPressSourceManagerOptions {
   readonly content: WordPressContentService;
@@ -74,6 +77,40 @@ export interface WordPressSourceManagerOptions {
   readonly distributionHistory: DistributionHistoryStore;
   readonly now?: () => string;
   readonly id?: () => string;
+}
+
+async function assertTargetWordPressRoute(
+  publicationGroups: PublicationGroupManager,
+  publication: Publication,
+  connectionId: string,
+  groupId: string,
+  routeId: string,
+): Promise<PublicationRoute> {
+  const normalizedGroupId = groupId.trim();
+  const normalizedRouteId = routeId.trim();
+  if (!normalizedGroupId || !normalizedRouteId) {
+    throw new Error("Route-scoped WordPress settings require non-empty groupId and routeId");
+  }
+  if (!publicationTargetGroupIds(publication).includes(normalizedGroupId)) {
+    throw new Error(`Publication does not target Publication Group: ${normalizedGroupId}`);
+  }
+  const groupEntry = await publicationGroups.get(normalizedGroupId);
+  if (!groupEntry) throw new Error(`Publishing target is not registered: ${normalizedGroupId}`);
+  if (!groupEntry.enabled) throw new Error(`Publishing target is disabled: ${normalizedGroupId}`);
+  const route = groupEntry.group.routes.find((candidate) => candidate.id === normalizedRouteId);
+  if (!route) {
+    throw new Error(`Publishing target ${normalizedGroupId} does not contain route ${normalizedRouteId}`);
+  }
+  if (!route.enabled) {
+    throw new Error(`Publishing target route is disabled: ${normalizedGroupId}/${normalizedRouteId}`);
+  }
+  if (
+    route.destination.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    route.destination.connectionId !== connectionId
+  ) {
+    throw new Error("WordPress route context does not match the requested connection");
+  }
+  return route;
 }
 
 function sourceRecord(
@@ -750,7 +787,18 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
       );
     }
-    if (
+    if (body.groupId || body.routeId) {
+      if (!body.groupId || !body.routeId) {
+        throw new Error("Route-scoped WordPress publishing state requires both groupId and routeId");
+      }
+      await assertTargetWordPressRoute(
+        this.#publicationGroups,
+        current.publication,
+        connectionId,
+        body.groupId,
+        body.routeId,
+      );
+    } else if (
       current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
       current.publication.provenance.connectionId !== connectionId
     ) {
@@ -765,6 +813,8 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         connectionId,
         status: body.status,
         ...(scheduledAt ? { scheduledAt } : {}),
+        ...(body.groupId ? { groupId: body.groupId } : {}),
+        ...(body.routeId ? { routeId: body.routeId } : {}),
       },
     );
     return {
@@ -800,7 +850,18 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
       );
     }
-    if (
+    if (body.groupId || body.routeId) {
+      if (!body.groupId || !body.routeId) {
+        throw new Error("Route-scoped WordPress author requires both groupId and routeId");
+      }
+      await assertTargetWordPressRoute(
+        this.#publicationGroups,
+        current.publication,
+        connectionId,
+        body.groupId,
+        body.routeId,
+      );
+    } else if (
       current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
       current.publication.provenance.connectionId !== connectionId
     ) {
@@ -816,6 +877,8 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         connectionId,
         remoteId: String(author.id),
         displayName: author.name,
+        ...(body.groupId ? { groupId: body.groupId } : {}),
+        ...(body.routeId ? { routeId: body.routeId } : {}),
       },
     );
     return {
