@@ -182,26 +182,53 @@ function statusTone(status: string): "good" | "warn" | "bad" | "neutral" {
   return "neutral";
 }
 
-function canonicalSourceAuthor(entry: PublicationWorkspaceEntry): {
+function objectRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : undefined;
+}
+
+function routeDestinationOverride(
+  entry: PublicationWorkspaceEntry,
+  groupId: string | undefined,
+  routeId: string | undefined,
+): Readonly<Record<string, unknown>> | undefined {
+  if (!groupId || !routeId) return undefined;
+  const root = objectRecord(entry.publication.current.content.attributes.destinationOverrides);
+  const groups = objectRecord(root?.groups);
+  const group = objectRecord(groups?.[groupId]);
+  const routes = objectRecord(group?.routes);
+  return objectRecord(routes?.[routeId]);
+}
+
+function canonicalSourceAuthor(
+  entry: PublicationWorkspaceEntry,
+  groupId?: string,
+  routeId?: string,
+): {
   readonly remoteId?: string;
   readonly displayName?: string;
 } {
-  const value = entry.publication.current.content.attributes.sourceAuthor;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
-  const record = value as Readonly<Record<string, unknown>>;
+  const scoped = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.author);
+  const value = scoped ?? objectRecord(entry.publication.current.content.attributes.sourceAuthor);
+  if (!value) return {};
   return {
-    ...(typeof record.remoteId === "string" ? { remoteId: record.remoteId } : {}),
-    ...(typeof record.displayName === "string" ? { displayName: record.displayName } : {}),
+    ...(typeof value.remoteId === "string" ? { remoteId: value.remoteId } : {}),
+    ...(typeof value.displayName === "string" ? { displayName: value.displayName } : {}),
   };
 }
 
 function SourceAuthorPanel({
   entry,
   connectionId,
+  groupId,
+  routeId,
   onAssigned,
 }: {
   readonly entry: PublicationWorkspaceEntry;
   readonly connectionId: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly onAssigned: (entry: PublicationWorkspaceEntry) => void;
 }) {
   const { session } = useConnection();
@@ -213,7 +240,7 @@ function SourceAuthorPanel({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
-  const currentAuthor = canonicalSourceAuthor(entry);
+  const currentAuthor = canonicalSourceAuthor(entry, groupId, routeId);
 
   const load = useCallback(async (nextPage = 1, append = false) => {
     setLoading(true);
@@ -261,6 +288,8 @@ function SourceAuthorPanel({
       const result = await client.assignSourceAuthor(connectionId, author.remoteId, {
         publicationId: entry.publication.id,
         expectedVersion: entry.version,
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
       });
       onAssigned(result.publication);
     } catch (cause) {
@@ -268,7 +297,7 @@ function SourceAuthorPanel({
     } finally {
       setBusy(null);
     }
-  }, [client, connectionId, entry.publication.id, entry.version, onAssigned]);
+  }, [client, connectionId, entry.publication.id, entry.version, groupId, onAssigned, routeId]);
 
   return (
     <Panel title="WordPress author" meta="Canonical post ownership" className="source-author-panel">
@@ -696,18 +725,22 @@ function SourcePageStructurePanel({
 
 type WordPressNativeStatus = "draft" | "pending" | "private" | "publish" | "future";
 
-function canonicalSourcePublishing(entry: PublicationWorkspaceEntry): {
+function canonicalSourcePublishing(
+  entry: PublicationWorkspaceEntry,
+  groupId?: string,
+  routeId?: string,
+): {
   readonly status: WordPressNativeStatus;
   readonly scheduledAt?: string;
 } {
-  const value = entry.publication.current.content.attributes.sourcePublishing;
-  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-    const record = value as Readonly<Record<string, unknown>>;
-    const status = record.status;
+  const scoped = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.publishing);
+  const value = scoped ?? objectRecord(entry.publication.current.content.attributes.sourcePublishing);
+  if (value) {
+    const status = value.status;
     if (status === "draft" || status === "pending" || status === "private" || status === "publish" || status === "future") {
       return {
         status,
-        ...(typeof record.scheduledAt === "string" ? { scheduledAt: record.scheduledAt } : {}),
+        ...(typeof value.scheduledAt === "string" ? { scheduledAt: value.scheduledAt } : {}),
       };
     }
   }
@@ -725,25 +758,29 @@ function localDateTimeValue(instant: string | undefined): string {
 function SourcePublishingStatePanel({
   entry,
   connectionId,
+  groupId,
+  routeId,
   onUpdated,
 }: {
   readonly entry: PublicationWorkspaceEntry;
   readonly connectionId: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
 }) {
   const { session } = useConnection();
   const client = session!.client;
-  const canonical = canonicalSourcePublishing(entry);
+  const canonical = canonicalSourcePublishing(entry, groupId, routeId);
   const [status, setStatus] = useState<WordPressNativeStatus>(canonical.status);
   const [scheduledLocal, setScheduledLocal] = useState(localDateTimeValue(canonical.scheduledAt));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const next = canonicalSourcePublishing(entry);
+    const next = canonicalSourcePublishing(entry, groupId, routeId);
     setStatus(next.status);
     setScheduledLocal(localDateTimeValue(next.scheduledAt));
-  }, [entry.publication.current.id]);
+  }, [entry.publication.current.id, groupId, routeId]);
 
   const save = useCallback(async () => {
     setBusy(true);
@@ -759,6 +796,8 @@ function SourcePublishingStatePanel({
       const result = await client.setSourcePublishingState(connectionId, {
         publicationId: entry.publication.id,
         expectedVersion: entry.version,
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
         status,
         ...(scheduledAt ? { scheduledAt } : {}),
       });
@@ -768,7 +807,7 @@ function SourcePublishingStatePanel({
     } finally {
       setBusy(false);
     }
-  }, [client, connectionId, entry.publication.id, entry.version, onUpdated, scheduledLocal, status]);
+  }, [client, connectionId, entry.publication.id, entry.version, groupId, onUpdated, routeId, scheduledLocal, status]);
 
   const dirty = status !== canonical.status ||
     (status === "future" && scheduledLocal !== localDateTimeValue(canonical.scheduledAt));
@@ -808,6 +847,106 @@ function SourcePublishingStatePanel({
         </button>
       </div>
     </Panel>
+  );
+}
+
+interface WordPressTargetRoute {
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly routeId: string;
+  readonly connectionId: string;
+  readonly channel: string;
+}
+
+function WordPressDestinationSettings({
+  entry,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [routes, setRoutes] = useState<readonly WordPressTargetRoute[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const targetGroupIds = canonicalPublishingTargetGroupIds(entry);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void Promise.all(targetGroupIds.map((groupId) => client.getPublicationGroup(groupId)))
+      .then((groups) => {
+        if (!active) return;
+        const next: WordPressTargetRoute[] = [];
+        for (const group of groups) {
+          if (!group.enabled) continue;
+          for (const route of group.group.routes) {
+            if (!route.enabled || route.destination.extensionId !== "blogmaatic.wordpress-rest") continue;
+            next.push({
+              groupId: group.group.id,
+              groupName: group.group.name,
+              routeId: route.id,
+              connectionId: route.destination.connectionId,
+              channel: route.destination.channel,
+            });
+          }
+        }
+        next.sort((left, right) =>
+          left.groupName.localeCompare(right.groupName) ||
+          left.connectionId.localeCompare(right.connectionId) ||
+          left.routeId.localeCompare(right.routeId),
+        );
+        setRoutes(next);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress destination settings could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, targetGroupIds.join("\u0000")]);
+
+  if (!loading && routes.length === 0 && !error) return null;
+
+  return (
+    <div className="wordpress-destination-settings">
+      <div className="wordpress-destination-settings__heading">
+        <span>
+          <strong>WordPress destination settings</strong>
+          <small>Each selected WordPress route owns its author and native publishing state independently.</small>
+        </span>
+        <StatusPill value={loading ? "loading" : `${routes.length} route${routes.length === 1 ? "" : "s"}`} tone={routes.length ? "good" : "warn"} />
+      </div>
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : null}
+      {routes.map((route) => (
+        <section className="wordpress-destination-route" key={`${route.groupId}:${route.routeId}`}>
+          <div className="wordpress-destination-route__heading">
+            <span>
+              <strong>{route.groupName}</strong>
+              <small>{route.connectionId} · {route.channel} · route {route.routeId}</small>
+            </span>
+          </div>
+          <SourcePublishingStatePanel
+            entry={entry}
+            connectionId={route.connectionId}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
+          <SourceAuthorPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onAssigned={onUpdated}
+          />
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -2538,7 +2677,7 @@ export function PublicationsPage() {
                   setEditor((current) => current ? { ...current, blocks } : current);
                 }}
               />
-                            <PublishingTargetsField
+              <PublishingTargetsField
                 selected={editor.publishingTargetGroupIds}
                 onChange={(groupIds) => {
                   setPendingPublish(false);
@@ -2588,6 +2727,15 @@ export function PublicationsPage() {
 
       {editor?.mode === "edit" && editor.publicationId && activeEntry ? (
         <div className="publication-studio-support">
+          <WordPressDestinationSettings
+            entry={activeEntry}
+            onUpdated={(next) => {
+              setActiveEntry(next);
+              setEditor(editorForEntry(next));
+              setPendingPublish(false);
+              setChangeNonce((value) => value + 1);
+            }}
+          />
           {activeEntry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
           typeof activeEntry.publication.provenance.connectionId === "string" ? (
             <>
@@ -2605,26 +2753,6 @@ export function PublicationsPage() {
                 entry={activeEntry}
                 connectionId={activeEntry.publication.provenance.connectionId}
                 onUpdated={(next) => {
-                  setActiveEntry(next);
-                  setEditor(editorForEntry(next));
-                  setPendingPublish(false);
-                  setChangeNonce((value) => value + 1);
-                }}
-              />
-              <SourcePublishingStatePanel
-                entry={activeEntry}
-                connectionId={activeEntry.publication.provenance.connectionId}
-                onUpdated={(next) => {
-                  setActiveEntry(next);
-                  setEditor(editorForEntry(next));
-                  setPendingPublish(false);
-                  setChangeNonce((value) => value + 1);
-                }}
-              />
-              <SourceAuthorPanel
-                entry={activeEntry}
-                connectionId={activeEntry.publication.provenance.connectionId}
-                onAssigned={(next) => {
                   setActiveEntry(next);
                   setEditor(editorForEntry(next));
                   setPendingPublish(false);
