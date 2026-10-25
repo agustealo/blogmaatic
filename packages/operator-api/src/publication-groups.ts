@@ -8,6 +8,7 @@ import {
   parsePublicationDistributionHistoryQuery,
   parsePublicationWorkspaceCreateBody,
   parsePublicationWorkspaceDispatchBody,
+  parsePublicationSocialVariantBody,
   parsePublicationWorkspaceListQuery,
   parsePublicationWorkspaceUpdateBody,
   parsePublicationWorkspaceVersionListQuery,
@@ -264,6 +265,80 @@ function registerPublicationWorkspaceRoutes(app: FastifyInstance, options: Opera
         },
       }),
     });
+  });
+
+  app.post("/v1/publications/:publicationId/social-variant", async (request, reply) => {
+    const principal = await authorize(options, request, "publications:write");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    const publications = publicationManager(options);
+    const current = await publicationOr404(publications, publicationId);
+    const body = parsePublicationSocialVariantBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "publication.social-variant.update",
+      resource: { type: "publication", id: publicationId },
+      evidence: {
+        expectedVersion: body.expectedVersion,
+        currentVersion: current.version,
+        groupId: body.groupId,
+        routeId: body.routeId,
+        commentaryMode: body.commentaryMode,
+        commentaryLength: body.commentary?.length ?? 0,
+        mediaMode: body.mediaMode,
+        imageCount: body.imageAssetIds?.length ?? 0,
+      },
+      now: () => clock.now(),
+      execute: () => publicationDomainCall(async () => {
+        const publication = await publications.setDestinationSocialVariant(
+          publicationId,
+          body.expectedVersion,
+          {
+            groupId: body.groupId,
+            routeId: body.routeId,
+            commentaryMode: body.commentaryMode,
+            ...(body.commentary === undefined ? {} : { commentary: body.commentary }),
+            mediaMode: body.mediaMode,
+            ...(body.imageAssetIds === undefined ? {} : { imageAssetIds: body.imageAssetIds }),
+          },
+        );
+        const override = publication.publication.current.content.attributes.destinationOverrides as
+          | {
+              readonly groups?: Readonly<Record<string, {
+                readonly routes?: Readonly<Record<string, {
+                  readonly extensionId?: unknown;
+                  readonly connectionId?: unknown;
+                  readonly channel?: unknown;
+                }>>;
+              }>>;
+            }
+          | undefined;
+        const route = override?.groups?.[body.groupId]?.routes?.[body.routeId];
+        return {
+          publication,
+          groupId: body.groupId,
+          routeId: body.routeId,
+          extensionId: typeof route?.extensionId === "string" ? route.extensionId : "",
+          connectionId: typeof route?.connectionId === "string" ? route.connectionId : "",
+          channel: typeof route?.channel === "string" ? route.channel : "",
+          commentaryMode: body.commentaryMode,
+          ...(body.commentary === undefined ? {} : { commentary: body.commentary }),
+          mediaMode: body.mediaMode,
+          ...(body.imageAssetIds === undefined ? {} : { imageAssetIds: body.imageAssetIds }),
+        };
+      }),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          extensionId: value.extensionId,
+          connectionId: value.connectionId,
+          channel: value.channel,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
   });
 
   app.post("/v1/publications/:publicationId/publish", async (request) => {
