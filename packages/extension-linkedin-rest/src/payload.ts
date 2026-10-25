@@ -16,7 +16,7 @@ function requireString(record: Readonly<Record<string, JsonValue>>, key: string)
 export function parsePayload(projection: CompiledProjection): LinkedInProjectionPayload {
   if (!isRecord(projection.payload)) throw new Error("LinkedIn projection payload must be an object");
   const mode = requireString(projection.payload, "mode");
-  if (mode !== "text" && mode !== "article" && mode !== "image") throw new Error(`Unsupported LinkedIn projection mode: ${mode}`);
+  if (mode !== "text" && mode !== "article" && mode !== "image" && mode !== "multiImage") throw new Error(`Unsupported LinkedIn projection mode: ${mode}`);
   const commentary = requireString(projection.payload, "commentary");
   const fidelity = projection.payload.fidelity;
   if (!isRecord(fidelity)) throw new Error("LinkedIn projection payload requires fidelity report");
@@ -50,10 +50,8 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
     };
   }
 
-  let image: LinkedInProjectionPayload["image"];
-  if (mode === "image") {
-    const value = projection.payload.image;
-    if (!isRecord(value)) throw new Error("LinkedIn image projection requires image metadata");
+  const parseImage = (value: JsonValue, label: string): NonNullable<LinkedInProjectionPayload["image"]> => {
+    if (!isRecord(value)) throw new Error(`LinkedIn ${label} requires image metadata`);
     const assetId = requireString(value, "assetId");
     const source = requireString(value, "source");
     const localPath = requireString(value, "localPath");
@@ -63,7 +61,7 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
     }
     const fingerprint = requireString(value, "fingerprint");
     const altValue = value.alt;
-    image = {
+    return {
       assetId,
       source,
       localPath,
@@ -72,6 +70,22 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
       fingerprint,
       transform: parseImageTransformPlan(value.transform),
     };
+  };
+
+  let image: LinkedInProjectionPayload["image"];
+  if (mode === "image") {
+    const value = projection.payload.image;
+    if (value === undefined) throw new Error("LinkedIn image projection requires image metadata");
+    image = parseImage(value, "image projection");
+  }
+
+  let images: LinkedInProjectionPayload["images"];
+  if (mode === "multiImage") {
+    const values = projection.payload.images;
+    if (!Array.isArray(values) || values.length < 2 || values.length > 20) {
+      throw new Error("LinkedIn multiImage projection requires between 2 and 20 images");
+    }
+    images = values.map((value) => parseImage(value, "multiImage projection"));
   }
 
   return {
@@ -79,6 +93,7 @@ export function parsePayload(projection: CompiledProjection): LinkedInProjection
     commentary,
     ...(article ? { article } : {}),
     ...(image ? { image } : {}),
+    ...(images ? { images } : {}),
     fidelity: {
       destinationId,
       score,

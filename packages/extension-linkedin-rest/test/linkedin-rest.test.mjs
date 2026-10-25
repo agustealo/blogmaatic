@@ -20,6 +20,7 @@ function makeServer() {
   let imageInitializes = 0;
   let imageUploads = 0;
   let imageReads = 0;
+  let failUploadAt = 0;
   let lastModifiedAt = 1790100000000;
   const requiredAuthor = "urn:li:organization:2414183";
 
@@ -45,6 +46,9 @@ function makeServer() {
       const key = uploadMatch[1];
       const image = images.get(key);
       if (!image) return json(response, 404, { message: "Unknown upload", status: 404 });
+      if (failUploadAt === imageUploads) {
+        return json(response, 500, { message: "Synthetic upload failure", status: 500 });
+      }
       uploads.push({
         key,
         bytes: rawBuffer,
@@ -148,6 +152,9 @@ function makeServer() {
     images,
     uploads,
     requiredAuthor,
+    failUploadAt(number) {
+      failUploadAt = number;
+    },
     get counts() {
       return { creates, updates, imageInitializes, imageUploads, imageReads };
     },
@@ -236,6 +243,45 @@ async function withLocalPng(fn) {
   }
 }
 
+async function withLocalPngs(count, fn) {
+  const directory = await mkdtemp(join(tmpdir(), "blogmaatic-linkedin-images-"));
+  const bytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const paths = [];
+  for (let index = 0; index < count; index += 1) {
+    const path = join(directory, `image-${index + 1}.png`);
+    await writeFile(path, bytes);
+    paths.push(path);
+  }
+  try {
+    return await fn({ directory, paths, bytes });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function localImagesPublication(paths) {
+  const item = publication();
+  item.current.content.blocks = [
+    { id: "p1", kind: "paragraph", data: { text: "Multi-image publication." } },
+    ...paths.map((path, index) => ({
+      id: `img-${index + 1}`,
+      kind: "image",
+      data: { assetId: `hero-${index + 1}` },
+    })),
+  ];
+  item.current.content.assets = paths.map((path, index) => ({
+    id: `hero-${index + 1}`,
+    kind: "image",
+    source: path,
+    mediaType: "image/png",
+    alt: `Architecture ${index + 1}`,
+  }));
+  return item;
+}
+
 function localImagePublication(path) {
   const item = publication();
   item.current.content.assets = [{
@@ -248,7 +294,7 @@ function localImagePublication(path) {
   return item;
 }
 
-function selectedImageOverride(item, routeId = "linkedin-text") {
+function selectedImageOverride(item, routeId = "linkedin-text", imageAssetIds = ["hero"]) {
   item.current.content.attributes = {
     destinationOverrides: {
       schemaVersion: 1,
@@ -265,7 +311,7 @@ function selectedImageOverride(item, routeId = "linkedin-text") {
                 channel: "posts",
                 commentaryMode: "inherit",
                 mediaMode: "select",
-                imageAssetIds: ["hero"],
+                imageAssetIds,
               },
             },
           },
@@ -436,6 +482,190 @@ test("LinkedIn selected image compiles, uploads exact bytes, publishes, and dete
   });
 });
 
+test("LinkedIn selected multi-image preserves order, publishes all images, and detects remote reorder drift", async () => {
+  await withLocalPngs(2, async ({ directory, paths }) => {
+    const { api, publisher } = await fixture(directory);
+    try {
+      const item = selectedImageOverride(
+        localImagesPublication(paths),
+        "linkedin-text",
+        ["hero-1", "hero-2"],
+      );
+      const projection = await publisher.compile({
+        publication: item,
+        route: route("text"),
+        groupId: "group-social",
+      });
+      assert.equal(projection.payload.mode, "multiImage");
+      assert.deepEqual(projection.payload.images.map((image) => image.assetId), ["hero-1", "hero-2"]);
+
+      const delivered = await publisher.deliver({
+        idempotencyKey: "linkedin-multi-1",
+        projection,
+      });
+      assert.equal(api.counts.imageInitializes, 2);
+      assert.equal(api.counts.imageUploads, 2);
+      assert.equal(api.counts.imageReads, 2);
+      assert.equal(api.counts.creates, 1);
+      assert.equal(delivered.evidence.imageCount, 2);
+      assert.deepEqual(
+        delivered.evidence.mediaItems.map((item) => item.assetId),
+        ["hero-1", "hero-2"],
+      );
+      const remote = api.posts.get(delivered.remote.id);
+      assert.equal(remote.content.multiImage.images.length, 2);
+      assert.deepEqual(
+        remote.content.multiImage.images.map((item) => item.altText),
+        ["Architecture 1", "Architecture 2"],
+      );
+      assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+      remote.content.multiImage.images = [...remote.content.multiImage.images].reverse();
+      assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+    } finally {
+      api.server.close();
+    }
+  });
+});
+
+test("LinkedIn multi-image upload failure prevents post creation", async () => {
+  await withLocalPngs(2, async ({ directory, paths }) => {
+    const { api, publisher } = await fixture(directory);
+    try {
+      api.failUploadAt(2);
+      const item = selectedImageOverride(
+        localImagesPublication(paths),
+        "linkedin-text",
+        ["hero-1", "hero-2"],
+      );
+      const projection = await publisher.compile({
+        publication: item,
+        route: route("text"),
+        groupId: "group-social",
+      });
+      await assert.rejects(
+        publisher.deliver({ idempotencyKey: "linkedin-multi-fail", projection }),
+        /image upload failed/,
+      );
+      assert.equal(api.counts.imageInitializes, 2);
+      assert.equal(api.counts.imageUploads, 2);
+      assert.equal(api.counts.creates, 0);
+      assert.equal(api.posts.size, 0);
+    } finally {
+      api.server.close();
+    }
+  });
+});
+
+test("LinkedIn multi-image commentary update reuses every Image URN and desired reorder fails before upload", async () => {
+  await withLocalPngs(2, async ({ directory, paths }) => {
+    const { api, publisher } = await fixture(directory);
+    try {
+      const item = selectedImageOverride(
+        localImagesPublication(paths),
+        "linkedin-text",
+        ["hero-1", "hero-2"],
+      );
+      const firstProjection = await publisher.compile({
+        publication: item,
+        route: route("text"),
+        groupId: "group-social",
+      });
+      const delivered = await publisher.deliver({
+        idempotencyKey: "linkedin-multi-update",
+        projection: firstProjection,
+      });
+      const afterCreate = { ...api.counts };
+
+      const social = item.current.content.attributes.destinationOverrides.groups["group-social"].routes["linkedin-text"].socialVariant;
+      item.current.content.attributes.destinationOverrides.groups["group-social"].routes["linkedin-text"].socialVariant = {
+        ...social,
+        commentaryMode: "override",
+        commentary: "Updated multi-image commentary",
+      };
+      const commentaryProjection = await publisher.compile({
+        publication: item,
+        route: route("text"),
+        groupId: "group-social",
+      });
+      await publisher.deliver({
+        idempotencyKey: "linkedin-multi-update",
+        projection: commentaryProjection,
+        existingRemote: delivered.remote,
+      });
+      assert.equal(api.counts.imageInitializes, afterCreate.imageInitializes);
+      assert.equal(api.counts.imageUploads, afterCreate.imageUploads);
+      assert.equal(api.counts.imageReads, afterCreate.imageReads);
+      assert.equal(api.counts.updates, afterCreate.updates + 1);
+      assert.equal(
+        (await publisher.inspect({ projection: commentaryProjection, remote: delivered.remote })).state,
+        "synchronized",
+      );
+
+      item.current.content.attributes.destinationOverrides.groups["group-social"].routes["linkedin-text"].socialVariant = {
+        ...item.current.content.attributes.destinationOverrides.groups["group-social"].routes["linkedin-text"].socialVariant,
+        imageAssetIds: ["hero-2", "hero-1"],
+      };
+      const reordered = await publisher.compile({
+        publication: item,
+        route: route("text"),
+        groupId: "group-social",
+      });
+      const beforeRefusal = { ...api.counts };
+      await assert.rejects(
+        publisher.deliver({
+          idempotencyKey: "linkedin-multi-update",
+          projection: reordered,
+          existingRemote: delivered.remote,
+        }),
+        /structural post content drift cannot be updated safely/,
+      );
+      assert.equal(api.counts.imageInitializes, beforeRefusal.imageInitializes);
+      assert.equal(api.counts.imageUploads, beforeRefusal.imageUploads);
+      assert.equal(api.counts.creates, beforeRefusal.creates);
+    } finally {
+      api.server.close();
+    }
+  });
+});
+
+test("LinkedIn multi-image accepts twenty selected images and rejects twenty-one before delivery", async () => {
+  await withLocalPngs(21, async ({ directory, paths }) => {
+    const { api, publisher } = await fixture(directory);
+    try {
+      const item = localImagesPublication(paths);
+      selectedImageOverride(
+        item,
+        "linkedin-text",
+        Array.from({ length: 20 }, (_, index) => `hero-${index + 1}`),
+      );
+      const boundary = await publisher.compile({
+        publication: item,
+        route: route("text"),
+        groupId: "group-social",
+      });
+      assert.equal(boundary.payload.mode, "multiImage");
+      assert.equal(boundary.payload.images.length, 20);
+
+      item.current.content.attributes.destinationOverrides.groups["group-social"].routes["linkedin-text"].socialVariant.imageAssetIds =
+        Array.from({ length: 21 }, (_, index) => `hero-${index + 1}`);
+      await assert.rejects(
+        publisher.compile({
+          publication: item,
+          route: route("text"),
+          groupId: "group-social",
+        }),
+        /supports at most 20 images/,
+      );
+      assert.equal(api.counts.imageInitializes, 0);
+      assert.equal(api.counts.imageUploads, 0);
+      assert.equal(api.counts.creates, 0);
+    } finally {
+      api.server.close();
+    }
+  });
+});
+
 test("LinkedIn image commentary update reuses the existing Image URN without another upload", async () => {
   await withLocalPng(async ({ directory, path }) => {
     const { api, publisher } = await fixture(directory);
@@ -568,7 +798,7 @@ test("LinkedIn image mode inherits one canonical image and media none falls back
   });
 });
 
-test("LinkedIn selected media requires exactly one image and rejects arbitrary remote image URLs", async () => {
+test("LinkedIn selected media rejects arbitrary remote image URLs", async () => {
   const { api, publisher } = await fixture();
   try {
     const remote = selectedImageOverride(publication());
@@ -579,23 +809,6 @@ test("LinkedIn selected media requires exactly one image and rejects arbitrary r
         groupId: "group-social",
       }),
       /remote image URLs are not supported/,
-    );
-
-    const multiple = publication();
-    multiple.current.content.assets.push({
-      id: "hero-2",
-      kind: "image",
-      source: "https://example.com/hero-2.png",
-    });
-    selectedImageOverride(multiple);
-    multiple.current.content.attributes.destinationOverrides.groups["group-social"].routes["linkedin-text"].socialVariant.imageAssetIds = ["hero", "hero-2"];
-    await assert.rejects(
-      publisher.compile({
-        publication: multiple,
-        route: route("text"),
-        groupId: "group-social",
-      }),
-      /requires exactly one image/,
     );
   } finally {
     api.server.close();

@@ -10,7 +10,7 @@ export interface LinkedInSettings {
   readonly timeoutMs: number;
 }
 
-export type LinkedInProjectionMode = "text" | "article" | "image";
+export type LinkedInProjectionMode = "text" | "article" | "image" | "multiImage";
 
 export interface LinkedInImageSpec {
   readonly assetId: string;
@@ -27,6 +27,7 @@ export interface LinkedInProjectionPayload {
   readonly commentary: string;
   readonly article?: SocialArticleVariant;
   readonly image?: LinkedInImageSpec;
+  readonly images?: readonly LinkedInImageSpec[];
   readonly fidelity: FidelityReport;
 }
 
@@ -52,6 +53,12 @@ export interface LinkedInPostRecord {
       readonly id?: string;
       readonly altText?: string;
       readonly title?: string;
+    };
+    readonly multiImage?: {
+      readonly images?: readonly {
+        readonly id?: string;
+        readonly altText?: string;
+      }[];
     };
   };
 }
