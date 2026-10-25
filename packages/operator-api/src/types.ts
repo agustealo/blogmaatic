@@ -26,6 +26,7 @@ import type {
   ExtensionCapability,
   JsonValue,
   Publication,
+  PublicationBlock,
   PublicationGroup,
   PublicationRoute,
   PublicationStatus,
@@ -528,10 +529,12 @@ export interface OperatorPublicationGroupManager {
 
 export type WorkspacePublicationStatus = Extract<PublicationStatus, "idea" | "draft" | "ready" | "approved" | "archived">;
 export type PublicationBodyFormat = "plain" | "html";
+export type PublicationWorkspaceBlock = PublicationBlock;
 
 export interface PublicationWorkspaceCreateBody {
   readonly title: string;
   readonly body?: string;
+  readonly blocks?: readonly PublicationBlock[];
   readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
@@ -547,6 +550,7 @@ export interface PublicationWorkspaceUpdateBody {
   readonly expectedVersion: number;
   readonly title?: string;
   readonly body?: string;
+  readonly blocks?: readonly PublicationBlock[];
   readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;

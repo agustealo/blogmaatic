@@ -19,6 +19,7 @@ export type PublicationBodyFormat = "plain" | "html";
 export interface PublicationWorkspaceCreateInput {
   readonly title: string;
   readonly body?: string;
+  readonly blocks?: readonly PublicationBlock[];
   readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
@@ -34,6 +35,7 @@ export interface PublicationWorkspaceUpdateInput {
   readonly expectedVersion: number;
   readonly title?: string;
   readonly body?: string;
+  readonly blocks?: readonly PublicationBlock[];
   readonly bodyFormat?: PublicationBodyFormat;
   readonly summary?: string;
   readonly language?: string;
@@ -230,9 +232,57 @@ function blocksFromBody(
     }));
 }
 
+const publicationBlockKinds = new Set([
+  "heading",
+  "paragraph",
+  "image",
+  "gallery",
+  "quote",
+  "code",
+  "embed",
+  "table",
+  "callout",
+]);
+
+function normalizeBlocks(
+  blocks: readonly PublicationBlock[],
+  assets: readonly PublicationAsset[],
+): readonly PublicationBlock[] {
+  const seen = new Set<string>();
+  return blocks.map((block, index) => {
+    const id = typeof block.id === "string" ? block.id.trim() : "";
+    if (!id) throw new Error(`Publication block ${index + 1} requires id`);
+    if (seen.has(id)) throw new Error(`Publication blocks contain duplicate id: ${id}`);
+    seen.add(id);
+    if (!publicationBlockKinds.has(block.kind)) {
+      throw new Error(`Publication block ${id} has unsupported kind: ${String(block.kind)}`);
+    }
+    if (!block.data || typeof block.data !== "object" || Array.isArray(block.data)) {
+      throw new Error(`Publication block ${id} data must be an object`);
+    }
+
+    if (block.kind === "image") {
+      const assetId = block.data.assetId;
+      if (typeof assetId !== "string" || !assetId.trim()) {
+        throw new Error(`Publication image block ${id} requires canonical assetId`);
+      }
+      const asset = assets.find((candidate) => candidate.id === assetId);
+      if (!asset) throw new Error(`Publication image block ${id} references missing asset: ${assetId}`);
+      if (asset.kind !== "image") throw new Error(`Publication image block ${id} asset must be an image: ${assetId}`);
+    }
+
+    return {
+      id,
+      kind: block.kind,
+      data: block.data,
+    };
+  });
+}
+
 function contentChanged(input: PublicationWorkspaceUpdateInput): boolean {
   return input.title !== undefined ||
     input.body !== undefined ||
+    input.blocks !== undefined ||
     input.summary !== undefined ||
     input.language !== undefined ||
     input.tags !== undefined ||
@@ -331,6 +381,12 @@ export class PublicationWorkspaceManager {
   }
 
   async create(input: PublicationWorkspaceCreateInput): Promise<PublicationWorkspaceEntry> {
+    if (input.body !== undefined && input.blocks !== undefined) {
+      throw new Error("Publication blocks and body are mutually exclusive");
+    }
+    if (input.blocks !== undefined && input.bodyFormat !== undefined) {
+      throw new Error("Publication bodyFormat cannot be used with blocks");
+    }
     if (input.bodyFormat !== undefined && input.body === undefined) {
       throw new Error("Publication bodyFormat requires body");
     }
@@ -352,7 +408,9 @@ export class PublicationWorkspaceManager {
           title: requireText(input.title, "Publication title"),
           ...(summary ? { summary } : {}),
           language: trimmed(input.language) ?? "en",
-          blocks: blocksFromBody(input.body, input.bodyFormat),
+          blocks: input.blocks === undefined
+            ? blocksFromBody(input.body, input.bodyFormat)
+            : normalizeBlocks(input.blocks, []),
           assets: [],
           tags: normalizeTags(input.tags),
           attributes: withPublishingTargets(
@@ -368,6 +426,12 @@ export class PublicationWorkspaceManager {
   }
 
   async update(publicationId: string, input: PublicationWorkspaceUpdateInput): Promise<PublicationWorkspaceEntry> {
+    if (input.body !== undefined && input.blocks !== undefined) {
+      throw new Error("Publication blocks and body are mutually exclusive");
+    }
+    if (input.blocks !== undefined && input.bodyFormat !== undefined) {
+      throw new Error("Publication bodyFormat cannot be used with blocks");
+    }
     if (input.bodyFormat !== undefined && input.body === undefined) {
       throw new Error("Publication bodyFormat requires body");
     }
@@ -389,7 +453,11 @@ export class PublicationWorkspaceManager {
         title: input.title === undefined ? oldContent.title : requireText(input.title, "Publication title"),
         ...(summary ? { summary } : {}),
         language: input.language === undefined ? oldContent.language : requireText(input.language, "Publication language"),
-        blocks: input.body === undefined ? oldContent.blocks : blocksFromBody(input.body, input.bodyFormat),
+        blocks: input.blocks !== undefined
+          ? normalizeBlocks(input.blocks, oldContent.assets)
+          : input.body === undefined
+            ? oldContent.blocks
+            : blocksFromBody(input.body, input.bodyFormat),
         assets: input.featuredAssetId === undefined
           ? oldContent.assets
           : withFeaturedAsset(oldContent.assets, input.featuredAssetId),
