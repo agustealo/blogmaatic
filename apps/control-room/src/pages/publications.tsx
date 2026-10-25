@@ -913,6 +913,355 @@ interface WordPressTargetRoute {
   readonly channel: string;
 }
 
+interface SocialTargetRoute {
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly routeId: string;
+  readonly extensionId: "blogmaatic.facebook-pages" | "blogmaatic.linkedin-rest";
+  readonly connectionId: string;
+  readonly channel: string;
+  readonly maxImages: number;
+}
+
+interface CanonicalSocialVariant {
+  readonly commentaryMode: "inherit" | "override";
+  readonly commentary: string;
+  readonly mediaMode: "inherit" | "none" | "select";
+  readonly imageAssetIds: readonly string[];
+}
+
+function canonicalSocialVariant(
+  entry: PublicationWorkspaceEntry,
+  route: SocialTargetRoute,
+): CanonicalSocialVariant {
+  const value = objectRecord(routeDestinationOverride(entry, route.groupId, route.routeId)?.socialVariant);
+  if (
+    !value ||
+    value.extensionId !== route.extensionId ||
+    value.connectionId !== route.connectionId ||
+    value.channel !== route.channel
+  ) {
+    return { commentaryMode: "inherit", commentary: "", mediaMode: "inherit", imageAssetIds: [] };
+  }
+  const commentaryMode = value.commentaryMode === "override" ? "override" : "inherit";
+  const mediaMode = value.mediaMode === "none" || value.mediaMode === "select" ? value.mediaMode : "inherit";
+  const imageAssetIds = mediaMode === "select" && Array.isArray(value.imageAssetIds)
+    ? value.imageAssetIds.filter((assetId): assetId is string => typeof assetId === "string" && Boolean(assetId.trim()))
+    : [];
+  return {
+    commentaryMode,
+    commentary: commentaryMode === "override" && typeof value.commentary === "string" ? value.commentary : "",
+    mediaMode,
+    imageAssetIds,
+  };
+}
+
+function SocialDestinationVariantPanel({
+  entry,
+  route,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly route: SocialTargetRoute;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const canonical = canonicalSocialVariant(entry, route);
+  const [commentaryMode, setCommentaryMode] = useState<"inherit" | "override">(canonical.commentaryMode);
+  const [commentary, setCommentary] = useState(canonical.commentary);
+  const [mediaMode, setMediaMode] = useState<"inherit" | "none" | "select">(canonical.mediaMode);
+  const [imageAssetIds, setImageAssetIds] = useState<readonly string[]>(canonical.imageAssetIds);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const isFacebook = route.extensionId === "blogmaatic.facebook-pages";
+  const commentaryLimit = isFacebook ? 63000 : 3000;
+  const imageAssets = entry.publication.current.content.assets.filter((asset) => asset.kind === "image");
+  const assetsById = useMemo(
+    () => new Map(imageAssets.map((asset) => [asset.id, asset] as const)),
+    [entry.publication.current.id],
+  );
+
+  useEffect(() => {
+    const next = canonicalSocialVariant(entry, route);
+    setCommentaryMode(next.commentaryMode);
+    setCommentary(next.commentary);
+    setMediaMode(next.mediaMode);
+    setImageAssetIds(next.imageAssetIds);
+  }, [entry.publication.current.id, route.groupId, route.routeId]);
+
+  const selectedIds = imageAssetIds.filter((assetId) => assetsById.has(assetId));
+  const available = imageAssets.filter((asset) => !selectedIds.includes(asset.id));
+
+  const move = (assetId: string, direction: -1 | 1) => {
+    setImageAssetIds((current) => {
+      const next = [...current];
+      const index = next.indexOf(assetId);
+      if (index < 0) return current;
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target]!, next[index]!];
+      return next;
+    });
+  };
+
+  const canonicalKey = JSON.stringify({
+    commentaryMode: canonical.commentaryMode,
+    commentary: canonical.commentaryMode === "override" ? canonical.commentary : "",
+    mediaMode: canonical.mediaMode,
+    imageAssetIds: canonical.mediaMode === "select" ? canonical.imageAssetIds : [],
+  });
+  const currentKey = JSON.stringify({
+    commentaryMode,
+    commentary: commentaryMode === "override" ? commentary : "",
+    mediaMode: isFacebook ? mediaMode : "inherit",
+    imageAssetIds: isFacebook && mediaMode === "select" ? selectedIds : [],
+  });
+  const dirty = currentKey !== canonicalKey;
+  const commentaryTooLong = commentaryMode === "override" && commentary.length > commentaryLimit;
+  const invalidSelection = isFacebook && mediaMode === "select" && (selectedIds.length === 0 || selectedIds.length > route.maxImages);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const effectiveMediaMode = isFacebook ? mediaMode : "inherit";
+      const result = await client.setPublicationSocialVariant(entry.publication.id, {
+        expectedVersion: entry.version,
+        groupId: route.groupId,
+        routeId: route.routeId,
+        commentaryMode,
+        ...(commentaryMode === "override" ? { commentary } : {}),
+        mediaMode: effectiveMediaMode,
+        ...(effectiveMediaMode === "select" ? { imageAssetIds: selectedIds } : {}),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Social destination variant could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.setPublicationSocialVariant(entry.publication.id, {
+        expectedVersion: entry.version,
+        groupId: route.groupId,
+        routeId: route.routeId,
+        commentaryMode: "inherit",
+        mediaMode: "inherit",
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Social destination variant could not be reset"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel
+      title={destinationLabel(route.extensionId)}
+      meta={`${route.groupName} · ${route.connectionId} · route ${route.routeId}`}
+      className="social-destination-variant"
+    >
+      <ErrorBanner error={error} />
+      <div className="social-destination-variant__controls">
+        <label className="field">
+          <span>Commentary</span>
+          <select value={commentaryMode} onChange={(event) => setCommentaryMode(event.target.value as "inherit" | "override")} disabled={busy}>
+            <option value="inherit">Use generated commentary</option>
+            <option value="override">Use custom commentary</option>
+          </select>
+          <small>Generated commentary continues to use this route's title, summary, URL, hashtag, and fidelity policy.</small>
+        </label>
+        {commentaryMode === "override" ? (
+          <label className="field social-destination-variant__commentary">
+            <span>Custom commentary</span>
+            <textarea
+              value={commentary}
+              onChange={(event) => setCommentary(event.target.value)}
+              rows={7}
+              disabled={busy}
+            />
+            <small className={commentaryTooLong ? "is-error" : ""}>{commentary.length.toLocaleString()} / {commentaryLimit.toLocaleString()} characters</small>
+          </label>
+        ) : null}
+
+        {isFacebook ? (
+          <div className="social-destination-variant__media">
+            <label className="field">
+              <span>Images</span>
+              <select value={mediaMode} onChange={(event) => setMediaMode(event.target.value as "inherit" | "none" | "select")} disabled={busy}>
+                <option value="inherit">Use generated image selection</option>
+                <option value="none">No images</option>
+                <option value="select">Choose images</option>
+              </select>
+              <small>Explicit image selection becomes an image post and preserves the order below. Route maximum: {route.maxImages}.</small>
+            </label>
+            {mediaMode === "select" ? (
+              <div className="social-image-selector">
+                <div className="social-image-selector__selected">
+                  <strong>Selected images</strong>
+                  {selectedIds.map((assetId, index) => {
+                    const asset = assetsById.get(assetId)!;
+                    return (
+                      <div className="social-image-selector__row" key={assetId}>
+                        <span><strong>{index + 1}. {asset.alt?.trim() || asset.id}</strong><small>{asset.source}</small></span>
+                        <span>
+                          <button className="button button--quiet" type="button" onClick={() => move(assetId, -1)} disabled={busy || index === 0}>↑</button>
+                          <button className="button button--quiet" type="button" onClick={() => move(assetId, 1)} disabled={busy || index === selectedIds.length - 1}>↓</button>
+                          <button className="button button--quiet" type="button" onClick={() => setImageAssetIds((current) => current.filter((id) => id !== assetId))} disabled={busy}>Remove</button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {selectedIds.length === 0 ? <small>No images selected.</small> : null}
+                </div>
+                {available.length ? (
+                  <div className="social-image-selector__available">
+                    <strong>Available images</strong>
+                    {available.map((asset) => (
+                      <button
+                        className="source-taxonomy-item"
+                        type="button"
+                        key={asset.id}
+                        onClick={() => setImageAssetIds((current) => [...current, asset.id])}
+                        disabled={busy || selectedIds.length >= route.maxImages}
+                      >
+                        <span><strong>{asset.alt?.trim() || asset.id}</strong><small>{asset.source}</small></span>
+                        <span>Add</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="social-destination-variant__capability-note">
+            <strong>LinkedIn media is inherited.</strong>
+            <span>The current LinkedIn publisher supports commentary and article cards only. Per-publication image selection will unlock when the rich-media publisher lands.</span>
+          </div>
+        )}
+      </div>
+      <div className="collection-footer social-destination-variant__actions">
+        <button className="button button--quiet" type="button" onClick={() => void reset()} disabled={busy || canonical.commentaryMode === "inherit" && canonical.mediaMode === "inherit"}>
+          Reset to generated
+        </button>
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || !dirty || commentaryTooLong || invalidSelection}
+        >
+          {busy ? "Saving…" : "Save social variant"}
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
+function SocialDestinationSettings({
+  entry,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [routes, setRoutes] = useState<readonly SocialTargetRoute[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const targetGroupIds = canonicalPublishingTargetGroupIds(entry);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void Promise.all(targetGroupIds.map((groupId) => client.getPublicationGroup(groupId)))
+      .then((groups) => {
+        if (!active) return;
+        const next: SocialTargetRoute[] = [];
+        for (const group of groups) {
+          if (!group.enabled) continue;
+          for (const route of group.group.routes) {
+            if (!route.enabled) continue;
+            if (
+              route.destination.extensionId !== "blogmaatic.facebook-pages" &&
+              route.destination.extensionId !== "blogmaatic.linkedin-rest"
+            ) continue;
+            const variant = objectRecord(route.variant);
+            const configuredMax = typeof variant?.maxImages === "number" && Number.isFinite(variant.maxImages)
+              ? Math.trunc(variant.maxImages)
+              : 10;
+            next.push({
+              groupId: group.group.id,
+              groupName: group.group.name,
+              routeId: route.id,
+              extensionId: route.destination.extensionId,
+              connectionId: route.destination.connectionId,
+              channel: route.destination.channel,
+              maxImages: route.destination.extensionId === "blogmaatic.facebook-pages"
+                ? Math.max(0, Math.min(10, configuredMax))
+                : 0,
+            });
+          }
+        }
+        next.sort((left, right) =>
+          left.groupName.localeCompare(right.groupName) ||
+          left.extensionId.localeCompare(right.extensionId) ||
+          left.connectionId.localeCompare(right.connectionId) ||
+          left.routeId.localeCompare(right.routeId),
+        );
+        setRoutes(next);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("Social destination settings could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, targetGroupIds.join("\u0000")]);
+
+  if (!loading && routes.length === 0 && !error) return null;
+
+  return (
+    <div className="social-destination-settings">
+      <div className="wordpress-destination-settings__heading">
+        <span>
+          <strong>Social destination settings</strong>
+          <small>Generated variants remain the default. Override only the copy or media that genuinely needs destination-specific treatment.</small>
+        </span>
+        <StatusPill value={loading ? "loading" : `${routes.length} route${routes.length === 1 ? "" : "s"}`} tone={routes.length ? "good" : "warn"} />
+      </div>
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : null}
+      {routes.map((route) => (
+        <SocialDestinationVariantPanel
+          key={`${route.groupId}:${route.routeId}`}
+          entry={entry}
+          route={route}
+          onUpdated={onUpdated}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface WordPressTargetRoute {
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly routeId: string;
+  readonly connectionId: string;
+  readonly channel: string;
+}
+
 function canonicalRouteStandardTaxonomy(
   entry: PublicationWorkspaceEntry,
   connectionId: string,
@@ -3161,6 +3510,15 @@ export function PublicationsPage() {
       {editor?.mode === "edit" && editor.publicationId && activeEntry ? (
         <div className="publication-studio-support">
           <WordPressDestinationSettings
+            entry={activeEntry}
+            onUpdated={(next) => {
+              setActiveEntry(next);
+              setEditor(editorForEntry(next));
+              setPendingPublish(false);
+              setChangeNonce((value) => value + 1);
+            }}
+          />
+          <SocialDestinationSettings
             entry={activeEntry}
             onUpdated={(next) => {
               setActiveEntry(next);
