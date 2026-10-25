@@ -84,6 +84,23 @@ The shared route variant key is `imageTransform`. Facebook Pages, WordPress REST
 
 Destination Preview surfaces the same source/output dimensions, media type, fit, render requirement and transformation identity from any provider payload that carries this shared plan.
 
+## Route-scoped social variants
+
+Canonical Publication content remains shared across destinations. A social route may additionally own an explicit per-publication variant at `PublicationIR.attributes.destinationOverrides.groups[groupId].routes[routeId].socialVariant`.
+
+The stored variant binds the exact extension, connection, and channel identity and separates two author choices:
+
+- `commentaryMode: inherit` keeps deterministic social adaptation, while `override` uses exact author-supplied commentary for that route.
+- `mediaMode: inherit` keeps adapter-selected media, `none` suppresses social images, and `select` stores an ordered list of canonical image asset ids.
+
+The Publication Workspace validates the targeted enabled group/route and every selected canonical image before creating an immutable revision. Publisher extensions independently revalidate the stored route identity during compilation, so copied or tampered overrides cannot leak to another destination.
+
+Facebook Pages supports all three media modes. Selected images preserve author order and continue through the route's normal image-transform/cache pipeline, including `maxImages` enforcement and transformation fingerprints.
+
+LinkedIn REST v0.1 supports commentary override plus media inheritance/suppression. Selected image media fails closed until its publisher implements first-class image delivery. Article-card source, title, and description remain derived from canonical publication structure.
+
+Static `route.variant` remains the inherited/default destination configuration. The social variant changes only the selected Publication + Publication Group + route projection, and Destination Preview recompiles from the saved canonical revision.
+
 ## Social projection proof
 
 `@blogmaatic/variants` separates adaptation from provider transport. A destination declares a capability profile, and the variant engine turns rich Publication IR into a constrained social representation plus a fidelity report. Unsupported, flattened, truncated, or dropped content is explicit rather than invisible.

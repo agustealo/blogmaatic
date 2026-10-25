@@ -4,6 +4,7 @@ import type {
   PublicationWorkspaceCreateBody,
   PublicationWorkspaceDispatchBody,
   PublicationWorkspaceUpdateBody,
+  PublicationSocialVariantBody,
   PublicationBodyFormat,
   WorkspacePublicationStatus,
 } from "./types.js";
@@ -241,6 +242,56 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
     ...(slug === undefined ? {} : { slug }),
     ...(canonicalUrl === undefined ? {} : { canonicalUrl }),
     ...(parsedStatus === undefined ? {} : { status: parsedStatus }),
+  };
+}
+
+export function parsePublicationSocialVariantBody(body: unknown): PublicationSocialVariantBody {
+  const input = record(body, "request body");
+  rejectUnknown(
+    input,
+    ["expectedVersion", "groupId", "routeId", "commentaryMode", "commentary", "mediaMode", "imageAssetIds"],
+    "request body",
+  );
+  const commentaryMode = input.commentaryMode;
+  if (commentaryMode !== "inherit" && commentaryMode !== "override") {
+    throw new OperatorRequestError("commentaryMode must be inherit or override");
+  }
+  const commentary = optionalString(input, "commentary");
+  if (commentaryMode === "override") {
+    if (!commentary?.trim()) throw new OperatorRequestError("commentary is required when commentaryMode is override");
+    if (commentary.trim().length > 63000) {
+      throw new OperatorRequestError("commentary must not exceed 63000 characters");
+    }
+  } else if (commentary !== undefined) {
+    throw new OperatorRequestError("commentary is only allowed when commentaryMode is override");
+  }
+
+  const mediaMode = input.mediaMode;
+  if (mediaMode !== "inherit" && mediaMode !== "none" && mediaMode !== "select") {
+    throw new OperatorRequestError("mediaMode must be inherit, none, or select");
+  }
+  const rawIds = input.imageAssetIds;
+  let imageAssetIds: readonly string[] | undefined;
+  if (mediaMode === "select") {
+    if (!Array.isArray(rawIds) || rawIds.some((value) => typeof value !== "string" || !value.trim())) {
+      throw new OperatorRequestError("imageAssetIds must be a non-empty array of image asset ids when mediaMode is select");
+    }
+    imageAssetIds = [...new Set((rawIds as readonly string[]).map((value) => value.trim()))];
+    if (imageAssetIds.length === 0) {
+      throw new OperatorRequestError("imageAssetIds must be non-empty when mediaMode is select");
+    }
+  } else if (rawIds !== undefined) {
+    throw new OperatorRequestError("imageAssetIds are only allowed when mediaMode is select");
+  }
+
+  return {
+    expectedVersion: expectedVersion(input),
+    groupId: requiredString(input, "groupId").trim(),
+    routeId: requiredString(input, "routeId").trim(),
+    commentaryMode,
+    ...(commentaryMode === "override" ? { commentary: commentary!.trim() } : {}),
+    mediaMode,
+    ...(imageAssetIds === undefined ? {} : { imageAssetIds }),
   };
 }
 

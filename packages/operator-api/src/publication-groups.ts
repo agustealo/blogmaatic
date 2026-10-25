@@ -8,6 +8,7 @@ import {
   parsePublicationDistributionHistoryQuery,
   parsePublicationWorkspaceCreateBody,
   parsePublicationWorkspaceDispatchBody,
+  parsePublicationSocialVariantBody,
   parsePublicationWorkspaceListQuery,
   parsePublicationWorkspaceUpdateBody,
   parsePublicationWorkspaceVersionListQuery,
@@ -264,6 +265,41 @@ function registerPublicationWorkspaceRoutes(app: FastifyInstance, options: Opera
         },
       }),
     });
+  });
+
+  app.post("/v1/publications/:publicationId/social-variant", async (request, reply) => {
+    const principal = await authorize(options, request, "publications:write");
+    const publicationId = requirePathString(params(request).publicationId, "publicationId");
+    const publications = publicationManager(options);
+    const current = await publicationOr404(publications, publicationId);
+    const body = parsePublicationSocialVariantBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "publication.social-variant.update",
+      resource: { type: "publication", id: publicationId },
+      evidence: {
+        expectedVersion: body.expectedVersion,
+        currentVersion: current.version,
+        groupId: body.groupId,
+        routeId: body.routeId,
+        commentaryMode: body.commentaryMode,
+        mediaMode: body.mediaMode,
+        imageCount: body.imageAssetIds?.length ?? 0,
+      },
+      now: () => clock.now(),
+      execute: () => publicationDomainCall(() => publications.setSocialVariant(publicationId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          groupId: value.groupId,
+          routeId: value.routeId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
   });
 
   app.post("/v1/publications/:publicationId/publish", async (request) => {

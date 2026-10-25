@@ -49,6 +49,43 @@ function numberValue(record: Readonly<Record<string, JsonValue>>, key: string): 
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function recordValue(
+  record: Readonly<Record<string, JsonValue>>,
+  key: string,
+): Readonly<Record<string, JsonValue>> | undefined {
+  const value = record[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, JsonValue>>
+    : undefined;
+}
+
+function destinationSocialVariant(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId: string | undefined,
+): Readonly<Record<string, JsonValue>> | undefined {
+  if (!groupId) return undefined;
+  const root = recordValue(publication.current.content.attributes, "destinationOverrides");
+  const groups = root ? recordValue(root, "groups") : undefined;
+  const group = groups ? recordValue(groups, groupId) : undefined;
+  const routes = group ? recordValue(group, "routes") : undefined;
+  const override = routes ? recordValue(routes, route.id) : undefined;
+  const social = override ? recordValue(override, "socialVariant") : undefined;
+  if (!social) return undefined;
+
+  if (
+    stringValue(override!, "extensionId") !== route.destination.extensionId ||
+    stringValue(override!, "connectionId") !== route.destination.connectionId ||
+    stringValue(override!, "channel") !== route.destination.channel ||
+    stringValue(social, "extensionId") !== route.destination.extensionId ||
+    stringValue(social, "connectionId") !== route.destination.connectionId ||
+    stringValue(social, "channel") !== route.destination.channel
+  ) {
+    throw new Error("LinkedIn social variant identity does not match the compiled destination");
+  }
+  return social;
+}
+
 function projectionMode(route: PublicationRoute): LinkedInProjectionMode {
   const mode = stringValue(variant(route), "mode") ?? "text";
   if (mode !== "text" && mode !== "article") {
@@ -235,6 +272,7 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
     );
     const settings = parseSettings(connection);
     const routeVariant = variant(route);
+    const social = destinationSocialVariant(publication, route, groupId);
     const mode = projectionMode(route);
     const adapted = adaptPublicationForSocial(
       publication,
@@ -269,9 +307,27 @@ export class LinkedInRestPublisher implements ManagedPublisherExtension {
       throw new Error("LinkedIn article mode requires a canonical publication URL");
     }
 
+    const commentaryMode = social ? stringValue(social, "commentaryMode") : undefined;
+    if (commentaryMode !== undefined && commentaryMode !== "inherit" && commentaryMode !== "override") {
+      throw new Error(`Unsupported LinkedIn social commentary mode: ${commentaryMode}`);
+    }
+    const commentary = commentaryMode === "override"
+      ? stringValue(social!, "commentary")?.trim()
+      : adapted.commentary;
+    if (!commentary) throw new Error("LinkedIn commentary override is missing commentary");
+    if (commentary.length > 3000) throw new Error("LinkedIn commentary override exceeds 3000 characters");
+
+    const mediaMode = social ? stringValue(social, "mediaMode") : undefined;
+    if (mediaMode !== undefined && !["inherit", "none", "select"].includes(mediaMode)) {
+      throw new Error(`Unsupported LinkedIn social media mode: ${mediaMode}`);
+    }
+    if (mediaMode === "select") {
+      throw new Error("LinkedIn v0.1 does not support selected social media assets");
+    }
+
     const payload: LinkedInProjectionPayload = {
       mode,
-      commentary: adapted.commentary,
+      commentary,
       ...(adapted.article ? { article: adapted.article } : {}),
       fidelity: adapted.fidelity,
     };

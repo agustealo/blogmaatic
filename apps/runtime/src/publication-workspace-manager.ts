@@ -850,6 +850,109 @@ export class PublicationWorkspaceManager {
     }, expectedVersion, now);
   }
 
+  async setSocialVariant(
+    publicationId: string,
+    input: {
+      readonly expectedVersion: number;
+      readonly groupId: string;
+      readonly routeId: string;
+      readonly commentaryMode: "inherit" | "override";
+      readonly commentary?: string;
+      readonly mediaMode: "inherit" | "none" | "select";
+      readonly imageAssetIds?: readonly string[];
+    },
+  ): Promise<{
+    readonly publication: PublicationWorkspaceEntry;
+    readonly groupId: string;
+    readonly routeId: string;
+    readonly commentaryMode: "inherit" | "override";
+    readonly commentary?: string;
+    readonly mediaMode: "inherit" | "none" | "select";
+    readonly imageAssetIds: readonly string[];
+  }> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== input.expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${input.expectedVersion} to ${current.version}`);
+    }
+
+    const groupId = requireText(input.groupId, "Social variant group id");
+    const routeId = requireText(input.routeId, "Social variant route id");
+    const targetRoute = await this.#publishingTargetRoute(current.publication, groupId, routeId);
+
+    if (input.commentaryMode !== "inherit" && input.commentaryMode !== "override") {
+      throw new Error(`Unsupported social commentary mode: ${input.commentaryMode}`);
+    }
+    const commentary = input.commentary?.trim();
+    if (input.commentaryMode === "override") {
+      if (!commentary) throw new Error("Social commentary override requires commentary");
+      if (commentary.length > 63000) throw new Error("Social commentary override must not exceed 63000 characters");
+    } else if (input.commentary !== undefined) {
+      throw new Error("Social commentary is only allowed when commentaryMode is override");
+    }
+
+    if (!["inherit", "none", "select"].includes(input.mediaMode)) {
+      throw new Error(`Unsupported social media mode: ${input.mediaMode}`);
+    }
+    let imageAssetIds: readonly string[] = [];
+    if (input.mediaMode === "select") {
+      const normalized = input.imageAssetIds?.map((id) => id.trim()).filter(Boolean) ?? [];
+      imageAssetIds = [...new Set(normalized)];
+      if (imageAssetIds.length === 0) throw new Error("Social media select mode requires imageAssetIds");
+      for (const assetId of imageAssetIds) {
+        const asset = current.publication.current.content.assets.find((candidate) => candidate.id === assetId);
+        if (!asset) throw new Error(`Social image asset does not exist: ${assetId}`);
+        if (asset.kind !== "image") throw new Error(`Social selected asset must be an image: ${assetId}`);
+      }
+    } else if (input.imageAssetIds !== undefined) {
+      throw new Error("Social imageAssetIds are only allowed when mediaMode is select");
+    }
+
+    const socialVariant: JsonValue = {
+      extensionId: targetRoute.destination.extensionId,
+      connectionId: targetRoute.destination.connectionId,
+      channel: targetRoute.destination.channel,
+      commentaryMode: input.commentaryMode,
+      ...(commentary ? { commentary } : {}),
+      mediaMode: input.mediaMode,
+      imageAssetIds: [...imageAssetIds],
+    };
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = withDestinationOverride(
+      oldAttributes,
+      groupId,
+      routeId,
+      targetRoute.destination,
+      { socialVariant },
+    );
+    let publication = current;
+    if (JSON.stringify(oldAttributes) !== JSON.stringify(nextAttributes)) {
+      const now = this.#now();
+      publication = await this.#store.update({
+        ...current.publication,
+        current: {
+          id: `revision_${this.#id()}`,
+          ordinal: current.publication.current.ordinal + 1,
+          createdAt: now,
+          content: {
+            ...current.publication.current.content,
+            attributes: nextAttributes,
+          },
+        },
+      }, input.expectedVersion, now);
+    }
+
+    return {
+      publication,
+      groupId,
+      routeId,
+      commentaryMode: input.commentaryMode,
+      ...(commentary ? { commentary } : {}),
+      mediaMode: input.mediaMode,
+      imageAssetIds,
+    };
+  }
+
   async setSourceFeaturedMedia(
     publicationId: string,
     expectedVersion: number,

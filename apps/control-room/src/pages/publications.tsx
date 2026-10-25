@@ -1180,6 +1180,309 @@ function WordPressFeaturedMediaPanel({
   );
 }
 
+interface SocialTargetRoute {
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly routeId: string;
+  readonly extensionId: string;
+  readonly connectionId: string;
+  readonly channel: string;
+  readonly maxImages: number;
+}
+
+function canonicalSocialVariant(
+  entry: PublicationWorkspaceEntry,
+  groupId: string,
+  routeId: string,
+): {
+  readonly commentaryMode: "inherit" | "override";
+  readonly commentary: string;
+  readonly mediaMode: "inherit" | "none" | "select";
+  readonly imageAssetIds: readonly string[];
+} {
+  const value = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.socialVariant);
+  const commentaryMode = value?.commentaryMode === "override" ? "override" : "inherit";
+  const mediaMode = value?.mediaMode === "none" || value?.mediaMode === "select" ? value.mediaMode : "inherit";
+  const imageAssetIds = Array.isArray(value?.imageAssetIds)
+    ? value.imageAssetIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map((id) => id.trim())
+    : [];
+  return {
+    commentaryMode,
+    commentary: typeof value?.commentary === "string" ? value.commentary : "",
+    mediaMode,
+    imageAssetIds,
+  };
+}
+
+function SocialDestinationRoutePanel({
+  entry,
+  route,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly route: SocialTargetRoute;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const canonical = canonicalSocialVariant(entry, route.groupId, route.routeId);
+  const [commentaryMode, setCommentaryMode] = useState<"inherit" | "override">(canonical.commentaryMode);
+  const [commentary, setCommentary] = useState(canonical.commentary);
+  const [mediaMode, setMediaMode] = useState<"inherit" | "none" | "select">(canonical.mediaMode);
+  const [imageAssetIds, setImageAssetIds] = useState<readonly string[]>(canonical.imageAssetIds);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const next = canonicalSocialVariant(entry, route.groupId, route.routeId);
+    setCommentaryMode(next.commentaryMode);
+    setCommentary(next.commentary);
+    setMediaMode(next.mediaMode);
+    setImageAssetIds(next.imageAssetIds);
+  }, [entry.publication.current.id, route.groupId, route.routeId]);
+
+  const imageAssets = entry.publication.current.content.assets.filter((asset) => asset.kind === "image");
+  const maxCommentary = route.extensionId === "blogmaatic.linkedin-rest" ? 3000 : 63000;
+  const isFacebook = route.extensionId === "blogmaatic.facebook-pages";
+  const dirty =
+    commentaryMode !== canonical.commentaryMode ||
+    commentary !== canonical.commentary ||
+    mediaMode !== canonical.mediaMode ||
+    JSON.stringify(imageAssetIds) !== JSON.stringify(canonical.imageAssetIds);
+
+  const toggleImage = (assetId: string) => {
+    setImageAssetIds((current) => current.includes(assetId)
+      ? current.filter((id) => id !== assetId)
+      : [...current, assetId]);
+  };
+
+  const move = (assetId: string, delta: -1 | 1) => {
+    setImageAssetIds((current) => {
+      const index = current.indexOf(assetId);
+      const nextIndex = index + delta;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
+      const next = [...current];
+      [next[index], next[nextIndex]] = [next[nextIndex]!, next[index]!];
+      return next;
+    });
+  };
+
+  const save = async (reset = false) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const nextCommentaryMode = reset ? "inherit" : commentaryMode;
+      const nextMediaMode = reset ? "inherit" : mediaMode;
+      if (!reset && nextCommentaryMode === "override" && !commentary.trim()) {
+        throw new Error("Commentary override cannot be empty.");
+      }
+      if (!reset && commentary.trim().length > maxCommentary) {
+        throw new Error(`Commentary exceeds the ${maxCommentary.toLocaleString()} character limit for this destination.`);
+      }
+      if (!reset && nextMediaMode === "select" && imageAssetIds.length === 0) {
+        throw new Error("Select at least one image or choose another media mode.");
+      }
+      if (!reset && isFacebook && nextMediaMode === "select" && imageAssetIds.length > route.maxImages) {
+        throw new Error(`This Facebook route allows at most ${route.maxImages} selected images.`);
+      }
+      const result = await client.setPublicationSocialVariant(entry.publication.id, {
+        expectedVersion: entry.version,
+        groupId: route.groupId,
+        routeId: route.routeId,
+        commentaryMode: nextCommentaryMode,
+        ...(nextCommentaryMode === "override" ? { commentary: commentary.trim() } : {}),
+        mediaMode: nextMediaMode,
+        ...(nextMediaMode === "select" ? { imageAssetIds } : {}),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Social destination settings could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="social-destination-route">
+      <div className="social-destination-route__heading">
+        <span>
+          <strong>{route.groupName} · {destinationLabel(route.extensionId)}</strong>
+          <small>{route.connectionId} · {route.channel} · route {route.routeId}</small>
+        </span>
+        <StatusPill
+          value={canonical.commentaryMode === "inherit" && canonical.mediaMode === "inherit" ? "inherited" : "customized"}
+          tone={canonical.commentaryMode === "inherit" && canonical.mediaMode === "inherit" ? "neutral" : "good"}
+        />
+      </div>
+      <ErrorBanner error={error} />
+      <div className="social-destination-controls">
+        <label className="field">
+          <span>Commentary</span>
+          <select value={commentaryMode} onChange={(event) => setCommentaryMode(event.target.value as "inherit" | "override")} disabled={busy}>
+            <option value="inherit">Use generated destination copy</option>
+            <option value="override">Use custom copy for this route</option>
+          </select>
+        </label>
+        {commentaryMode === "override" ? (
+          <label className="field social-commentary-field">
+            <span>Custom commentary</span>
+            <textarea
+              value={commentary}
+              onChange={(event) => setCommentary(event.target.value)}
+              rows={6}
+              maxLength={maxCommentary}
+              placeholder={isFacebook ? "Write the exact Facebook post copy…" : "Write the exact LinkedIn commentary…"}
+              disabled={busy}
+            />
+            <small>{commentary.length.toLocaleString()} / {maxCommentary.toLocaleString()} characters</small>
+          </label>
+        ) : (
+          <p className="social-inherit-note">Blogmaatic will continue using the route's deterministic social adaptation for commentary.</p>
+        )}
+
+        <label className="field">
+          <span>Media</span>
+          <select value={mediaMode} onChange={(event) => setMediaMode(event.target.value as "inherit" | "none" | "select")} disabled={busy}>
+            <option value="inherit">Use automatically selected media</option>
+            <option value="none">No social images</option>
+            {isFacebook ? <option value="select">Choose canonical images</option> : null}
+          </select>
+          {!isFacebook ? <small>LinkedIn v0.1 currently supports commentary/article posts, not image selection.</small> : null}
+        </label>
+
+        {isFacebook && mediaMode === "select" ? (
+          <div className="social-media-selector">
+            <div className="social-media-selector__selected">
+              <strong>Selected order</strong>
+              {imageAssetIds.map((assetId, index) => {
+                const asset = imageAssets.find((candidate) => candidate.id === assetId);
+                return (
+                  <div className="social-media-selected-row" key={assetId}>
+                    <span><b>{index + 1}</b>{asset?.alt?.trim() || assetId}</span>
+                    <span>
+                      <button className="button button--quiet" type="button" onClick={() => move(assetId, -1)} disabled={busy || index === 0}>Up</button>
+                      <button className="button button--quiet" type="button" onClick={() => move(assetId, 1)} disabled={busy || index === imageAssetIds.length - 1}>Down</button>
+                      <button className="button button--quiet" type="button" onClick={() => toggleImage(assetId)} disabled={busy}>Remove</button>
+                    </span>
+                  </div>
+                );
+              })}
+              {imageAssetIds.length === 0 ? <small>No images selected yet.</small> : null}
+            </div>
+            <div className="social-media-selector__available">
+              <strong>Canonical images</strong>
+              {imageAssets.map((asset) => (
+                <label className="social-media-option" key={asset.id}>
+                  <input
+                    type="checkbox"
+                    checked={imageAssetIds.includes(asset.id)}
+                    onChange={() => toggleImage(asset.id)}
+                    disabled={busy || (!imageAssetIds.includes(asset.id) && imageAssetIds.length >= route.maxImages)}
+                  />
+                  <span>{asset.alt?.trim() || asset.id}</span>
+                </label>
+              ))}
+              <small>{imageAssetIds.length} / {route.maxImages} selected</small>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="social-destination-actions">
+          <button className="button button--quiet" type="button" onClick={() => void save(true)} disabled={busy || (canonical.commentaryMode === "inherit" && canonical.mediaMode === "inherit")}>
+            Reset to inherited
+          </button>
+          <button className="button button--primary" type="button" onClick={() => void save(false)} disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save social variant"}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SocialDestinationSettings({
+  entry,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const [routes, setRoutes] = useState<readonly SocialTargetRoute[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const targetGroupIds = canonicalPublishingTargetGroupIds(entry);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void Promise.all(targetGroupIds.map((groupId) => client.getPublicationGroup(groupId)))
+      .then((groups) => {
+        if (!active) return;
+        const next: SocialTargetRoute[] = [];
+        for (const group of groups) {
+          if (!group.enabled) continue;
+          for (const route of group.group.routes) {
+            if (!route.enabled || !["blogmaatic.facebook-pages", "blogmaatic.linkedin-rest"].includes(route.destination.extensionId)) continue;
+            const rawMax = route.variant?.maxImages;
+            const maxImages = route.destination.extensionId === "blogmaatic.facebook-pages"
+              ? Math.max(0, Math.min(10, Math.trunc(typeof rawMax === "number" && Number.isFinite(rawMax) ? rawMax : 10)))
+              : 0;
+            next.push({
+              groupId: group.group.id,
+              groupName: group.group.name,
+              routeId: route.id,
+              extensionId: route.destination.extensionId,
+              connectionId: route.destination.connectionId,
+              channel: route.destination.channel,
+              maxImages,
+            });
+          }
+        }
+        next.sort((left, right) =>
+          left.groupName.localeCompare(right.groupName) ||
+          left.extensionId.localeCompare(right.extensionId) ||
+          left.connectionId.localeCompare(right.connectionId) ||
+          left.routeId.localeCompare(right.routeId),
+        );
+        setRoutes(next);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("Social destination settings could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, targetGroupIds.join("\u0000")]);
+
+  if (!loading && routes.length === 0 && !error) return null;
+
+  return (
+    <div className="social-destination-settings">
+      <div className="social-destination-settings__heading">
+        <span>
+          <strong>Social destination settings</strong>
+          <small>Keep one canonical publication while tailoring copy and media for each Facebook or LinkedIn route.</small>
+        </span>
+        <StatusPill value={loading ? "loading" : `${routes.length} route${routes.length === 1 ? "" : "s"}`} tone={routes.length ? "good" : "warn"} />
+      </div>
+      <ErrorBanner error={error} />
+      {loading ? <LoadingBlock /> : null}
+      {routes.map((route) => (
+        <SocialDestinationRoutePanel
+          key={`${route.groupId}:${route.routeId}`}
+          entry={entry}
+          route={route}
+          onUpdated={onUpdated}
+        />
+      ))}
+    </div>
+  );
+}
+
 function WordPressDestinationSettings({
   entry,
   onUpdated,
@@ -3160,6 +3463,15 @@ export function PublicationsPage() {
 
       {editor?.mode === "edit" && editor.publicationId && activeEntry ? (
         <div className="publication-studio-support">
+          <SocialDestinationSettings
+            entry={activeEntry}
+            onUpdated={(next) => {
+              setActiveEntry(next);
+              setEditor(editorForEntry(next));
+              setPendingPublish(false);
+              setChangeNonce((value) => value + 1);
+            }}
+          />
           <WordPressDestinationSettings
             entry={activeEntry}
             onUpdated={(next) => {

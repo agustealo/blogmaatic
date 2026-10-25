@@ -73,6 +73,55 @@ function getRecord(record: Readonly<Record<string, JsonValue>>, key: string): Re
     : undefined;
 }
 
+function destinationSocialVariant(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId: string | undefined,
+): Readonly<Record<string, JsonValue>> | undefined {
+  if (!groupId) return undefined;
+  const root = getRecord(publication.current.content.attributes, "destinationOverrides");
+  const groups = root ? getRecord(root, "groups") : undefined;
+  const group = groups ? getRecord(groups, groupId) : undefined;
+  const routes = group ? getRecord(group, "routes") : undefined;
+  const override = routes ? getRecord(routes, route.id) : undefined;
+  const social = override ? getRecord(override, "socialVariant") : undefined;
+  if (!social) return undefined;
+
+  if (
+    getString(override!, "extensionId") !== route.destination.extensionId ||
+    getString(override!, "connectionId") !== route.destination.connectionId ||
+    getString(override!, "channel") !== route.destination.channel ||
+    getString(social, "extensionId") !== route.destination.extensionId ||
+    getString(social, "connectionId") !== route.destination.connectionId ||
+    getString(social, "channel") !== route.destination.channel
+  ) {
+    throw new Error("Facebook social variant identity does not match the compiled destination");
+  }
+  return social;
+}
+
+function socialImageAssets(
+  publication: Publication,
+  social: Readonly<Record<string, JsonValue>> | undefined,
+): readonly Publication["current"]["content"]["assets"][number][] | undefined {
+  if (!social) return undefined;
+  const mediaMode = getString(social, "mediaMode");
+  if (mediaMode === "inherit") return undefined;
+  if (mediaMode === "none") return [];
+  if (mediaMode !== "select") throw new Error(`Unsupported Facebook social media mode: ${String(mediaMode)}`);
+  const raw = social.imageAssetIds;
+  if (!Array.isArray(raw) || raw.some((id) => typeof id !== "string" || !id.trim())) {
+    throw new Error("Facebook selected social media requires imageAssetIds");
+  }
+  return raw.map((rawId) => {
+    const id = String(rawId).trim();
+    const asset = publication.current.content.assets.find((candidate) => candidate.id === id);
+    if (!asset) throw new Error(`Facebook social image asset does not exist: ${id}`);
+    if (asset.kind !== "image") throw new Error(`Facebook social selected asset must be an image: ${id}`);
+    return asset;
+  });
+}
+
 function imageTransformSpec(route: PublicationRoute): ImageTransformSpec {
   const media = getRecord(variant(route), "imageTransform");
   if (!media) return { maxBytes: 10 * 1024 * 1024 };
@@ -309,7 +358,15 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
   }): Promise<CompiledProjection> {
     const connection = this.#connections.requireActive(FACEBOOK_PAGES_EXTENSION_ID, route.destination.connectionId);
     const settings = parseSettings(connection);
-    const mode = desiredMode(publication, route);
+    const social = destinationSocialVariant(publication, route, groupId);
+    const selectedAssets = socialImageAssets(publication, social);
+    const inheritedMode = desiredMode(publication, route);
+    const mediaMode = social ? getString(social, "mediaMode") : undefined;
+    const mode: FacebookProjectionMode = mediaMode === "select"
+      ? "image"
+      : mediaMode === "none" && inheritedMode === "image"
+        ? "text"
+        : inheritedMode;
     if (mode === "link" && !publication.canonicalUrl) {
       throw new Error("Facebook link mode requires publication.canonicalUrl");
     }
@@ -337,8 +394,24 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
     if (adapted.fidelity.score < minimumFidelity) {
       throw new Error(`Facebook projection fidelity ${adapted.fidelity.score} is below required ${minimumFidelity}`);
     }
+    const commentaryMode = social ? getString(social, "commentaryMode") : undefined;
+    if (commentaryMode !== undefined && commentaryMode !== "inherit" && commentaryMode !== "override") {
+      throw new Error(`Unsupported Facebook social commentary mode: ${commentaryMode}`);
+    }
+    const overrideCommentary = commentaryMode === "override" ? getString(social!, "commentary")?.trim() : undefined;
+    if (commentaryMode === "override" && !overrideCommentary) {
+      throw new Error("Facebook social commentary override is missing commentary");
+    }
+    if (overrideCommentary && overrideCommentary.length > profile.maxCommentaryChars) {
+      throw new Error(`Facebook commentary override exceeds ${profile.maxCommentaryChars} characters`);
+    }
+
+    const imageInputs = selectedAssets ?? adapted.imageAssets;
+    if (imageInputs.length > maxImages) {
+      throw new Error(`Facebook social media selection exceeds maxImages ${maxImages}`);
+    }
     const images = mode === "image"
-      ? await compileFacebookAssets(adapted.imageAssets, settings, imageTransformSpec(route))
+      ? await compileFacebookAssets(imageInputs, settings, imageTransformSpec(route))
       : [];
     if (mode === "image" && images.length === 0) {
       throw new Error("Facebook image mode requires at least one image in the publication projection");
@@ -346,7 +419,7 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
     const schedule = scheduledAt(route);
     const payload: FacebookProjectionPayload = {
       mode,
-      message: adapted.commentary,
+      message: overrideCommentary ?? adapted.commentary,
       ...(mode === "link" && adapted.article ? { link: adapted.article.source } : {}),
       images,
       fidelity: adapted.fidelity,

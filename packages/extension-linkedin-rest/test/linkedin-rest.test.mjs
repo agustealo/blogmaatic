@@ -226,3 +226,123 @@ test("LinkedIn article projection fails closed when article-card structure drift
     api.server.close();
   }
 });
+
+
+test("LinkedIn route-scoped commentary override preserves canonical article structure", async () => {
+  const { api, publisher } = await fixture();
+  try {
+    const item = publication();
+    item.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          "group-social": {
+            routes: {
+              "linkedin-article": {
+                extensionId: "blogmaatic.linkedin-rest",
+                connectionId: "linkedin-company",
+                channel: "posts",
+                socialVariant: {
+                  extensionId: "blogmaatic.linkedin-rest",
+                  connectionId: "linkedin-company",
+                  channel: "posts",
+                  commentaryMode: "override",
+                  commentary: "Exact LinkedIn commentary",
+                  mediaMode: "none",
+                  imageAssetIds: [],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const projection = await publisher.compile({
+      publication: item,
+      route: route("article"),
+      groupId: "group-social",
+    });
+    assert.equal(projection.payload.commentary, "Exact LinkedIn commentary");
+    assert.equal(projection.payload.article.source, item.canonicalUrl);
+    assert.equal(projection.payload.article.title, item.current.content.title);
+    const inherited = await publisher.compile({ publication: item, route: route("article") });
+    assert.notEqual(inherited.payload.commentary, "Exact LinkedIn commentary");
+    assert.notEqual(projection.fingerprint, inherited.fingerprint);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("LinkedIn selected social media override fails closed until media publishing exists", async () => {
+  const { api, publisher } = await fixture();
+  try {
+    const item = publication();
+    item.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          "group-social": {
+            routes: {
+              "linkedin-text": {
+                extensionId: "blogmaatic.linkedin-rest",
+                connectionId: "linkedin-company",
+                channel: "posts",
+                socialVariant: {
+                  extensionId: "blogmaatic.linkedin-rest",
+                  connectionId: "linkedin-company",
+                  channel: "posts",
+                  commentaryMode: "inherit",
+                  mediaMode: "select",
+                  imageAssetIds: ["hero"],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    await assert.rejects(
+      publisher.compile({ publication: item, route: route("text"), groupId: "group-social" }),
+      /does not support selected social media assets/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
+
+test("LinkedIn rejects tampered social destination identity", async () => {
+  const { api, publisher } = await fixture();
+  try {
+    const item = publication();
+    item.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          "group-social": {
+            routes: {
+              "linkedin-text": {
+                extensionId: "blogmaatic.linkedin-rest",
+                connectionId: "wrong-company",
+                channel: "posts",
+                socialVariant: {
+                  extensionId: "blogmaatic.linkedin-rest",
+                  connectionId: "linkedin-company",
+                  channel: "posts",
+                  commentaryMode: "inherit",
+                  mediaMode: "inherit",
+                  imageAssetIds: [],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    await assert.rejects(
+      publisher.compile({ publication: item, route: route("text"), groupId: "group-social" }),
+      /identity does not match/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
