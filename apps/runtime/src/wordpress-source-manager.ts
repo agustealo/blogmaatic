@@ -56,6 +56,7 @@ import type {
   SourcePublishingStateResult,
   SourceSeoFieldDefinition,
   SourceSeoSemantic,
+  SourceSeoValue,
   SourceSeoValuesBody,
   SourceSeoValuesResult,
   SourcePageStructureBody,
@@ -547,6 +548,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       label: field.label,
       provider: field.provider,
       ...(field.description ? { description: field.description } : {}),
+      valueKind: field.valueKind,
+      ...(field.trueValue === undefined ? {} : { trueValue: field.trueValue }),
+      ...(field.falseValue === undefined ? {} : { falseValue: field.falseValue }),
       metadata: {
         extensionId: WORDPRESS_REST_EXTENSION_ID,
         connectionId,
@@ -564,7 +568,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     if (!contentType) throw new Error("Source SEO content type is required");
     const fields = await this.listSeoFields(connectionId, contentType);
     const bySemantic = new Map(fields.map((field) => [field.semantic, field] as const));
-    const normalized: Partial<Record<SourceSeoSemantic, string>> = {};
+    const normalized: Partial<Record<SourceSeoSemantic, SourceSeoValue>> = {};
 
     const current = await this.#publications.get(body.publicationId);
     if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
@@ -588,6 +592,18 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       if (!field) {
         throw new Error(`WordPress SEO field is not writable for ${contentType}: ${semantic}`);
       }
+      if (field.valueKind === "boolean") {
+        if (typeof rawValue !== "boolean") {
+          throw new Error(`WordPress SEO value must be a boolean: ${semantic}`);
+        }
+        if (field.trueValue === undefined || field.falseValue === undefined) {
+          throw new Error(`WordPress SEO boolean encoding is unavailable: ${semantic}`);
+        }
+        normalized[semantic] = rawValue;
+        metaValues[field.key] = rawValue ? field.trueValue : field.falseValue;
+        continue;
+      }
+
       if (typeof rawValue !== "string") {
         throw new Error(`WordPress SEO value must be a string: ${semantic}`);
       }
