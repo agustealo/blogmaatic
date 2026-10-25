@@ -55,18 +55,23 @@ const SEO_ALIASES: Readonly<Record<string, {
 export function discoverSeoFields(
   fields: readonly WordPressRestMetaFieldDefinition[],
 ): readonly WordPressSeoFieldDefinition[] {
-  const bySemantic = new Map<WordPressSeoSemantic, WordPressSeoFieldDefinition>();
+  const candidates = new Map<WordPressSeoSemantic, WordPressSeoFieldDefinition[]>();
   for (const field of fields) {
     if (field.type !== "string") continue;
     const alias = SEO_ALIASES[field.key.toLowerCase()];
-    if (!alias || bySemantic.has(alias.semantic)) continue;
-    bySemantic.set(alias.semantic, {
+    if (!alias) continue;
+    const candidate: WordPressSeoFieldDefinition = {
       semantic: alias.semantic,
       key: field.key,
       label: field.title?.trim() || alias.label,
       provider: alias.provider,
       ...(field.description?.trim() ? { description: field.description.trim() } : {}),
-    });
+    };
+    candidates.set(alias.semantic, [...(candidates.get(alias.semantic) ?? []), candidate]);
   }
-  return [...bySemantic.values()].sort((left, right) => left.label.localeCompare(right.label));
+
+  return [...candidates.entries()]
+    .filter(([, values]) => values.length === 1)
+    .map(([, values]) => values[0]!)
+    .sort((left, right) => left.label.localeCompare(right.label));
 }
