@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
@@ -8,9 +11,15 @@ import { LinkedInRestPublisher } from "../dist/index.js";
 
 function makeServer() {
   const posts = new Map();
+  const images = new Map();
+  const uploads = [];
   let nextId = 100;
+  let nextImageId = 500;
   let creates = 0;
   let updates = 0;
+  let imageInitializes = 0;
+  let imageUploads = 0;
+  let imageReads = 0;
   let lastModifiedAt = 1790100000000;
   const requiredAuthor = "urn:li:organization:2414183";
 
@@ -23,6 +32,29 @@ function makeServer() {
     if (request.headers.authorization !== "Bearer linked-in-token") {
       return json(response, 401, { message: "Unauthorized", status: 401 });
     }
+
+    const url = new URL(request.url, "http://127.0.0.1");
+    const path = url.pathname.replace(/^\/rest/, "");
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const rawBuffer = Buffer.concat(chunks);
+
+    const uploadMatch = path.match(/^\/upload\/(image-\d+)$/);
+    if (uploadMatch && request.method === "PUT") {
+      imageUploads += 1;
+      const key = uploadMatch[1];
+      const image = images.get(key);
+      if (!image) return json(response, 404, { message: "Unknown upload", status: 404 });
+      uploads.push({
+        key,
+        bytes: rawBuffer,
+        mediaType: request.headers["content-type"],
+      });
+      images.set(key, { ...image, status: "AVAILABLE" });
+      response.writeHead(201);
+      return response.end();
+    }
+
     if (request.headers["linkedin-version"] !== "202609") {
       return json(response, 400, { message: "Wrong LinkedIn version", status: 400 });
     }
@@ -30,11 +62,37 @@ function makeServer() {
       return json(response, 400, { message: "Wrong Rest.li protocol", status: 400 });
     }
 
-    const url = new URL(request.url, "http://127.0.0.1");
-    const path = url.pathname.replace(/^\/rest/, "");
-    let raw = "";
-    for await (const chunk of request) raw += chunk;
+    const raw = rawBuffer.toString("utf8");
     const body = raw ? JSON.parse(raw) : undefined;
+
+    if (request.method === "POST" && path === "/images" && url.searchParams.get("action") === "initializeUpload") {
+      imageInitializes += 1;
+      const key = `image-${nextImageId++}`;
+      const imageUrn = `urn:li:image:${key.replace(/-/g, "")}`;
+      images.set(key, {
+        id: imageUrn,
+        owner: body?.initializeUploadRequest?.owner,
+        status: "WAITING_UPLOAD",
+      });
+      const port = server.address().port;
+      return json(response, 200, {
+        value: {
+          uploadUrl: `http://127.0.0.1:${port}/upload/${key}`,
+          uploadUrlExpiresAt: Date.now() + 60_000,
+          image: imageUrn,
+        },
+      });
+    }
+
+    const encodedImage = path.match(/^\/images\/(.+)$/)?.[1];
+    if (encodedImage && request.method === "GET") {
+      imageReads += 1;
+      const urn = decodeURIComponent(encodedImage);
+      const image = [...images.values()].find((candidate) => candidate.id === urn);
+      return image
+        ? json(response, 200, image)
+        : json(response, 404, { message: "Image not found", status: 404 });
+    }
 
     if (request.method === "GET" && path === "/posts" && url.searchParams.get("q") === "author") {
       return json(response, 200, { elements: [...posts.values()].slice(0, 1) });
@@ -87,9 +145,11 @@ function makeServer() {
   return {
     server,
     posts,
+    images,
+    uploads,
     requiredAuthor,
     get counts() {
-      return { creates, updates };
+      return { creates, updates, imageInitializes, imageUploads, imageReads };
     },
   };
 }
@@ -124,7 +184,7 @@ function publication() {
   };
 }
 
-function connection(port) {
+function connection(port, assetRoot) {
   return {
     id: "linkedin-company",
     extensionId: "blogmaatic.linkedin-rest",
@@ -134,6 +194,7 @@ function connection(port) {
       apiRoot: `http://127.0.0.1:${port}/rest`,
       apiVersion: "202609",
       authorUrn: "urn:li:organization:2414183",
+      ...(assetRoot ? { assetSourceRoots: [assetRoot] } : {}),
     },
     secretRefs: { accessToken: "env:LINKEDIN_TOKEN" },
     createdAt: "2026-09-22T18:00:00.000Z",
@@ -160,11 +221,11 @@ function route(mode = "text") {
   };
 }
 
-async function fixture() {
+async function fixture(assetRoot) {
   const api = makeServer();
   await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
   const port = api.server.address().port;
-  const record = connection(port);
+  const record = connection(port, assetRoot);
   const publisher = new LinkedInRestPublisher(
     new ConnectionAuthority([record]),
     new SecretAuthority([
