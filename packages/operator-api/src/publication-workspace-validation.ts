@@ -244,6 +244,73 @@ export function parsePublicationWorkspaceUpdateBody(body: unknown): PublicationW
   };
 }
 
+export function parsePublicationSocialVariantBody(body: unknown): PublicationSocialVariantBody {
+  const input = record(body, "request body");
+  rejectUnknown(
+    input,
+    ["expectedVersion", "groupId", "routeId", "commentaryMode", "commentary", "mediaMode", "imageAssetIds"],
+    "request body",
+  );
+  const commentaryMode = input.commentaryMode;
+  if (commentaryMode !== "inherit" && commentaryMode !== "override") {
+    throw new OperatorRequestError("commentaryMode must be inherit or override");
+  }
+  let commentary: string | undefined;
+  if (commentaryMode === "override") {
+    if (typeof input.commentary !== "string") {
+      throw new OperatorRequestError("commentary is required when commentaryMode is override");
+    }
+    if (input.commentary.length > 63000) {
+      throw new OperatorRequestError("commentary must not exceed 63000 characters");
+    }
+    commentary = input.commentary;
+  } else if (input.commentary !== undefined) {
+    throw new OperatorRequestError("commentary is only allowed when commentaryMode is override");
+  }
+
+  const mediaMode = input.mediaMode;
+  if (mediaMode !== "inherit" && mediaMode !== "none" && mediaMode !== "select") {
+    throw new OperatorRequestError("mediaMode must be inherit, none, or select");
+  }
+  let imageAssetIds: readonly string[] | undefined;
+  if (mediaMode === "select") {
+    if (!Array.isArray(input.imageAssetIds) || input.imageAssetIds.length === 0) {
+      throw new OperatorRequestError("imageAssetIds must contain at least one asset when mediaMode is select");
+    }
+    if (input.imageAssetIds.length > 10) {
+      throw new OperatorRequestError("imageAssetIds supports at most 10 assets");
+    }
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const value of input.imageAssetIds) {
+      if (typeof value !== "string" || !value.trim()) {
+        throw new OperatorRequestError("imageAssetIds must contain non-empty strings");
+      }
+      const assetId = value.trim();
+      if (!seen.has(assetId)) {
+        seen.add(assetId);
+        normalized.push(assetId);
+      }
+    }
+    if (normalized.length === 0) {
+      throw new OperatorRequestError("imageAssetIds must contain at least one asset when mediaMode is select");
+    }
+    imageAssetIds = normalized;
+  } else if (input.imageAssetIds !== undefined) {
+    throw new OperatorRequestError("imageAssetIds is only allowed when mediaMode is select");
+  }
+
+  return {
+    expectedVersion: expectedVersion(input),
+    groupId: requiredString(input, "groupId"),
+    routeId: requiredString(input, "routeId"),
+    commentaryMode,
+    ...(commentary === undefined ? {} : { commentary }),
+    mediaMode,
+    ...(imageAssetIds === undefined ? {} : { imageAssetIds }),
+  };
+}
+
 export function parsePublicationWorkspaceDispatchBody(body: unknown): PublicationWorkspaceDispatchBody {
   const input = record(body, "request body");
   rejectUnknown(input, ["expectedVersion"], "request body");
