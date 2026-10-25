@@ -792,7 +792,7 @@ function SourcePublishingStatePanel({
     const next = canonicalSourcePublishing(entry, groupId, routeId);
     setStatus(next.status);
     setScheduledLocal(localDateTimeValue(next.scheduledAt));
-  }, [entry.publication.current.id]);
+  }, [entry.publication.current.id, groupId, routeId]);
 
   const save = useCallback(async () => {
     setBusy(true);
