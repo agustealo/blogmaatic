@@ -78,6 +78,8 @@ import type {
   SourceMetaValuesResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceStandardTaxonomyBody,
+  SourceStandardTaxonomyResult,
   SourcePageStructureBody,
   SourcePageStructureResult,
   SourceTaxonomyCreateBody,
