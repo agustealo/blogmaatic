@@ -256,7 +256,6 @@ function SourceAuthorPanel({
 }) {
   const { session } = useConnection();
   const client = session!.client;
-  const routeScoped = Boolean(groupId && routeId);
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<readonly SourceAuthorRecord[]>([]);
   const [page, setPage] = useState(1);
@@ -2007,6 +2006,7 @@ function SourceAssetLibraryPanel({
 }) {
   const { session } = useConnection();
   const client = session!.client;
+  const routeScoped = Boolean(groupId && routeId);
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<readonly SourceAssetRecord[]>([]);
   const [page, setPage] = useState(1);
