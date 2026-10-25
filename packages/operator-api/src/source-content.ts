@@ -12,6 +12,7 @@ import type {
   SourceAuthorQuery,
   SourceContentImportBody,
   SourceEditorialOptionsBody,
+  SourceFeaturedMediaBody,
   SourceRevisionRestoreBody,
   SourceMetaValuesBody,
   SourcePublishingStateBody,
@@ -409,7 +410,10 @@ function boundedOptionalString(
 
 function parseAssetUpload(request: FastifyRequest): SourceAssetUploadInput {
   const input = query(request);
-  const allowed = new Set(["publicationId", "expectedVersion", "featured", "filename", "alt", "title"]);
+  const allowed = new Set([
+    "publicationId", "expectedVersion", "featured", "filename", "alt", "title",
+    "contentType", "groupId", "routeId",
+  ]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
 
@@ -445,6 +449,15 @@ function parseAssetUpload(request: FastifyRequest): SourceAssetUploadInput {
 
   const alt = boundedOptionalString(input, "alt", 500);
   const title = boundedOptionalString(input, "title", 500);
+  const contentTypeValue = optionalContentType(input.contentType);
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
+  if (groupId && !contentTypeValue) {
+    throw new OperatorRequestError("contentType is required for route-scoped media");
+  }
   return {
     publicationId,
     expectedVersion,
@@ -452,6 +465,9 @@ function parseAssetUpload(request: FastifyRequest): SourceAssetUploadInput {
     mediaType,
     bytes: new Uint8Array(body),
     ...(featured === undefined ? {} : { featured }),
+    ...(contentTypeValue ? { contentType: contentTypeValue } : {}),
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
     ...(alt === undefined ? {} : { alt }),
     ...(title === undefined ? {} : { title }),
   };
@@ -462,7 +478,9 @@ function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion", "featured"]);
+  const allowed = new Set([
+    "publicationId", "expectedVersion", "featured", "contentType", "groupId", "routeId",
+  ]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   const publicationId = input.publicationId;
@@ -475,10 +493,64 @@ function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
   if (input.featured !== undefined && typeof input.featured !== "boolean") {
     throw new OperatorRequestError("featured must be a boolean");
   }
+  const contentType = optionalContentType(input.contentType);
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
+  if (groupId && !contentType) {
+    throw new OperatorRequestError("contentType is required for route-scoped media");
+  }
   return {
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
     ...(typeof input.featured === "boolean" ? { featured: input.featured } : {}),
+    ...(contentType ? { contentType } : {}),
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
+  };
+}
+
+function parseFeaturedMediaBody(body: unknown): SourceFeaturedMediaBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set([
+    "publicationId", "expectedVersion", "contentType", "groupId", "routeId", "mode", "assetId",
+  ]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+  const publicationId = optionalString(input, "publicationId");
+  if (!publicationId) throw new OperatorRequestError("publicationId is required");
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+  const contentType = optionalContentType(input.contentType);
+  if (!contentType) throw new OperatorRequestError("contentType is required");
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if (!groupId || !routeId) throw new OperatorRequestError("groupId and routeId are required");
+  const mode = input.mode;
+  if (mode !== "inherit" && mode !== "none" && mode !== "asset") {
+    throw new OperatorRequestError("mode must be inherit, none, or asset");
+  }
+  const assetId = optionalString(input, "assetId");
+  if (mode === "asset" && !assetId) {
+    throw new OperatorRequestError("assetId is required when mode is asset");
+  }
+  if (mode !== "asset" && assetId !== undefined) {
+    throw new OperatorRequestError("assetId is only allowed when mode is asset");
+  }
+  return {
+    publicationId,
+    expectedVersion: input.expectedVersion as number,
+    contentType,
+    groupId,
+    routeId,
+    mode,
+    ...(assetId ? { assetId } : {}),
   };
 }
 
@@ -1032,6 +1104,9 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         publicationId: input.publicationId,
         expectedVersion: input.expectedVersion,
         featured: input.featured ?? false,
+        groupId: input.groupId ?? null,
+        routeId: input.routeId ?? null,
+        contentType: input.contentType ?? null,
         filename: input.filename,
         mediaType: input.mediaType,
         byteLength: input.bytes.byteLength,
@@ -1067,6 +1142,9 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
         featured: body.featured ?? false,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
+        contentType: body.contentType ?? null,
       },
       now: () => clock.now(),
       execute: () => domainCall(() => manager(options).attachAsset(connectionId, remoteId, body)),
@@ -1075,6 +1153,40 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           revisionId: value.publication.publication.current.id,
           version: value.publication.version,
           assetRemoteId: value.asset.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.post("/v1/connections/:connectionId/featured-media", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseFeaturedMediaBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-featured-media.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        groupId: body.groupId,
+        routeId: body.routeId,
+        mode: body.mode,
+        assetId: body.assetId ?? null,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setFeaturedMedia(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          mode: value.mode,
+          assetId: value.assetId ?? null,
         },
       }),
     });
