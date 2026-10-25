@@ -15,6 +15,7 @@ import type {
   SourceRevisionRestoreBody,
   SourceMetaValuesBody,
   SourcePublishingStateBody,
+  SourceStandardTaxonomyBody,
   SourcePageStructureBody,
   SourceTaxonomyCreateBody,
   SourceTaxonomyQuery,
