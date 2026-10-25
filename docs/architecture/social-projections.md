@@ -59,6 +59,7 @@ Current scope is deliberately narrow:
 - `posts` channel only
 - text posts
 - article-card posts using explicit source/title/description
+- single-image organic posts through the Images API + Posts API
 - public main-feed distribution
 - versioned REST and Rest.li headers
 - access token supplied through Secrets Authority
@@ -75,6 +76,25 @@ Article mode uses the canonical publication URL as the explicit article source, 
 
 Article-card structural fields are not treated as safely mutable. If source/title/description drifts remotely, the extension reports drift but delivery fails closed rather than delete/recreate the post automatically. This protects engagement history and avoids a destructive crash window.
 
+### Single-image mode
+
+LinkedIn image publishing is route-scoped and deterministic. A social override may select exactly one canonical image. A route with `variant.mode=image` may instead inherit the first image selected by the provider-neutral social adapter. `mediaMode=none` removes media and falls back to an ordinary text post.
+
+Only canonical local image files inside the LinkedIn connection's configured `assetSourceRoots` are accepted in this slice. Blogmaatic intentionally rejects arbitrary HTTP(S) image sources rather than introducing an implicit server-side fetch surface. JPEG and PNG are uploaded directly when no transform is needed. WebP inputs are deterministically rendered to JPEG before upload.
+
+The compile phase records source fingerprint, transform fingerprint, derived asset id, output dimensions, and output media type in the projection. Delivery then:
+
+1. initializes an Images API upload owned by the configured organization
+2. renders/loads the exact projected bytes
+3. PUTs those bytes to the returned trusted upload URL
+4. waits for the image to become `AVAILABLE`
+5. creates the Posts API object with `content.media.id` set to the returned Image URN
+
+The delivery receipt records the Image URN plus deterministic render evidence.
+
+LinkedIn's Image URN is remote identity, not a substitute for Blogmaatic's deterministic media fingerprint. For image posts, the stored remote version binds the Image URN to the projected image fingerprint. Inspect verifies that binding plus commentary and post structure. Commentary-only updates reuse the existing Image URN and never re-upload the image. If the desired image changes, automatic in-place delivery fails closed before any second upload because the Posts API structural media mutation is not treated as safe.
+
+
 ### Ownership
 
 A LinkedIn projection is owned by its stored server-generated URN. The extension does not search the account and adopt a similar-looking post.
@@ -83,4 +103,4 @@ If the stored object no longer exists, the kernel removes the stale identity and
 
 ## Current limits
 
-LinkedIn v0.1 intentionally does not yet add image/video/document upload, member-profile publishing, polls, multi-image posts, engagement analytics, comments, or automatic delete/recreate migration. These can be added as extension capabilities once their lifecycle and reconciliation semantics are proven without weakening the current contracts.
+LinkedIn v0.1 intentionally does not yet add video/document upload, member-profile publishing, polls, multi-image posts, arbitrary remote-image ingestion, engagement analytics, comments, or automatic delete/recreate migration. These can be added as extension capabilities once their lifecycle and reconciliation semantics are proven without weakening the current contracts.
