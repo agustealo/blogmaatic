@@ -346,7 +346,8 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
     };
     const fingerprint = sha256(stableJson(semanticPayload(payload)));
     return {
-      projectionId: `${publication.id}:${route.id}`,
+      projectionId: `${publication.id}:${groupId ?? "legacy"}:${route.id}`,
+      ...(groupId ? { groupId } : {}),
       publicationId: publication.id,
       sourceRevisionId: publication.current.id,
       routeId: route.id,
