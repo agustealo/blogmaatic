@@ -144,6 +144,31 @@ function destinationOverride(
   return override;
 }
 
+function legacySourceRouteMatches(
+  publication: Publication,
+  route: PublicationRoute,
+  groupId?: string,
+): boolean {
+  if (
+    publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    publication.provenance.connectionId !== route.destination.connectionId
+  ) {
+    return false;
+  }
+  if (!groupId) return true;
+
+  const wordpress = publication.current.content.attributes.wordpress;
+  if (isRecord(wordpress)) {
+    const importedGroupId = typeof wordpress.groupId === "string" ? wordpress.groupId : undefined;
+    const importedRouteId = typeof wordpress.routeId === "string" ? wordpress.routeId : undefined;
+    if (importedGroupId || importedRouteId) {
+      return importedGroupId === groupId && importedRouteId === route.id;
+    }
+  }
+  const targets = publicationTargetGroupIds(publication);
+  return targets.length === 1 && targets[0] === groupId;
+}
+
 function sourcePublishingState(
   publication: Publication,
   route: PublicationRoute,
@@ -153,7 +178,9 @@ function sourcePublishingState(
   const scopedPublishing = scoped?.publishing;
   const source = isRecord(scopedPublishing)
     ? scopedPublishing
-    : publication.current.content.attributes.sourcePublishing;
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourcePublishing
+      : undefined;
   if (!isRecord(source)) return undefined;
   if (
     source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -280,7 +307,9 @@ function sourceAuthorId(
   const scoped = destinationOverride(publication, route, groupId);
   const sourceAuthor = isRecord(scoped?.author)
     ? scoped!.author
-    : publication.current.content.attributes.sourceAuthor;
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourceAuthor
+      : undefined;
   if (!isRecord(sourceAuthor)) return undefined;
   if (
     sourceAuthor.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
