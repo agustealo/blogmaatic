@@ -384,11 +384,11 @@ export class PublicationWorkspaceManager {
     if (input.body !== undefined && input.blocks !== undefined) {
       throw new Error("Publication blocks and body are mutually exclusive");
     }
-    if (input.bodyFormat !== undefined && input.body === undefined) {
-      throw new Error("Publication bodyFormat requires body");
-    }
     if (input.blocks !== undefined && input.bodyFormat !== undefined) {
       throw new Error("Publication bodyFormat cannot be used with blocks");
+    }
+    if (input.bodyFormat !== undefined && input.body === undefined) {
+      throw new Error("Publication bodyFormat requires body");
     }
     const now = this.#now();
     const slug = trimmed(input.slug);
@@ -429,11 +429,11 @@ export class PublicationWorkspaceManager {
     if (input.body !== undefined && input.blocks !== undefined) {
       throw new Error("Publication blocks and body are mutually exclusive");
     }
-    if (input.bodyFormat !== undefined && input.body === undefined) {
-      throw new Error("Publication bodyFormat requires body");
-    }
     if (input.blocks !== undefined && input.bodyFormat !== undefined) {
       throw new Error("Publication bodyFormat cannot be used with blocks");
+    }
+    if (input.bodyFormat !== undefined && input.body === undefined) {
+      throw new Error("Publication bodyFormat requires body");
     }
     const current = await this.#store.get(publicationId);
     if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
