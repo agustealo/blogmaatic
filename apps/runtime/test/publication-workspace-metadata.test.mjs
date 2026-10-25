@@ -1409,3 +1409,174 @@ test("route-scoped featured media is isolated per WordPress destination and pres
   );
   assert.equal(current().version, 4);
 });
+
+
+test("route-scoped social variants are immutable idempotent ordered and isolated by group", async () => {
+  const publication = {
+    id: "publication-social-variants",
+    createdAt: "2026-10-25T01:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-25T01:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "One publication many social projections",
+        language: "en",
+        blocks: [],
+        assets: [
+          { id: "hero", kind: "image", source: "https://cdn.test/hero.jpg" },
+          { id: "detail", kind: "image", source: "https://cdn.test/detail.jpg" },
+          { id: "document", kind: "document", source: "https://cdn.test/file.pdf" },
+        ],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const socialRoute = (extensionId, connectionId) => ({
+    id: "social",
+    enabled: true,
+    desiredState: "present",
+    destination: { extensionId, connectionId, channel: "feed" },
+    requiredCapabilities: ["article.create", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") return {
+        enabled: true,
+        group: {
+          id: groupId,
+          name: "Facebook",
+          policySetId: "allow",
+          routes: [socialRoute("blogmaatic.facebook-pages", "fb-main")],
+        },
+      };
+      if (groupId === "group-b") return {
+        enabled: true,
+        group: {
+          id: groupId,
+          name: "LinkedIn",
+          policySetId: "allow",
+          routes: [socialRoute("blogmaatic.linkedin-rest", "li-main")],
+        },
+      };
+      if (groupId === "group-disabled") return {
+        enabled: false,
+        group: {
+          id: groupId,
+          name: "Disabled",
+          policySetId: "allow",
+          routes: [socialRoute("blogmaatic.facebook-pages", "fb-disabled")],
+        },
+      };
+      return undefined;
+    },
+  };
+  const { manager, current } = managerWith(publication, groups);
+
+  const facebook = await manager.setSocialVariant("publication-social-variants", {
+    expectedVersion: 1,
+    groupId: "group-a",
+    routeId: "social",
+    commentaryMode: "override",
+    commentary: "Facebook-specific copy",
+    mediaMode: "select",
+    imageAssetIds: ["detail", "hero", "detail"],
+  });
+  assert.equal(facebook.publication.version, 2);
+  assert.deepEqual(facebook.imageAssetIds, ["detail", "hero"]);
+
+  const linkedin = await manager.setSocialVariant("publication-social-variants", {
+    expectedVersion: 2,
+    groupId: "group-b",
+    routeId: "social",
+    commentaryMode: "override",
+    commentary: "LinkedIn-specific copy",
+    mediaMode: "none",
+  });
+  assert.equal(linkedin.publication.version, 3);
+
+  const overrides = linkedin.publication.publication.current.content.attributes.destinationOverrides;
+  assert.deepEqual(overrides.groups["group-a"].routes.social, {
+    extensionId: "blogmaatic.facebook-pages",
+    connectionId: "fb-main",
+    channel: "feed",
+    socialVariant: {
+      extensionId: "blogmaatic.facebook-pages",
+      connectionId: "fb-main",
+      channel: "feed",
+      commentaryMode: "override",
+      commentary: "Facebook-specific copy",
+      mediaMode: "select",
+      imageAssetIds: ["detail", "hero"],
+    },
+  });
+  assert.deepEqual(overrides.groups["group-b"].routes.social.socialVariant, {
+    extensionId: "blogmaatic.linkedin-rest",
+    connectionId: "li-main",
+    channel: "feed",
+    commentaryMode: "override",
+    commentary: "LinkedIn-specific copy",
+    mediaMode: "none",
+    imageAssetIds: [],
+  });
+
+  const retry = await manager.setSocialVariant("publication-social-variants", {
+    expectedVersion: 3,
+    groupId: "group-b",
+    routeId: "social",
+    commentaryMode: "override",
+    commentary: "LinkedIn-specific copy",
+    mediaMode: "none",
+  });
+  assert.equal(retry.publication.version, 3);
+
+  await assert.rejects(
+    () => manager.setSocialVariant("publication-social-variants", {
+      expectedVersion: 2,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "inherit",
+      mediaMode: "inherit",
+    }),
+    /changed from version 2 to 3/,
+  );
+  await assert.rejects(
+    () => manager.setSocialVariant("publication-social-variants", {
+      expectedVersion: 3,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "inherit",
+      mediaMode: "select",
+      imageAssetIds: ["document"],
+    }),
+    /must be an image/,
+  );
+  await assert.rejects(
+    () => manager.setSocialVariant("publication-social-variants", {
+      expectedVersion: 3,
+      groupId: "group-a",
+      routeId: "social",
+      commentaryMode: "inherit",
+      mediaMode: "select",
+      imageAssetIds: ["missing"],
+    }),
+    /does not exist/,
+  );
+  await assert.rejects(
+    () => manager.setSocialVariant("publication-social-variants", {
+      expectedVersion: 3,
+      groupId: "group-disabled",
+      routeId: "social",
+      commentaryMode: "inherit",
+      mediaMode: "inherit",
+    }),
+    /does not target Publication Group|Publishing target is disabled/,
+  );
+  assert.equal(current().version, 3);
+});
