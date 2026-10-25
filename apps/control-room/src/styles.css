@@ -1333,3 +1333,36 @@ a.data-table__row:hover { background: var(--surface-2); }
   .social-destination-actions { display: grid; grid-template-columns: 1fr; }
   .social-destination-actions .button { width: 100%; }
 }
+
+
+/* Destination SEO */
+.source-seo-note {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  display: grid;
+  gap: 4px;
+}
+.source-seo-note span {
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.45;
+}
+.source-seo-grid {
+  padding: 14px 16px 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.source-seo-grid .field:has(textarea),
+.source-seo-grid > .button {
+  grid-column: 1 / -1;
+}
+.source-seo-grid textarea {
+  min-height: 104px;
+  resize: vertical;
+}
+
+@media (max-width: 720px) {
+  .source-seo-grid { grid-template-columns: 1fr; }
+}
