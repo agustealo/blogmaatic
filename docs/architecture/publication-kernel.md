@@ -20,6 +20,8 @@ A publication is the logical item being managed. It owns lifecycle state and poi
 
 A group contains routes. Each route targets one extension connection/channel and declares the capabilities required for that route. Capability negotiation is fail-closed.
 
+A canonical Publication does not implicitly target every enabled group. Publishing intent is explicit and revisioned under `PublicationIR.attributes.publishingTargets.groupIds`. Drafts may have no targets, but dispatch is fail-closed until at least one group is selected. Every selected group must still exist, be enabled, and contain at least one enabled route at dispatch time. Legacy publications without target metadata remain readable/editable but never fall back to global groups.
+
 ### Policy
 
 Policy is evaluated before compilation or delivery. Slice 1 supports deterministic declarative matching by publication status, route, extension, and tags with `allow`, `deny`, and `require_approval` effects. Approval is bound to the exact source revision so an approval cannot silently authorize later edits.
@@ -45,7 +47,7 @@ Content exposes a derived Publication Destination Matrix for the current canonic
 The matrix is not a new source of truth. It composes existing authorities:
 
 - active Publication Workspace revision
-- every enabled route in every enabled Publication Group
+- every enabled route in the Publication's explicitly selected Publication Groups
 - complete durable distribution history
 - current extension compilation/preview results
 
@@ -65,7 +67,7 @@ Derived delivery state is intentionally conservative:
 
 Compile readiness is a separate dimension. A route may have valid historical delivery evidence while the current revision fails compilation. The matrix surfaces both truths rather than replacing one with the other.
 
-The manager consumes all distribution-history pages before deriving latest receipt and delivery count. Configured routes that have never been sent therefore appear immediately, before their first delivery.
+The manager consumes all distribution-history pages before deriving latest receipt and delivery count. Selected configured routes that have never been sent therefore appear immediately, before their first delivery. Unselected globally enabled groups are intentionally absent from the matrix because they are not part of this Publication's distribution intent.
 
 ### Delivery
 
