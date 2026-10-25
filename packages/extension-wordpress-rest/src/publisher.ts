@@ -24,6 +24,7 @@ import { WordPressHttpError, WordPressRestClient } from "./client.js";
 import {
   documentWithMarker,
   parseMarker,
+  type OwnershipMarker,
   projectionFingerprint,
   sha256,
   stableJson,
@@ -44,6 +45,51 @@ import type {
 
 const POST_STATUSES = ["publish", "draft", "pending", "private", "future"] as const;
 type PostStatus = (typeof POST_STATUSES)[number];
+
+function publicationTargetGroupIds(publication: Publication): readonly string[] {
+  const value = publication.current.content.attributes.publishingTargets;
+  if (!isRecord(value) || !Array.isArray(value.groupIds)) return [];
+  return [...new Set(value.groupIds.filter(
+    (entry): entry is string => typeof entry === "string" && Boolean(entry.trim()),
+  ).map((entry) => entry.trim()))].sort();
+}
+
+function markerOwnsProjection(
+  marker: OwnershipMarker,
+  projection: CompiledProjection,
+  legacyOwnershipAllowed: boolean,
+): boolean {
+  if (
+    marker.publicationId !== projection.publicationId ||
+    marker.routeId !== projection.routeId
+  ) return false;
+  if (!projection.groupId) return true;
+  if (marker.version === 2) return marker.groupId === projection.groupId;
+  return legacyOwnershipAllowed;
+}
+
+function markerForProjection(
+  projection: CompiledProjection,
+  projectionFingerprintValue: string,
+  renderedHash: string,
+): OwnershipMarker {
+  return projection.groupId
+    ? {
+      version: 2,
+      publicationId: projection.publicationId,
+      groupId: projection.groupId,
+      routeId: projection.routeId,
+      projectionFingerprint: projectionFingerprintValue,
+      renderedHash,
+    }
+    : {
+      version: 1,
+      publicationId: projection.publicationId,
+      routeId: projection.routeId,
+      projectionFingerprint: projectionFingerprintValue,
+      renderedHash,
+    };
+}
 
 function variant(route: PublicationRoute): Readonly<Record<string, JsonValue>> {
   return route.variant ?? {};
@@ -512,10 +558,8 @@ function inspectRecord(
       detail: "WordPress object is not owned by Blogmaatic; refusing to overwrite it",
     };
   }
-  if (
-    marker.publicationId !== projection.publicationId ||
-    marker.routeId !== projection.routeId
-  ) {
+  const payload = parsePayload(projection);
+  if (!markerOwnsProjection(marker, projection, payload.legacyOwnershipAllowed === true)) {
     return {
       state: "unreachable",
       remote,
@@ -523,7 +567,6 @@ function inspectRecord(
       detail: "WordPress object ownership marker belongs to a different publication or route",
     };
   }
-  const payload = parsePayload(projection);
   const actualRemoteHash = remoteStateHash(post, stripMarker(raw), payload.customTaxonomies, payload.restMeta);
   const synchronized =
     marker.projectionFingerprint === projection.fingerprint &&
@@ -670,7 +713,12 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const imageTransform = variant(route).imageTransform === undefined
       ? undefined
       : imageTransformSpecFromJson(variant(route).imageTransform);
-    const assets = await compileAssets(publication, settings, imageTransform);
+    const assets = await compileAssets(
+      publication,
+      settings,
+      imageTransform,
+      route.destination.connectionId,
+    );
     const featured = featuredAssetId(publication, route);
     const authorId = sourceAuthorId(publication, route);
     const pageStructure = sourcePageStructure(publication, route, contentType);
@@ -688,6 +736,10 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       categories: categoryNames(publication, route),
       ...(Object.keys(customTaxonomies).length === 0 ? {} : { customTaxonomies }),
       ...(Object.keys(restMeta).length === 0 ? {} : { restMeta }),
+      ...(groupId && publicationTargetGroupIds(publication).length === 1 &&
+        publicationTargetGroupIds(publication)[0] === groupId
+        ? { legacyOwnershipAllowed: true }
+        : {}),
       assets: assets.map((asset) => ({
         assetId: asset.assetId,
         source: asset.source,
@@ -746,7 +798,12 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       if (candidates.length === 0) return { state: "missing", observedAt };
       const owned = candidates.filter((candidate) => {
         const marker = parseMarker(sourceBody(candidate));
-        return marker?.publicationId === input.projection.publicationId && marker.routeId === input.projection.routeId;
+        if (!marker) return false;
+        return markerOwnsProjection(
+          marker,
+          input.projection,
+          payload.legacyOwnershipAllowed === true,
+        );
       });
       if (owned.length === 0) {
         return {
@@ -845,13 +902,14 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         menuOrder: payload.menuOrder ?? 0,
       }),
     );
-    const markedContent = documentWithMarker(body, {
-      version: 1,
-      publicationId: request.projection.publicationId,
-      routeId: request.projection.routeId,
-      projectionFingerprint: request.projection.fingerprint,
-      renderedHash: preliminaryHash,
-    });
+    const markedContent = documentWithMarker(
+      body,
+      markerForProjection(
+        request.projection,
+        request.projection.fingerprint,
+        preliminaryHash,
+      ),
+    );
     const postBody = postRequestBody(payload, markedContent, categories, tags, customTaxonomyIds, featuredMedia);
     const endpoint = request.existingRemote
       ? `/${restBase}/${request.existingRemote.id}`
@@ -866,16 +924,23 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies, payload.restMeta);
     const currentMarker = parseMarker(sourceBody(current));
     if (
-      currentMarker?.projectionFingerprint !== request.projection.fingerprint ||
+      !currentMarker ||
+      !markerOwnsProjection(
+        currentMarker,
+        request.projection,
+        payload.legacyOwnershipAllowed === true,
+      ) ||
+      currentMarker.projectionFingerprint !== request.projection.fingerprint ||
       currentMarker.renderedHash !== actualHash
     ) {
-      const normalized = documentWithMarker(currentBody, {
-        version: 1,
-        publicationId: request.projection.publicationId,
-        routeId: request.projection.routeId,
-        projectionFingerprint: request.projection.fingerprint,
-        renderedHash: actualHash,
-      });
+      const normalized = documentWithMarker(
+        currentBody,
+        markerForProjection(
+          request.projection,
+          request.projection.fingerprint,
+          actualHash,
+        ),
+      );
       current = await client.requestJson<WordPressPostRecord>(
         `/${restBase}/${saved.id}?context=edit`,
         { method: "POST", body: JSON.stringify({ content: normalized }) },
