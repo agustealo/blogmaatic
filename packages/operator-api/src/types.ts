@@ -26,6 +26,7 @@ import type {
   ExtensionCapability,
   JsonValue,
   Publication,
+  PublicationBlock,
   PublicationGroup,
   PublicationRoute,
   PublicationStatus,
