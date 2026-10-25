@@ -285,7 +285,9 @@ export interface SourceEditorialOptionsBody {
   readonly commentStatus?: "open" | "closed";
   readonly pingStatus?: "open" | "closed";
   readonly sticky?: boolean;
-  readonly format?: string;
+  readonly format?: string;  readonly groupId?: string;
+  readonly routeId?: string;
+
 }
 
 export interface SourceEditorialOptionsResult {
@@ -304,7 +306,9 @@ export interface SourcePageStructureBody {
   readonly contentType: string;
   readonly parentRemoteId: string | null;
   readonly template: string | null;
-  readonly menuOrder: number;
+  readonly menuOrder: number;  readonly groupId?: string;
+  readonly routeId?: string;
+
 }
 
 export interface SourcePageStructureResult {
@@ -413,7 +417,9 @@ export interface SourceTaxonomySelectionBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
   readonly contentType: string;
-  readonly selections: Readonly<Record<string, readonly string[]>>;
+  readonly selections: Readonly<Record<string, readonly string[]>>;  readonly groupId?: string;
+  readonly routeId?: string;
+
 }
 
 export interface SourceTaxonomySelectionResult {
@@ -439,7 +445,9 @@ export interface SourceMetaValuesBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
   readonly contentType: string;
-  readonly values: Readonly<Record<string, JsonValue>>;
+  readonly values: Readonly<Record<string, JsonValue>>;  readonly groupId?: string;
+  readonly routeId?: string;
+
 }
 
 export interface SourceMetaValuesResult {

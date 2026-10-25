@@ -248,12 +248,18 @@ function sourceCustomTaxonomies(
   publication: Publication,
   route: PublicationRoute,
   contentType: string,
+  groupId?: string,
 ): Readonly<Record<string, {
   readonly restBase: string;
   readonly restNamespace?: string;
   readonly names: readonly string[];
 }>> {
-  const source = publication.current.content.attributes.sourceTaxonomies;
+  const scoped = destinationOverride(publication, route, groupId);
+  const source = isRecord(scoped?.taxonomies)
+    ? scoped!.taxonomies
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourceTaxonomies
+      : undefined;
   if (!isRecord(source)) return {};
   if (
     source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -332,8 +338,14 @@ function sourcePageStructure(
   publication: Publication,
   route: PublicationRoute,
   contentType: string,
+  groupId?: string,
 ): { readonly parentId: number; readonly template: string; readonly menuOrder: number } | undefined {
-  const sourcePage = publication.current.content.attributes.sourcePage;
+  const scoped = destinationOverride(publication, route, groupId);
+  const sourcePage = isRecord(scoped?.pageStructure)
+    ? scoped!.pageStructure
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourcePage
+      : undefined;
   if (!isRecord(sourcePage)) return undefined;
   if (
     sourcePage.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -359,16 +371,10 @@ function sourcePageStructure(
     throw new Error("Canonical WordPress page template must be null or a string");
   }
   const template = typeof templateValue === "string" ? templateValue.trim() : "";
-
   const menuOrderValue = sourcePage.menuOrder;
-  if (
-    typeof menuOrderValue !== "number" ||
-    !Number.isSafeInteger(menuOrderValue) ||
-    menuOrderValue < 0
-  ) {
+  if (typeof menuOrderValue !== "number" || !Number.isSafeInteger(menuOrderValue) || menuOrderValue < 0) {
     throw new Error("Canonical WordPress page menuOrder must be a non-negative integer");
   }
-
   return { parentId, template, menuOrder: menuOrderValue };
 }
 
@@ -376,8 +382,14 @@ function sourceRestMeta(
   publication: Publication,
   route: PublicationRoute,
   contentType: string,
+  groupId?: string,
 ): Readonly<Record<string, JsonValue>> {
-  const source = publication.current.content.attributes.sourceMeta;
+  const scoped = destinationOverride(publication, route, groupId);
+  const source = isRecord(scoped?.meta)
+    ? scoped!.meta
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourceMeta
+      : undefined;
   if (!isRecord(source)) return {};
   if (
     source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -404,6 +416,7 @@ function sourceEditorialOptions(
   publication: Publication,
   route: PublicationRoute,
   contentType: string,
+  groupId?: string,
 ): {
   readonly password: string;
   readonly commentStatus?: "open" | "closed";
@@ -411,7 +424,12 @@ function sourceEditorialOptions(
   readonly sticky?: boolean;
   readonly format?: string;
 } | undefined {
-  const source = publication.current.content.attributes.sourceEditorial;
+  const scoped = destinationOverride(publication, route, groupId);
+  const source = isRecord(scoped?.editorial)
+    ? scoped!.editorial
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourceEditorial
+      : undefined;
   if (!isRecord(source)) return undefined;
   if (
     source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
@@ -793,10 +811,10 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     );
     const featured = featuredAssetId(publication, route);
     const authorId = sourceAuthorId(publication, route, groupId);
-    const pageStructure = sourcePageStructure(publication, route, contentType);
-    const editorial = sourceEditorialOptions(publication, route, contentType);
-    const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType);
-    const restMeta = sourceRestMeta(publication, route, contentType);
+    const pageStructure = sourcePageStructure(publication, route, contentType, groupId);
+    const editorial = sourceEditorialOptions(publication, route, contentType, groupId);
+    const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType, groupId);
+    const restMeta = sourceRestMeta(publication, route, contentType, groupId);
     const payload: WordPressProjectionPayload = {
       contentType,
       title: publication.current.content.title,

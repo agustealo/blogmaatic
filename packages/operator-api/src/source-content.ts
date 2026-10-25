@@ -194,7 +194,7 @@ function parseMetaValuesBody(body: unknown): SourceMetaValuesBody {
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "values"]);
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "values", "groupId", "routeId"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   const publicationId = input.publicationId;
@@ -212,11 +212,18 @@ function parseMetaValuesBody(body: unknown): SourceMetaValuesBody {
   if (values === null || typeof values !== "object" || Array.isArray(values)) {
     throw new OperatorRequestError("values must be an object");
   }
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
   return {
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
     contentType: contentType.trim(),
     values: values as Readonly<Record<string, import("@blogmaatic/core").JsonValue>>,
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
   };
 }
 
@@ -304,7 +311,7 @@ function parseTaxonomySelectionBody(body: unknown): SourceTaxonomySelectionBody 
     throw new OperatorRequestError("request body must be an object");
   }
   const input = body as Record<string, unknown>;
-  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "selections"]);
+  const allowed = new Set(["publicationId", "expectedVersion", "contentType", "selections", "groupId", "routeId"]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   if (typeof input.publicationId !== "string" || !input.publicationId.trim()) {
@@ -329,11 +336,18 @@ function parseTaxonomySelectionBody(body: unknown): SourceTaxonomySelectionBody 
     if (names.length > 200) throw new OperatorRequestError(`taxonomy selection ${taxonomyKey} is too large`);
     selections[taxonomyKey] = names;
   }
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
   return {
     publicationId: input.publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
     contentType,
     selections,
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
   };
 }
 
@@ -461,6 +475,8 @@ function parsePageStructureBody(body: unknown): SourcePageStructureBody {
     "parentRemoteId",
     "template",
     "menuOrder",
+    "groupId",
+    "routeId",
   ]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
@@ -493,6 +509,11 @@ function parsePageStructureBody(body: unknown): SourcePageStructureBody {
     throw new OperatorRequestError("menuOrder must be a non-negative integer");
   }
 
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
   return {
     publicationId: publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
@@ -500,6 +521,8 @@ function parsePageStructureBody(body: unknown): SourcePageStructureBody {
     parentRemoteId: parentRemoteId === null ? null : (parentRemoteId as string).trim(),
     template: template === null ? null : (template as string).trim() || null,
     menuOrder: input.menuOrder as number,
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
   };
 }
 
@@ -510,7 +533,7 @@ function parseEditorialOptionsBody(body: unknown): SourceEditorialOptionsBody {
   const input = body as Record<string, unknown>;
   const allowed = new Set([
     "publicationId", "expectedVersion", "contentType", "password",
-    "commentStatus", "pingStatus", "sticky", "format",
+    "commentStatus", "pingStatus", "sticky", "format", "groupId", "routeId",
   ]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
@@ -541,6 +564,11 @@ function parseEditorialOptionsBody(body: unknown): SourceEditorialOptionsBody {
   if (input.sticky === true && input.password.length > 0) {
     throw new OperatorRequestError("sticky posts cannot be password protected");
   }
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
   return {
     publicationId: input.publicationId.trim(),
     expectedVersion: input.expectedVersion as number,
@@ -550,6 +578,8 @@ function parseEditorialOptionsBody(body: unknown): SourceEditorialOptionsBody {
     ...(input.pingStatus === undefined ? {} : { pingStatus: input.pingStatus }),
     ...(input.sticky === undefined ? {} : { sticky: input.sticky }),
     ...(input.format === undefined ? {} : { format: input.format }),
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
   };
 }
 
@@ -646,6 +676,8 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
         contentType: body.contentType,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
         parentRemoteId: body.parentRemoteId,
         template: body.template,
         menuOrder: body.menuOrder,
@@ -681,6 +713,8 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
         contentType: body.contentType,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
         passwordProtected: body.password.length > 0,
         commentStatus: body.commentStatus ?? null,
         pingStatus: body.pingStatus ?? null,
@@ -802,6 +836,8 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
         contentType: body.contentType,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
         taxonomyKeys: Object.keys(body.selections).sort(),
       },
       now: () => clock.now(),
@@ -844,6 +880,8 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
         publicationId: body.publicationId,
         expectedVersion: body.expectedVersion,
         contentType: body.contentType,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
         fieldKeys: Object.keys(body.values).sort(),
       },
       now: () => clock.now(),
