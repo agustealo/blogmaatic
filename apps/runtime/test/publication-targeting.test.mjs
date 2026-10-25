@@ -138,7 +138,7 @@ test("dispatch passes only selected groups even when other groups are enabled", 
   });
 
   const result = await manager.approveAndDispatch(created.publication.id, created.version);
-  assert.equal(result.publication.status, "approved");
+  assert.equal(result.publication.publication.status, "approved");
   assert.equal(events.length, 1);
   assert.deepEqual(events[0].groups.map((candidate) => candidate.id), ["group-b"]);
 });
