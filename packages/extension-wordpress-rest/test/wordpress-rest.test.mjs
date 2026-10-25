@@ -1536,7 +1536,12 @@ test("WordPress canonical source publishing state rejects invalid schedule combi
           attributes: {},
         },
       },
-      provenance: { source: "wordpress" },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
     };
 
     await assert.rejects(
