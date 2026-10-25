@@ -75,6 +75,36 @@ export class LinkedInRestClient {
     });
   }
 
+  async uploadBytes(urlValue: string, bytes: Uint8Array, mediaType: string): Promise<void> {
+    const url = new URL(urlValue);
+    const hostname = url.hostname.toLowerCase();
+    const trustedHost =
+      hostname === "linkedin.com" ||
+      hostname.endsWith(".linkedin.com") ||
+      hostname === "licdn.com" ||
+      hostname.endsWith(".licdn.com");
+    if (url.protocol !== "https:" || !trustedHost) {
+      throw new Error("LinkedIn upload URL must be an HTTPS linkedin.com or licdn.com host");
+    }
+    await this.#secrets.withUtf8(this.#settings.accessTokenRef, async (token) => {
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": mediaType,
+        },
+        body: bytes,
+        signal: AbortSignal.timeout(this.#settings.timeoutMs),
+      });
+      if (!response.ok) {
+        const text = (await response.text()).slice(0, 400);
+        throw new Error(
+          `LinkedIn image upload failed (${response.status})${text ? `: ${text}` : ""}`,
+        );
+      }
+    });
+  }
+
   connectionId(): string {
     return this.#connection.id;
   }
