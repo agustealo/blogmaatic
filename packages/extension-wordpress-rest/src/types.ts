@@ -50,6 +50,7 @@ export interface WordPressProjectionPayload {
     readonly names: readonly string[];
   }>>;
   readonly restMeta?: Readonly<Record<string, JsonValue>>;
+  readonly legacyOwnershipAllowed?: boolean;
 }
 
 export interface WordPressPostRecord {
