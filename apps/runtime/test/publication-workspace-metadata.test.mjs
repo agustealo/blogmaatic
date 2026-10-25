@@ -898,3 +898,220 @@ test("route-scoped destination overrides fail closed for untargeted missing disa
   );
   assert.equal(current().version, 1);
 });
+
+
+test("workspace-native WordPress metadata stays isolated by group when route ids collide", async () => {
+  const publication = {
+    id: "publication-native-metadata-matrix",
+    createdAt: "2026-10-24T21:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-24T21:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Two WordPress page destinations",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "pages",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") {
+        return {
+          enabled: true,
+          group: { id: "group-a", name: "Site A", policySetId: "allow", routes: [routeFor("wp-a")] },
+        };
+      }
+      if (groupId === "group-b") {
+        return {
+          enabled: true,
+          group: { id: "group-b", name: "Site B", policySetId: "allow", routes: [routeFor("wp-b")] },
+        };
+      }
+      return undefined;
+    },
+  };
+  const { manager, current } = managerWith(publication, groups);
+
+  await manager.setSourceTaxonomies("publication-native-metadata-matrix", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "pages",
+    groupId: "group-a",
+    routeId: "wordpress",
+    taxonomies: {
+      genre: { restBase: "genres", names: ["Alpha"] },
+    },
+  });
+  await manager.setSourceMetaValues("publication-native-metadata-matrix", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "pages",
+    groupId: "group-a",
+    routeId: "wordpress",
+    values: { rating: 1, site_note: "A" },
+  });
+  await manager.setSourceEditorialOptions("publication-native-metadata-matrix", 3, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "pages",
+    groupId: "group-a",
+    routeId: "wordpress",
+    password: "",
+    commentStatus: "open",
+    pingStatus: "closed",
+  });
+  await manager.setSourcePageStructure("publication-native-metadata-matrix", 4, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "pages",
+    groupId: "group-a",
+    routeId: "wordpress",
+    parentRemoteId: "101",
+    template: "landing-a.php",
+    menuOrder: 1,
+  });
+
+  await manager.setSourceTaxonomies("publication-native-metadata-matrix", 5, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "pages",
+    groupId: "group-b",
+    routeId: "wordpress",
+    taxonomies: {
+      genre: { restBase: "genres", names: ["Beta"] },
+    },
+  });
+  await manager.setSourceMetaValues("publication-native-metadata-matrix", 6, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "pages",
+    groupId: "group-b",
+    routeId: "wordpress",
+    values: { rating: 2, site_note: "B" },
+  });
+  await manager.setSourceEditorialOptions("publication-native-metadata-matrix", 7, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "pages",
+    groupId: "group-b",
+    routeId: "wordpress",
+    password: "site-b-only",
+    commentStatus: "closed",
+    pingStatus: "open",
+  });
+  const final = await manager.setSourcePageStructure("publication-native-metadata-matrix", 8, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "pages",
+    groupId: "group-b",
+    routeId: "wordpress",
+    parentRemoteId: "202",
+    template: "landing-b.php",
+    menuOrder: 9,
+  });
+
+  assert.equal(final.version, 9);
+  const overrides = final.publication.current.content.attributes.destinationOverrides;
+  const siteA = overrides.groups["group-a"].routes.wordpress;
+  const siteB = overrides.groups["group-b"].routes.wordpress;
+
+  assert.deepEqual(siteA.taxonomies, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "pages",
+    taxonomies: {
+      genre: { restBase: "genres", names: ["Alpha"] },
+    },
+  });
+  assert.deepEqual(siteB.taxonomies, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "pages",
+    taxonomies: {
+      genre: { restBase: "genres", names: ["Beta"] },
+    },
+  });
+  assert.deepEqual(siteA.meta.values, { rating: 1, site_note: "A" });
+  assert.deepEqual(siteB.meta.values, { rating: 2, site_note: "B" });
+  assert.deepEqual(siteA.editorial, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "pages",
+    password: "",
+    commentStatus: "open",
+    pingStatus: "closed",
+  });
+  assert.deepEqual(siteB.editorial, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "pages",
+    password: "site-b-only",
+    commentStatus: "closed",
+    pingStatus: "open",
+  });
+  assert.deepEqual(siteA.pageStructure, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "pages",
+    parentRemoteId: "101",
+    template: "landing-a.php",
+    menuOrder: 1,
+  });
+  assert.deepEqual(siteB.pageStructure, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "pages",
+    parentRemoteId: "202",
+    template: "landing-b.php",
+    menuOrder: 9,
+  });
+
+  assert.equal(final.publication.current.content.attributes.sourceTaxonomies, undefined);
+  assert.equal(final.publication.current.content.attributes.sourceMeta, undefined);
+  assert.equal(final.publication.current.content.attributes.sourceEditorial, undefined);
+  assert.equal(final.publication.current.content.attributes.sourcePage, undefined);
+
+  await assert.rejects(
+    () => manager.setSourceMetaValues("publication-native-metadata-matrix", 9, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      contentType: "posts",
+      groupId: "group-a",
+      routeId: "wordpress",
+      values: { rating: 3 },
+    }),
+    /content type/,
+  );
+  await assert.rejects(
+    () => manager.setSourceTaxonomies("publication-native-metadata-matrix", 9, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      contentType: "pages",
+      groupId: "group-a",
+      taxonomies: {},
+    }),
+    /both groupId and routeId/,
+  );
+  assert.equal(current().version, 9);
+});
