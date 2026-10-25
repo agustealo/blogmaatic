@@ -58,6 +58,8 @@ import type {
   SourceTaxonomyPage,
   SourceTaxonomyQuery,
   SourceTaxonomyRecord,
+  SourceStandardTaxonomyBody,
+  SourceStandardTaxonomyResult,
   SourceTaxonomySelectionBody,
   SourceTaxonomySelectionResult,
 } from "@blogmaatic/operator-api";
@@ -584,6 +586,53 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       },
     );
     return { publication, contentType, values };
+  }
+
+  async setStandardTaxonomy(
+    connectionId: string,
+    body: SourceStandardTaxonomyBody,
+  ): Promise<SourceStandardTaxonomyResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
+    }
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("WordPress taxonomy content type is required");
+    const route = await assertTargetWordPressRoute(
+      this.#publicationGroups,
+      current.publication,
+      connectionId,
+      body.groupId,
+      body.routeId,
+    );
+    if (route.destination.channel !== contentType) {
+      throw new Error("WordPress route content type does not match standard taxonomy content type");
+    }
+
+    const publication = await this.#publications.setSourceStandardTaxonomy(
+      body.publicationId,
+      body.expectedVersion,
+      {
+        extensionId: WORDPRESS_REST_EXTENSION_ID,
+        connectionId,
+        contentType,
+        groupId: body.groupId,
+        routeId: body.routeId,
+        categories: body.categories,
+        tags: body.tags,
+      },
+    );
+    const scoped = destinationOverride(publication.publication, body.groupId, body.routeId);
+    const source = scoped?.standardTaxonomy;
+    if (!isRecord(source)) throw new Error("Canonical route-scoped standard taxonomy was not persisted");
+    const categories = Array.isArray(source.categories)
+      ? source.categories.filter((value): value is string => typeof value === "string")
+      : [];
+    const tags = Array.isArray(source.tags)
+      ? source.tags.filter((value): value is string => typeof value === "string")
+      : [];
+    return { publication, contentType, categories, tags };
   }
 
   async setTaxonomySelections(
