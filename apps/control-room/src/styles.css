@@ -977,6 +977,42 @@ a.data-table__row:hover { background: var(--surface-2); }
 }
 
 
+/* Route-scoped destination settings */
+.wordpress-destination-settings { display: grid; gap: 12px; }
+.wordpress-destination-settings__heading,
+.wordpress-destination-route__heading {
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.wordpress-destination-settings__heading > span,
+.wordpress-destination-route__heading > span { min-width: 0; display: grid; gap: 3px; }
+.wordpress-destination-settings__heading small,
+.wordpress-destination-route__heading small { color: var(--muted); font-size: .75rem; }
+.wordpress-destination-route {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px;
+  background: var(--surface);
+  display: grid;
+  gap: 10px;
+}
+.wordpress-destination-route__heading {
+  border: 0;
+  border-radius: 10px;
+}
+
+@media (max-width: 700px) {
+  .wordpress-destination-settings__heading,
+  .wordpress-destination-route__heading { align-items: flex-start; flex-direction: column; }
+}
+
+
 /* Canonical Publication block editor */
 .publication-block-editor {
   border: 1px solid var(--line);
