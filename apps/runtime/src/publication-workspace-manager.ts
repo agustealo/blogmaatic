@@ -263,14 +263,12 @@ function normalizeBlocks(
 
     if (block.kind === "image") {
       const assetId = block.data.assetId;
-      const src = block.data.src;
-      if (typeof assetId === "string" && assetId.trim()) {
-        const asset = assets.find((candidate) => candidate.id === assetId);
-        if (!asset) throw new Error(`Publication image block ${id} references missing asset: ${assetId}`);
-        if (asset.kind !== "image") throw new Error(`Publication image block ${id} asset must be an image: ${assetId}`);
-      } else if (typeof src !== "string" || !src.trim()) {
-        throw new Error(`Publication image block ${id} requires assetId`);
+      if (typeof assetId !== "string" || !assetId.trim()) {
+        throw new Error(`Publication image block ${id} requires canonical assetId`);
       }
+      const asset = assets.find((candidate) => candidate.id === assetId);
+      if (!asset) throw new Error(`Publication image block ${id} references missing asset: ${assetId}`);
+      if (asset.kind !== "image") throw new Error(`Publication image block ${id} asset must be an image: ${assetId}`);
     }
 
     return {
