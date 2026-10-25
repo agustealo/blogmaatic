@@ -20,6 +20,8 @@ import type {
   SourceContentTypeRecord,
   SourceMetaFieldDefinition,
   SourceMetaValuesBody,
+  SourceSeoFieldDefinition,
+  SourceSeoSemantic,
   SourceTaxonomyDefinitionRecord,
   SourceTaxonomyKind,
   SourceTaxonomyRecord,
@@ -1629,6 +1631,14 @@ function WordPressDestinationSettings({
             routeId={route.routeId}
             onUpdated={onUpdated}
           />
+          <SourceSeoPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
           <SourceRestMetaPanel
             entry={entry}
             connectionId={route.connectionId}
@@ -2091,6 +2101,133 @@ function canonicalSourceMetaValues(
     : undefined);
   const values = objectRecord(source?.values);
   return values ? values as Readonly<Record<string, SourceMetaValue>> : {};
+}
+
+function SourceSeoPanel({
+  entry,
+  connectionId,
+  contentType: explicitContentType,
+  groupId,
+  routeId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const contentType = explicitContentType ?? wordpressContentType(entry);
+  const canonicalMeta = useMemo(
+    () => canonicalSourceMetaValues(entry, connectionId, groupId, routeId),
+    [connectionId, entry.publication.current.id, groupId, routeId],
+  );
+  const [fields, setFields] = useState<readonly SourceSeoFieldDefinition[]>([]);
+  const [values, setValues] = useState<Partial<Record<SourceSeoSemantic, string>>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (!contentType) {
+      setFields([]);
+      setValues({});
+      setLoading(false);
+      return () => { active = false; };
+    }
+    setLoading(true);
+    setError(null);
+    void client.listSourceSeoFields(connectionId, contentType)
+      .then((items) => {
+        if (!active) return;
+        setFields(items);
+        const next: Partial<Record<SourceSeoSemantic, string>> = {};
+        for (const field of items) {
+          const current = canonicalMeta[field.key];
+          if (typeof current === "string") next[field.semantic] = current;
+        }
+        setValues(next);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress SEO fields could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [canonicalMeta, client, connectionId, contentType]);
+
+  const save = useCallback(async () => {
+    if (!contentType || fields.length === 0) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await client.setSourceSeoValues(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        contentType,
+        values,
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress SEO fields could not be saved"));
+    } finally {
+      setSaving(false);
+    }
+  }, [client, connectionId, contentType, entry.publication.id, entry.version, fields.length, groupId, onUpdated, routeId, values]);
+
+  if (!loading && fields.length === 0 && !error) return null;
+
+  return (
+    <Panel title="SEO" meta="Writable SEO fields discovered from this WordPress destination" className="source-seo-panel">
+      <ErrorBanner error={error} />
+      <div className="source-seo-note">
+        <strong>Capability-driven, not plugin-assumed.</strong>
+        <span>Only SEO fields explicitly exposed as writable REST meta by this site appear here. Read-only plugin output is never presented as editable.</span>
+      </div>
+      {loading ? <LoadingBlock /> : (
+        <div className="source-seo-grid">
+          {fields.map((field) => (
+            <label className="field" key={field.semantic}>
+              <span>{field.label}</span>
+              {field.semantic === "description" ? (
+                <textarea
+                  value={values[field.semantic] ?? ""}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.semantic]: event.target.value }))}
+                  placeholder="Optional SEO description"
+                  disabled={saving}
+                />
+              ) : (
+                <input
+                  type={field.semantic === "canonical" ? "url" : "text"}
+                  value={values[field.semantic] ?? ""}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.semantic]: event.target.value }))}
+                  placeholder={
+                    field.semantic === "title" ? "Optional SEO title" :
+                      field.semantic === "canonical" ? "https://example.com/canonical-url" :
+                        field.semantic === "focus_keyphrase" ? "Optional focus keyphrase" : ""
+                  }
+                  disabled={saving}
+                />
+              )}
+              <small>
+                {field.description ?? `${field.provider} · REST meta ${field.key}`}
+              </small>
+            </label>
+          ))}
+          <button className="button button--primary" type="button" onClick={() => void save()} disabled={saving || fields.length === 0}>
+            {saving ? "Saving…" : "Save SEO"}
+          </button>
+        </div>
+      )}
+    </Panel>
+  );
 }
 
 function SourceRestMetaPanel({
