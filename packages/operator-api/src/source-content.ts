@@ -475,7 +475,9 @@ function parsePageStructureBody(body: unknown): SourcePageStructureBody {
     "parentRemoteId",
     "template",
     "menuOrder",
-  , "groupId", "routeId"]);
+    "groupId",
+    "routeId",
+  ]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
 
@@ -531,8 +533,8 @@ function parseEditorialOptionsBody(body: unknown): SourceEditorialOptionsBody {
   const input = body as Record<string, unknown>;
   const allowed = new Set([
     "publicationId", "expectedVersion", "contentType", "password",
-    "commentStatus", "pingStatus", "sticky", "format",
-  , "groupId", "routeId"]);
+    "commentStatus", "pingStatus", "sticky", "format", "groupId", "routeId",
+  ]);
   const unknown = Object.keys(input).find((key) => !allowed.has(key));
   if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
   if (typeof input.publicationId !== "string" || !input.publicationId.trim()) {
