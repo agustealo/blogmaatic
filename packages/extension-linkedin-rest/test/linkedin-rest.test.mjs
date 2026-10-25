@@ -20,6 +20,7 @@ function makeServer() {
   let imageInitializes = 0;
   let imageUploads = 0;
   let imageReads = 0;
+  let failUploadAt = 0;
   let lastModifiedAt = 1790100000000;
   const requiredAuthor = "urn:li:organization:2414183";
 
@@ -45,6 +46,9 @@ function makeServer() {
       const key = uploadMatch[1];
       const image = images.get(key);
       if (!image) return json(response, 404, { message: "Unknown upload", status: 404 });
+      if (failUploadAt === imageUploads) {
+        return json(response, 500, { message: "Synthetic upload failure", status: 500 });
+      }
       uploads.push({
         key,
         bytes: rawBuffer,
@@ -148,6 +152,9 @@ function makeServer() {
     images,
     uploads,
     requiredAuthor,
+    failUploadAt(number) {
+      failUploadAt = number;
+    },
     get counts() {
       return { creates, updates, imageInitializes, imageUploads, imageReads };
     },
@@ -236,6 +243,45 @@ async function withLocalPng(fn) {
   }
 }
 
+async function withLocalPngs(count, fn) {
+  const directory = await mkdtemp(join(tmpdir(), "blogmaatic-linkedin-images-"));
+  const bytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const paths = [];
+  for (let index = 0; index < count; index += 1) {
+    const path = join(directory, `image-${index + 1}.png`);
+    await writeFile(path, bytes);
+    paths.push(path);
+  }
+  try {
+    return await fn({ directory, paths, bytes });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function localImagesPublication(paths) {
+  const item = publication();
+  item.current.content.blocks = [
+    { id: "p1", kind: "paragraph", data: { text: "Multi-image publication." } },
+    ...paths.map((path, index) => ({
+      id: `img-${index + 1}`,
+      kind: "image",
+      data: { assetId: `hero-${index + 1}` },
+    })),
+  ];
+  item.current.content.assets = paths.map((path, index) => ({
+    id: `hero-${index + 1}`,
+    kind: "image",
+    source: path,
+    mediaType: "image/png",
+    alt: `Architecture ${index + 1}`,
+  }));
+  return item;
+}
+
 function localImagePublication(path) {
   const item = publication();
   item.current.content.assets = [{
@@ -248,7 +294,7 @@ function localImagePublication(path) {
   return item;
 }
 
-function selectedImageOverride(item, routeId = "linkedin-text") {
+function selectedImageOverride(item, routeId = "linkedin-text", imageAssetIds = ["hero"]) {
   item.current.content.attributes = {
     destinationOverrides: {
       schemaVersion: 1,
@@ -265,7 +311,7 @@ function selectedImageOverride(item, routeId = "linkedin-text") {
                 channel: "posts",
                 commentaryMode: "inherit",
                 mediaMode: "select",
-                imageAssetIds: ["hero"],
+                imageAssetIds,
               },
             },
           },
