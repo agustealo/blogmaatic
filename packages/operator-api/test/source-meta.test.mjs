@@ -160,6 +160,8 @@ test("REST meta schema discovery and mutation are validated while audit records 
         publicationId: "publication-wp",
         expectedVersion: 4,
         contentType: "books",
+        groupId: "group-books",
+        routeId: "wordpress",
         values: {
           isbn: "SENSITIVE-META-VALUE",
           rating: 4.5,
@@ -173,6 +175,8 @@ test("REST meta schema discovery and mutation are validated while audit records 
         publicationId: "publication-wp",
         expectedVersion: 4,
         contentType: "books",
+        groupId: "group-books",
+        routeId: "wordpress",
         values: {
           isbn: "SENSITIVE-META-VALUE",
           rating: 4.5,
@@ -187,9 +191,27 @@ test("REST meta schema discovery and mutation are validated while audit records 
     assert.doesNotMatch(serialized, /SENSITIVE-META-VALUE/);
     const succeeded = audit.items.find((entry) => entry.phase === "succeeded");
     assert.equal(succeeded.actor.id, "operator-source-meta");
+    assert.equal(succeeded.evidence.groupId, "group-books");
+    assert.equal(succeeded.evidence.routeId, "wordpress");
     assert.deepEqual(succeeded.evidence.fieldKeys, ["isbn", "rating"]);
     assert.equal(succeeded.evidence.revisionId, "revision-2");
     assert.equal(succeeded.evidence.version, 5);
+
+    const missingRoutePair = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/meta-values",
+      headers: bearer(),
+      payload: {
+        publicationId: "publication-wp",
+        expectedVersion: 4,
+        contentType: "books",
+        groupId: "group-books",
+        values: { isbn: "MUST-NOT-RUN" },
+      },
+    });
+    assert.equal(missingRoutePair.statusCode, 400);
+    assert.equal(missingRoutePair.json().error.code, "INVALID_REQUEST");
+    assert.equal(state().setCalls, 1);
 
     const invalid = await app.inject({
       method: "POST",
