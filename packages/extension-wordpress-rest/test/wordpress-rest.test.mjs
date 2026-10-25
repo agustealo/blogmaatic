@@ -2287,3 +2287,324 @@ test("WordPress compiles independent group-route overrides and never leaks media
     api.server.close();
   }
 });
+
+
+test("WordPress route-scoped native metadata cannot leak across groups with the same route id", async () => {
+  const baseConnection = {
+    extensionId: "blogmaatic.wordpress-rest",
+    status: "active",
+    settings: {
+      siteUrl: "https://example.test",
+      username: "editor",
+    },
+    secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+    createdAt: "2026-10-24T21:00:00.000Z",
+    updatedAt: "2026-10-24T21:00:00.000Z",
+  };
+  const publisher = new WordPressRestPublisher(
+    new ConnectionAuthority([
+      { ...baseConnection, id: "wp-a", displayName: "Site A" },
+      { ...baseConnection, id: "wp-b", displayName: "Site B" },
+    ]),
+    new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+  );
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "pages",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const item = {
+    id: "publication-native-route-matrix",
+    createdAt: "2026-10-24T21:00:00.000Z",
+    slug: "native-route-matrix",
+    status: "approved",
+    current: {
+      id: "revision-native-route-matrix",
+      ordinal: 1,
+      createdAt: "2026-10-24T21:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Native route matrix",
+        language: "en",
+        blocks: [{ id: "p1", kind: "paragraph", data: { text: "Per-site settings." } }],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+          sourceTaxonomies: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            taxonomies: {
+              legacy: { restBase: "legacy", names: ["Must not leak"] },
+            },
+          },
+          sourceMeta: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            values: { legacy: true },
+          },
+          sourceEditorial: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            password: "legacy",
+            commentStatus: "open",
+          },
+          sourcePage: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            parentRemoteId: "999",
+            template: "legacy.php",
+            menuOrder: 99,
+          },
+          destinationOverrides: {
+            schemaVersion: 1,
+            groups: {
+              "group-a": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-a",
+                    channel: "pages",
+                    taxonomies: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "pages",
+                      taxonomies: {
+                        genre: { restBase: "genres", names: ["Alpha"] },
+                      },
+                    },
+                    meta: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "pages",
+                      values: { rating: 1, site_note: "A" },
+                    },
+                    editorial: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "pages",
+                      password: "",
+                      commentStatus: "open",
+                      pingStatus: "closed",
+                    },
+                    pageStructure: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "pages",
+                      parentRemoteId: "101",
+                      template: "landing-a.php",
+                      menuOrder: 1,
+                    },
+                  },
+                },
+              },
+              "group-b": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-b",
+                    channel: "pages",
+                    taxonomies: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "pages",
+                      taxonomies: {
+                        genre: { restBase: "genres", names: ["Beta"] },
+                      },
+                    },
+                    meta: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "pages",
+                      values: { rating: 2, site_note: "B" },
+                    },
+                    editorial: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "pages",
+                      password: "site-b-only",
+                      commentStatus: "closed",
+                      pingStatus: "open",
+                    },
+                    pageStructure: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "pages",
+                      parentRemoteId: "202",
+                      template: "landing-b.php",
+                      menuOrder: 9,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+
+  const projectionA = await publisher.compile({
+    publication: item,
+    route: routeFor("wp-a"),
+    groupId: "group-a",
+  });
+  const projectionB = await publisher.compile({
+    publication: item,
+    route: routeFor("wp-b"),
+    groupId: "group-b",
+  });
+
+  assert.deepEqual(projectionA.payload.customTaxonomies, {
+    genre: { restBase: "genres", names: ["Alpha"] },
+  });
+  assert.deepEqual(projectionB.payload.customTaxonomies, {
+    genre: { restBase: "genres", names: ["Beta"] },
+  });
+  assert.deepEqual(projectionA.payload.restMeta, { rating: 1, site_note: "A" });
+  assert.deepEqual(projectionB.payload.restMeta, { rating: 2, site_note: "B" });
+  assert.equal(projectionA.payload.password, "");
+  assert.equal(projectionB.payload.password, "site-b-only");
+  assert.equal(projectionA.payload.commentStatus, "open");
+  assert.equal(projectionB.payload.commentStatus, "closed");
+  assert.equal(projectionA.payload.pingStatus, "closed");
+  assert.equal(projectionB.payload.pingStatus, "open");
+  assert.equal(projectionA.payload.parentId, 101);
+  assert.equal(projectionB.payload.parentId, 202);
+  assert.equal(projectionA.payload.template, "landing-a.php");
+  assert.equal(projectionB.payload.template, "landing-b.php");
+  assert.equal(projectionA.payload.menuOrder, 1);
+  assert.equal(projectionB.payload.menuOrder, 9);
+  assert.equal(projectionA.payload.customTaxonomies.legacy, undefined);
+  assert.equal(projectionB.payload.customTaxonomies.legacy, undefined);
+  assert.equal(projectionA.payload.restMeta.legacy, undefined);
+  assert.equal(projectionB.payload.restMeta.legacy, undefined);
+
+  const tampered = structuredClone(item);
+  tampered.current.content.attributes.destinationOverrides.groups["group-b"].routes.wordpress.connectionId = "wp-a";
+  await assert.rejects(
+    publisher.compile({
+      publication: tampered,
+      route: routeFor("wp-b"),
+      groupId: "group-b",
+    }),
+    /override identity no longer matches route/,
+  );
+});
+
+test("WordPress matching imported legacy native metadata remains a backward-compatible fallback", async () => {
+  const connection = {
+    id: "wp-a",
+    extensionId: "blogmaatic.wordpress-rest",
+    displayName: "Site A",
+    status: "active",
+    settings: {
+      siteUrl: "https://example.test",
+      username: "editor",
+    },
+    secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+    createdAt: "2026-10-24T21:00:00.000Z",
+    updatedAt: "2026-10-24T21:00:00.000Z",
+  };
+  const publisher = new WordPressRestPublisher(
+    new ConnectionAuthority([connection]),
+    new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+  );
+  const routeA = {
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      channel: "pages",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  };
+  const item = {
+    id: "publication-imported-legacy-native",
+    createdAt: "2026-10-24T21:00:00.000Z",
+    status: "approved",
+    current: {
+      id: "revision-imported-legacy-native",
+      ordinal: 1,
+      createdAt: "2026-10-24T21:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Imported legacy native",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a"] },
+          wordpress: {
+            connectionId: "wp-a",
+            groupId: "group-a",
+            routeId: "wordpress",
+            contentType: "pages",
+          },
+          sourceTaxonomies: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            taxonomies: {
+              genre: { restBase: "genres", names: ["Legacy"] },
+            },
+          },
+          sourceMeta: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            values: { rating: 7 },
+          },
+          sourceEditorial: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            password: "",
+            commentStatus: "closed",
+          },
+          sourcePage: {
+            extensionId: "blogmaatic.wordpress-rest",
+            connectionId: "wp-a",
+            contentType: "pages",
+            parentRemoteId: "77",
+            template: "legacy.php",
+            menuOrder: 4,
+          },
+        },
+      },
+    },
+    provenance: {
+      source: "wordpress",
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      remoteId: "55",
+    },
+  };
+  const projection = await publisher.compile({
+    publication: item,
+    route: routeA,
+    groupId: "group-a",
+  });
+  assert.deepEqual(projection.payload.customTaxonomies, {
+    genre: { restBase: "genres", names: ["Legacy"] },
+  });
+  assert.deepEqual(projection.payload.restMeta, { rating: 7 });
+  assert.equal(projection.payload.commentStatus, "closed");
+  assert.equal(projection.payload.parentId, 77);
+  assert.equal(projection.payload.template, "legacy.php");
+  assert.equal(projection.payload.menuOrder, 4);
+});
