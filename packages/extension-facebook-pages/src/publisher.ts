@@ -298,7 +298,15 @@ export class FacebookPagesPublisher implements ManagedPublisherExtension {
     }
   }
 
-  async compile({ publication, route }: { publication: Publication; route: PublicationRoute }): Promise<CompiledProjection> {
+  async compile({
+    publication,
+    route,
+    groupId,
+  }: {
+    publication: Publication;
+    route: PublicationRoute;
+    groupId?: string;
+  }): Promise<CompiledProjection> {
     const connection = this.#connections.requireActive(FACEBOOK_PAGES_EXTENSION_ID, route.destination.connectionId);
     const settings = parseSettings(connection);
     const mode = desiredMode(publication, route);
