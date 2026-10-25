@@ -1236,3 +1236,176 @@ test("route-scoped WordPress standard taxonomy stays isolated and normalized per
   );
   assert.equal(current().version, 3);
 });
+
+
+test("route-scoped featured media is isolated per WordPress destination and preserves shared featured state", async () => {
+  const publication = {
+    id: "publication-featured-media-matrix",
+    createdAt: "2026-10-25T00:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-25T00:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Featured media matrix",
+        language: "en",
+        blocks: [],
+        assets: [
+          {
+            id: "shared",
+            kind: "image",
+            source: "/tmp/shared.png",
+            attributes: { featured: true },
+          },
+          {
+            id: "site-a",
+            kind: "image",
+            source: "https://a.test/uploads/77.jpg",
+            attributes: {
+              wordpressMediaId: 77,
+              sourceExtensionId: "blogmaatic.wordpress-rest",
+              sourceConnectionId: "wp-a",
+              sourceRemoteId: "77",
+            },
+          },
+          {
+            id: "site-b",
+            kind: "image",
+            source: "https://b.test/uploads/77.jpg",
+            attributes: {
+              wordpressMediaId: 77,
+              sourceExtensionId: "blogmaatic.wordpress-rest",
+              sourceConnectionId: "wp-b",
+              sourceRemoteId: "77",
+            },
+          },
+          { id: "document", kind: "document", source: "/tmp/file.pdf" },
+        ],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") {
+        return { enabled: true, group: { id: "group-a", name: "A", policySetId: "allow", routes: [routeFor("wp-a")] } };
+      }
+      if (groupId === "group-b") {
+        return { enabled: true, group: { id: "group-b", name: "B", policySetId: "allow", routes: [routeFor("wp-b")] } };
+      }
+      return undefined;
+    },
+  };
+  const { manager, current } = managerWith(publication, groups);
+
+  const a = await manager.setSourceFeaturedMedia("publication-featured-media-matrix", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+    mode: "asset",
+    assetId: "site-a",
+  });
+  assert.equal(a.version, 2);
+
+  const b = await manager.setSourceFeaturedMedia("publication-featured-media-matrix", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    groupId: "group-b",
+    routeId: "wordpress",
+    mode: "none",
+  });
+  assert.equal(b.version, 3);
+
+  assert.deepEqual(
+    b.publication.current.content.attributes.destinationOverrides.groups["group-a"].routes.wordpress.featuredMedia,
+    {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      contentType: "posts",
+      mode: "asset",
+      assetId: "site-a",
+    },
+  );
+  assert.deepEqual(
+    b.publication.current.content.attributes.destinationOverrides.groups["group-b"].routes.wordpress.featuredMedia,
+    {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-b",
+      contentType: "posts",
+      mode: "none",
+    },
+  );
+  assert.equal(
+    b.publication.current.content.assets.find((asset) => asset.id === "shared").attributes.featured,
+    true,
+  );
+
+  const inherited = await manager.setSourceFeaturedMedia("publication-featured-media-matrix", 3, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    groupId: "group-b",
+    routeId: "wordpress",
+    mode: "inherit",
+  });
+  assert.equal(inherited.version, 4);
+  assert.equal(
+    inherited.publication.current.content.attributes.destinationOverrides.groups["group-b"].routes.wordpress.featuredMedia.mode,
+    "inherit",
+  );
+
+  const retry = await manager.setSourceFeaturedMedia("publication-featured-media-matrix", 4, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    groupId: "group-b",
+    routeId: "wordpress",
+    mode: "inherit",
+  });
+  assert.equal(retry.version, 4);
+
+  await assert.rejects(
+    () => manager.setSourceFeaturedMedia("publication-featured-media-matrix", 4, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      contentType: "posts",
+      groupId: "group-a",
+      routeId: "wordpress",
+      mode: "asset",
+      assetId: "document",
+    }),
+    /must be an image/,
+  );
+  await assert.rejects(
+    () => manager.setSourceFeaturedMedia("publication-featured-media-matrix", 4, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-a",
+      contentType: "pages",
+      groupId: "group-a",
+      routeId: "wordpress",
+      mode: "none",
+    }),
+    /content type|destination\/content type/,
+  );
+  assert.equal(current().version, 4);
+});
