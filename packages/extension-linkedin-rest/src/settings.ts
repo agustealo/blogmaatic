@@ -12,6 +12,7 @@ export const LINKEDIN_CONNECTION_CONTRACT: ConnectionContract = {
     { key: "authorUrn", label: "Organization URN", kind: "text", required: true, placeholder: "urn:li:organization:123456", description: "LinkedIn organization that will author published posts." },
     { key: "apiRoot", label: "API root", kind: "url", defaultValue: "https://api.linkedin.com/rest", description: "LinkedIn REST API root." },
     { key: "apiVersion", label: "LinkedIn API version", kind: "text", defaultValue: DEFAULT_LINKEDIN_API_VERSION, description: "Pinned YYYYMM LinkedIn API version." },
+    { key: "assetSourceRoots", label: "Allowed local asset roots", kind: "string-list", description: "Absolute directories from which LinkedIn may read canonical local image assets." },
     { key: "timeoutMs", label: "Request timeout (ms)", kind: "integer", defaultValue: 15000, min: 1000, max: 120000 },
   ],
   secretFields: [
@@ -27,6 +28,15 @@ export const LINKEDIN_CONNECTION_CONTRACT: ConnectionContract = {
 function getString(record: Readonly<Record<string, JsonValue>>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function getStringList(record: Readonly<Record<string, JsonValue>>, key: string): readonly string[] {
+  const value = record[key];
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry.trim())) {
+    throw new Error(`LinkedIn ${key} must be an array of non-empty strings`);
+  }
+  return [...new Set(value.map((entry) => String(entry).trim()))];
 }
 
 function getNumber(record: Readonly<Record<string, JsonValue>>, key: string): number | undefined {
@@ -67,5 +77,12 @@ export function parseSettings(connection: ConnectionRecord): LinkedInSettings {
     throw new Error("LinkedIn timeoutMs must be between 1000 and 120000 milliseconds");
   }
 
-  return { apiRoot, apiVersion, authorUrn, accessTokenRef, timeoutMs };
+  return {
+    apiRoot,
+    apiVersion,
+    authorUrn,
+    accessTokenRef,
+    assetSourceRoots: getStringList(connection.settings, "assetSourceRoots"),
+    timeoutMs,
+  };
 }
