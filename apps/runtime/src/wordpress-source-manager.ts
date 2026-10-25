@@ -314,6 +314,20 @@ function isRecord(value: JsonValue | undefined): value is Readonly<Record<string
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function destinationOverride(
+  publication: Publication,
+  groupId: string | undefined,
+  routeId: string | undefined,
+): Readonly<Record<string, JsonValue>> | undefined {
+  if (!groupId || !routeId) return undefined;
+  const root = publication.current.content.attributes.destinationOverrides;
+  if (!isRecord(root) || !isRecord(root.groups)) return undefined;
+  const group = root.groups[groupId];
+  if (!isRecord(group) || !isRecord(group.routes)) return undefined;
+  const route = group.routes[routeId];
+  return isRecord(route) ? route : undefined;
+}
+
 function plainText(value: string): string {
   return value
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
@@ -520,17 +534,30 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     if (current.version !== body.expectedVersion) {
       throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
     }
-    if (
-      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
-      current.publication.provenance.connectionId !== connectionId
-    ) {
-      throw new Error("Source meta connection does not match the publication source");
-    }
     const contentType = body.contentType.trim();
     if (!contentType) throw new Error("Source meta content type is required");
-    const wordpress = current.publication.current.content.attributes.wordpress;
-    if (!isRecord(wordpress) || wordpress.contentType !== contentType) {
-      throw new Error("Source meta content type does not match the publication source");
+
+    if (body.groupId !== undefined || body.routeId !== undefined) {
+      if (!body.groupId || !body.routeId) throw new Error("Route-scoped WordPress settings require both groupId and routeId");
+      const route = await assertTargetWordPressRoute(
+        this.#publicationGroups,
+        current.publication,
+        connectionId,
+        body.groupId,
+        body.routeId,
+      );
+      if (route.destination.channel !== contentType) throw new Error("WordPress route content type does not match REST meta content type");
+    } else {
+      if (
+        current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+        current.publication.provenance.connectionId !== connectionId
+      ) {
+        throw new Error("Source meta connection does not match the publication source");
+      }
+      const wordpress = current.publication.current.content.attributes.wordpress;
+      if (!isRecord(wordpress) || wordpress.contentType !== contentType) {
+        throw new Error("Source meta content type does not match the publication source");
+      }
     }
 
     const fields = await this.#content.listRestMetaFields(connectionId, contentType);
@@ -540,9 +567,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       const key = rawKey.trim();
       const field = byKey.get(key);
       if (!field) throw new Error(`WordPress REST meta field is not exposed for ${contentType}: ${key}`);
-      if (!validMetaValue(field, value)) {
-        throw new Error(`WordPress REST meta value does not match schema: ${key}`);
-      }
+      if (!validMetaValue(field, value)) throw new Error(`WordPress REST meta value does not match schema: ${key}`);
       values[key] = value;
     }
 
@@ -554,6 +579,8 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         connectionId,
         contentType,
         values,
+        ...(body.groupId ? { groupId: body.groupId } : {}),
+        ...(body.routeId ? { routeId: body.routeId } : {}),
       },
     );
     return { publication, contentType, values };
@@ -568,18 +595,33 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     if (current.version !== body.expectedVersion) {
       throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
     }
-    if (
-      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
-      current.publication.provenance.connectionId !== connectionId
-    ) {
-      throw new Error("Source taxonomy connection does not match the publication source");
-    }
-    const wordpress = current.publication.current.content.attributes.wordpress;
-    if (!isRecord(wordpress) || wordpress.contentType !== body.contentType) {
-      throw new Error("Source taxonomy content type does not match the publication source");
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("Source taxonomy content type is required");
+
+    if (body.groupId !== undefined || body.routeId !== undefined) {
+      if (!body.groupId || !body.routeId) throw new Error("Route-scoped WordPress settings require both groupId and routeId");
+      const route = await assertTargetWordPressRoute(
+        this.#publicationGroups,
+        current.publication,
+        connectionId,
+        body.groupId,
+        body.routeId,
+      );
+      if (route.destination.channel !== contentType) throw new Error("WordPress route content type does not match taxonomy content type");
+    } else {
+      if (
+        current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+        current.publication.provenance.connectionId !== connectionId
+      ) {
+        throw new Error("Source taxonomy connection does not match the publication source");
+      }
+      const wordpress = current.publication.current.content.attributes.wordpress;
+      if (!isRecord(wordpress) || wordpress.contentType !== contentType) {
+        throw new Error("Source taxonomy content type does not match the publication source");
+      }
     }
 
-    const definitions = await this.#content.listTaxonomies(connectionId, body.contentType);
+    const definitions = await this.#content.listTaxonomies(connectionId, contentType);
     const byKey = new Map(definitions.map((definition) => [definition.key, definition] as const));
     const taxonomies: Record<string, {
       readonly restBase: string;
@@ -587,13 +629,9 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       readonly names: readonly string[];
     }> = {};
     for (const [taxonomyKey, names] of Object.entries(body.selections)) {
-      if (taxonomyKey === "category" || taxonomyKey === "post_tag") {
-        throw new Error("Categories and tags must use their existing canonical fields");
-      }
+      if (taxonomyKey === "category" || taxonomyKey === "post_tag") throw new Error("Categories and tags must use their existing canonical fields");
       const definition = byKey.get(taxonomyKey);
-      if (!definition) {
-        throw new Error(`WordPress taxonomy ${taxonomyKey} is not attached to content type ${body.contentType}`);
-      }
+      if (!definition) throw new Error(`WordPress taxonomy ${taxonomyKey} is not attached to content type ${contentType}`);
       taxonomies[taxonomyKey] = {
         restBase: definition.restBase,
         ...(definition.restNamespace ? { restNamespace: definition.restNamespace } : {}),
@@ -607,20 +645,21 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       {
         extensionId: WORDPRESS_REST_EXTENSION_ID,
         connectionId,
-        contentType: body.contentType,
+        contentType,
         taxonomies,
+        ...(body.groupId ? { groupId: body.groupId } : {}),
+        ...(body.routeId ? { routeId: body.routeId } : {}),
       },
     );
-    const source = publication.publication.current.content.attributes.sourceTaxonomies;
-    if (!isRecord(source) || !isRecord(source.taxonomies)) {
-      throw new Error("Canonical source taxonomy selections were not persisted");
-    }
+    const scoped = destinationOverride(publication.publication, body.groupId, body.routeId);
+    const source = scoped ? scoped.taxonomies : publication.publication.current.content.attributes.sourceTaxonomies;
+    if (!isRecord(source) || !isRecord(source.taxonomies)) throw new Error("Canonical source taxonomy selections were not persisted");
     const selections: Record<string, readonly string[]> = {};
     for (const [taxonomyKey, value] of Object.entries(source.taxonomies)) {
       if (!isRecord(value) || !Array.isArray(value.names)) continue;
       selections[taxonomyKey] = value.names.filter((name): name is string => typeof name === "string");
     }
-    return { publication, contentType: body.contentType, selections };
+    return { publication, contentType, selections };
   }
 
   async setEditorialOptions(
@@ -632,32 +671,40 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     if (current.version !== body.expectedVersion) {
       throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
     }
-    if (
-      current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
-      current.publication.provenance.connectionId !== connectionId
-    ) {
-      throw new Error("Source editorial options connection does not match the publication source");
-    }
     const contentType = body.contentType.trim();
     if (!contentType) throw new Error("Source editorial content type is required");
-    const wordpress = current.publication.current.content.attributes.wordpress;
-    if (!isRecord(wordpress) || wordpress.contentType !== contentType) {
-      throw new Error("Source editorial options content type does not match the publication source");
+
+    if (body.groupId !== undefined || body.routeId !== undefined) {
+      if (!body.groupId || !body.routeId) throw new Error("Route-scoped WordPress settings require both groupId and routeId");
+      const route = await assertTargetWordPressRoute(
+        this.#publicationGroups,
+        current.publication,
+        connectionId,
+        body.groupId,
+        body.routeId,
+      );
+      if (route.destination.channel !== contentType) {
+        throw new Error("WordPress route content type does not match editorial content type");
+      }
+    } else {
+      if (
+        current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+        current.publication.provenance.connectionId !== connectionId
+      ) {
+        throw new Error("Source editorial options connection does not match the publication source");
+      }
+      const wordpress = current.publication.current.content.attributes.wordpress;
+      if (!isRecord(wordpress) || wordpress.contentType !== contentType) {
+        throw new Error("Source editorial options content type does not match the publication source");
+      }
     }
 
     const contentTypes = await this.#content.listContentTypes(connectionId);
     const resolvedType = contentTypes.find((candidate) => candidate.restBase === contentType);
     if (!resolvedType) throw new Error(`WordPress content type is not available on this connection: ${contentType}`);
-
     const supportsComments = resolvedType.supports.includes("comments");
     if (!supportsComments && (body.commentStatus !== undefined || body.pingStatus !== undefined)) {
       throw new Error(`WordPress content type does not support discussion options: ${contentType}`);
-    }
-    if (body.commentStatus !== undefined && body.commentStatus !== "open" && body.commentStatus !== "closed") {
-      throw new Error("WordPress commentStatus must be open or closed");
-    }
-    if (body.pingStatus !== undefined && body.pingStatus !== "open" && body.pingStatus !== "closed") {
-      throw new Error("WordPress pingStatus must be open or closed");
     }
     if (body.sticky !== undefined && resolvedType.slug !== "post") {
       throw new Error(`WordPress content type does not support sticky state: ${contentType}`);
@@ -665,14 +712,10 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     const formats = new Set(["standard", "aside", "chat", "gallery", "link", "image", "quote", "status", "video", "audio"]);
     const format = body.format?.trim();
     if (format !== undefined) {
-      if (!resolvedType.supports.includes("post-formats")) {
-        throw new Error(`WordPress content type does not support post formats: ${contentType}`);
-      }
+      if (!resolvedType.supports.includes("post-formats")) throw new Error(`WordPress content type does not support post formats: ${contentType}`);
       if (!formats.has(format)) throw new Error("Unsupported WordPress post format");
     }
-    if (body.sticky === true && body.password.length > 0) {
-      throw new Error("WordPress sticky posts cannot be password protected");
-    }
+    if (body.sticky === true && body.password.length > 0) throw new Error("WordPress sticky posts cannot be password protected");
 
     const publication = await this.#publications.setSourceEditorialOptions(
       body.publicationId,
@@ -686,6 +729,8 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         ...(body.pingStatus === undefined ? {} : { pingStatus: body.pingStatus }),
         ...(body.sticky === undefined ? {} : { sticky: body.sticky }),
         ...(format === undefined ? {} : { format }),
+        ...(body.groupId ? { groupId: body.groupId } : {}),
+        ...(body.routeId ? { routeId: body.routeId } : {}),
       },
     );
     return {
@@ -706,35 +751,42 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     const current = await this.#publications.get(body.publicationId);
     if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
     if (current.version !== body.expectedVersion) {
-      throw new Error(
-        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
-      );
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
     }
-    if (
+    const contentType = body.contentType.trim();
+    if (!contentType) throw new Error("Source page content type is required");
+
+    if (body.groupId !== undefined || body.routeId !== undefined) {
+      if (!body.groupId || !body.routeId) throw new Error("Route-scoped WordPress settings require both groupId and routeId");
+      const route = await assertTargetWordPressRoute(
+        this.#publicationGroups,
+        current.publication,
+        connectionId,
+        body.groupId,
+        body.routeId,
+      );
+      if (route.destination.channel !== contentType) {
+        throw new Error("WordPress route content type does not match page-structure content type");
+      }
+    } else if (
       current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
       current.publication.provenance.connectionId !== connectionId
     ) {
       throw new Error("Source page structure connection does not match the publication source");
     }
 
-    const contentType = body.contentType.trim();
-    if (!contentType) throw new Error("Source page content type is required");
-
     const contentTypes = await this.#content.listContentTypes(connectionId);
     const resolvedType = contentTypes.find((candidate) => candidate.restBase === contentType);
-    if (!resolvedType) {
-      throw new Error(`WordPress content type is not available on this connection: ${contentType}`);
-    }
-    if (!resolvedType.hierarchical) {
-      throw new Error(`WordPress content type does not support page hierarchy: ${contentType}`);
-    }
+    if (!resolvedType) throw new Error(`WordPress content type is not available on this connection: ${contentType}`);
+    if (!resolvedType.hierarchical) throw new Error(`WordPress content type does not support page hierarchy: ${contentType}`);
 
     if (body.parentRemoteId !== null) {
       const parentRemoteId = body.parentRemoteId.trim();
-      if (!/^\d+$/.test(parentRemoteId)) {
-        throw new Error("Source page parentRemoteId must be null or a positive integer string");
-      }
-      if (current.publication.provenance.remoteId === parentRemoteId) {
+      if (!/^\d+$/.test(parentRemoteId)) throw new Error("Source page parentRemoteId must be null or a positive integer string");
+      if (
+        current.publication.provenance.connectionId === connectionId &&
+        current.publication.provenance.remoteId === parentRemoteId
+      ) {
         throw new Error("A WordPress page cannot be its own parent");
       }
       await this.#content.get(connectionId, parentRemoteId, contentType);
@@ -750,9 +802,12 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         parentRemoteId: body.parentRemoteId === null ? null : body.parentRemoteId.trim(),
         template: body.template,
         menuOrder: body.menuOrder,
+        ...(body.groupId ? { groupId: body.groupId } : {}),
+        ...(body.routeId ? { routeId: body.routeId } : {}),
       },
     );
-    const sourcePage = publication.publication.current.content.attributes.sourcePage;
+    const scoped = destinationOverride(publication.publication, body.groupId, body.routeId);
+    const sourcePage = scoped ? scoped.pageStructure : publication.publication.current.content.attributes.sourcePage;
     if (!isRecord(sourcePage)) throw new Error("Canonical source page structure was not persisted");
     return {
       publication,
