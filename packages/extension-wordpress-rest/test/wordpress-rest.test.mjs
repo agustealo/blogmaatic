@@ -2132,3 +2132,153 @@ test("WordPress native editorial options deliver drift and remain source-isolate
     api.server.close();
   }
 });
+
+
+test("WordPress compiles independent group-route overrides and never leaks media ids across sites", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-10-24T20:00:00.000Z",
+      updatedAt: "2026-10-24T20:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-a", displayName: "Site A" },
+        { ...baseConnection, id: "wp-b", displayName: "Site B" },
+      ]),
+      new SecretAuthority([
+        new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" }),
+      ]),
+    );
+    const item = {
+      ...textPublication(),
+      id: "publication-multi-wordpress",
+      current: {
+        ...textPublication().current,
+        content: {
+          ...textPublication().current.content,
+          assets: [{
+            id: "hero",
+            kind: "image",
+            source: "https://cdn.example.test/hero.jpg",
+            mediaType: "image/jpeg",
+            alt: "Hero",
+            attributes: {
+              featured: true,
+              wordpressMediaId: 77,
+              sourceExtensionId: "blogmaatic.wordpress-rest",
+              sourceConnectionId: "wp-a",
+              sourceRemoteId: "77",
+            },
+          }],
+          blocks: [{ id: "image", kind: "image", data: { assetId: "hero" } }],
+          attributes: {
+            publishingTargets: { groupIds: ["group-a", "group-b"] },
+            destinationOverrides: {
+              schemaVersion: 1,
+              groups: {
+                "group-a": {
+                  routes: {
+                    wordpress: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      channel: "posts",
+                      author: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-a",
+                        remoteId: "7",
+                        displayName: "Site A Editor",
+                      },
+                      publishing: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-a",
+                        status: "future",
+                        scheduledAt: "2026-11-01T18:30:00.000Z",
+                      },
+                    },
+                  },
+                },
+                "group-b": {
+                  routes: {
+                    wordpress: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      channel: "posts",
+                      author: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-b",
+                        remoteId: "12",
+                        displayName: "Site B Editor",
+                      },
+                      publishing: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-b",
+                        status: "draft",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      provenance: { source: "blogmaatic.publication-workspace" },
+    };
+    const routeFor = (connectionId) => ({
+      ...route(),
+      id: "wordpress",
+      destination: {
+        ...route().destination,
+        connectionId,
+      },
+    });
+
+    const siteA = await publisher.compile({
+      publication: item,
+      route: routeFor("wp-a"),
+      groupId: "group-a",
+    });
+    const siteB = await publisher.compile({
+      publication: item,
+      route: routeFor("wp-b"),
+      groupId: "group-b",
+    });
+
+    assert.equal(siteA.groupId, "group-a");
+    assert.equal(siteB.groupId, "group-b");
+    assert.notEqual(siteA.projectionId, siteB.projectionId);
+    assert.equal(siteA.payload.authorId, 7);
+    assert.equal(siteA.payload.status, "future");
+    assert.equal(siteA.payload.scheduledAt, "2026-11-01T18:30:00.000Z");
+    assert.equal(siteA.payload.assets[0].wordpressMediaId, 77);
+
+    assert.equal(siteB.payload.authorId, 12);
+    assert.equal(siteB.payload.status, "draft");
+    assert.equal(siteB.payload.scheduledAt, undefined);
+    assert.equal(siteB.payload.assets[0].wordpressMediaId, undefined);
+    assert.equal(siteB.payload.assets[0].source, "https://cdn.example.test/hero.jpg");
+
+    const tampered = structuredClone(item);
+    tampered.current.content.attributes.destinationOverrides.groups["group-a"].routes.wordpress.connectionId = "wp-b";
+    await assert.rejects(
+      publisher.compile({
+        publication: tampered,
+        route: routeFor("wp-a"),
+        groupId: "group-a",
+      }),
+      /override identity no longer matches route/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
