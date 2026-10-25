@@ -12,6 +12,33 @@ The first kernel slice establishes this executable path:
 
 A publication is the logical item being managed. It owns lifecycle state and points at one immutable current revision.
 
+### Canonical block authoring
+
+Publication Workspace accepts canonical `PublicationBlock[]` content directly. The legacy `body` / `bodyFormat` request shape remains a compatibility path, but a mutation may not submit both body text and canonical blocks.
+
+Content Studio edits the same block model consumed by extension compilation rather than flattening it into a provider-specific document format. The first-class visual controls cover:
+
+- heading
+- paragraph
+- image backed by a canonical Publication asset
+- quote
+- code
+- embed / deliberate raw HTML
+- callout
+
+Gallery and table blocks remain visible and losslessly preserved while their dedicated visual builders are deferred. Reorder, duplicate, add, and remove operations change the canonical block sequence and therefore create a new immutable Publication revision when saved.
+
+Block mutation is fail-closed:
+
+- block ids are required and unique
+- only core block kinds are accepted
+- data must be JSON-safe
+- canonical image references must resolve to an existing image asset
+- older external image blocks using an explicit `src` remain compatible
+- future/unknown block kinds may remain readable in stored history, but an older Studio/API version does not rewrite them
+
+This editor boundary is provider-neutral. WordPress, Jekyll, Facebook, and future extensions continue to compile the ordinary Publication IR; no destination-specific authoring schema is introduced.
+
 ### Publication IR
 
 `PublicationIR` is Blogmaatic's platform-neutral representation. It carries structured blocks, assets, tags, language, and extension-safe JSON attributes. Provider payloads are compiled from this representation; provider objects never become canonical core state.
