@@ -40,13 +40,47 @@ export function remoteStateHash(post: LinkedInPostRecord): string {
   });
 }
 
-export function encodeRemoteVersion(projectionFingerprint: string, remoteHash: string): string {
-  return `bm1:${projectionFingerprint}:${remoteHash}`;
+export interface LinkedInRemoteBaseline {
+  readonly desired: string;
+  readonly remote: string;
+  readonly mediaFingerprint?: string;
+  readonly mediaUrn?: string;
 }
 
-export function parseRemoteVersion(value: string | undefined): { desired: string; remote: string } | undefined {
-  if (!value) return undefined;
-  const match = /^bm1:([a-f0-9]{64}):([a-f0-9]{64})$/.exec(value);
-  if (!match?.[1] || !match[2]) return undefined;
-  return { desired: match[1], remote: match[2] };
+export function encodeRemoteVersion(
+  projectionFingerprint: string,
+  remoteHash: string,
+  mediaFingerprint?: string,
+  mediaUrn?: string,
+): string {
+  const payload = JSON.stringify({
+    desired: projectionFingerprint,
+    remote: remoteHash,
+    ...(mediaFingerprint ? { mediaFingerprint } : {}),
+    ...(mediaUrn ? { mediaUrn } : {}),
+  });
+  return `li1:${Buffer.from(payload, "utf8").toString("base64url")}`;
+}
+
+export function parseRemoteVersion(value: string | undefined): LinkedInRemoteBaseline | undefined {
+  if (!value?.startsWith("li1:")) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(value.slice(4), "base64url").toString("utf8")) as Record<string, unknown>;
+    const desired = parsed.desired;
+    const remote = parsed.remote;
+    if (
+      typeof desired !== "string" || !/^[a-f0-9]{64}$/.test(desired) ||
+      typeof remote !== "string" || !/^[a-f0-9]{64}$/.test(remote)
+    ) return undefined;
+    const mediaFingerprint = typeof parsed.mediaFingerprint === "string" ? parsed.mediaFingerprint : undefined;
+    const mediaUrn = typeof parsed.mediaUrn === "string" ? parsed.mediaUrn : undefined;
+    return {
+      desired,
+      remote,
+      ...(mediaFingerprint ? { mediaFingerprint } : {}),
+      ...(mediaUrn ? { mediaUrn } : {}),
+    };
+  } catch {
+    return undefined;
+  }
 }
