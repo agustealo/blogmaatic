@@ -325,3 +325,152 @@ test("local image byte type must match declared media type", async () => {
     await rm(allowed, { recursive: true, force: true });
   }
 });
+
+
+test("Facebook route-scoped social variant overrides commentary and preserves selected image order", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const extension = publisher(api.server.address().port);
+    const item = publication();
+    item.current.content.assets.push(
+      { id: "detail", kind: "image", source: "https://cdn.example.test/detail.png", mediaType: "image/png", alt: "Detail" },
+    );
+    item.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          "group-social": {
+            routes: {
+              "facebook-route": {
+                extensionId: "blogmaatic.facebook-pages",
+                connectionId: "fb-1",
+                channel: "feed",
+                socialVariant: {
+                  extensionId: "blogmaatic.facebook-pages",
+                  connectionId: "fb-1",
+                  channel: "feed",
+                  commentaryMode: "override",
+                  commentary: "Exact Facebook copy",
+                  mediaMode: "select",
+                  imageAssetIds: ["detail", "hero"],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const projection = await extension.compile({
+      publication: item,
+      route: route({ maxImages: 2 }),
+      groupId: "group-social",
+    });
+    assert.equal(projection.payload.message, "Exact Facebook copy");
+    assert.deepEqual(projection.payload.images.map((asset) => asset.assetId), ["detail", "hero"]);
+
+    const inherited = await extension.compile({ publication: item, route: route({ maxImages: 2 }) });
+    assert.notEqual(inherited.payload.message, "Exact Facebook copy");
+    assert.deepEqual(inherited.payload.images.map((asset) => asset.assetId), ["hero"]);
+    assert.notEqual(projection.fingerprint, inherited.fingerprint);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("Facebook social media none suppresses images and selected media obeys maxImages", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const extension = publisher(api.server.address().port);
+    const item = publication();
+    item.current.content.assets.push(
+      { id: "detail", kind: "image", source: "https://cdn.example.test/detail.png", mediaType: "image/png", alt: "Detail" },
+    );
+    const social = (mediaMode, imageAssetIds = []) => ({
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          "group-social": {
+            routes: {
+              "facebook-route": {
+                extensionId: "blogmaatic.facebook-pages",
+                connectionId: "fb-1",
+                channel: "feed",
+                socialVariant: {
+                  extensionId: "blogmaatic.facebook-pages",
+                  connectionId: "fb-1",
+                  channel: "feed",
+                  commentaryMode: "inherit",
+                  mediaMode,
+                  imageAssetIds,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    item.current.content.attributes = social("none");
+    const none = await extension.compile({
+      publication: item,
+      route: route({ maxImages: 2 }),
+      groupId: "group-social",
+    });
+    assert.equal(none.payload.mode, "text");
+    assert.deepEqual(none.payload.images, []);
+
+    item.current.content.attributes = social("select", ["hero", "detail"]);
+    await assert.rejects(
+      extension.compile({
+        publication: item,
+        route: route({ maxImages: 1 }),
+        groupId: "group-social",
+      }),
+      /exceeds maxImages 1/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
+
+test("Facebook rejects tampered social destination identity", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const extension = publisher(api.server.address().port);
+    const item = publication();
+    item.current.content.attributes = {
+      destinationOverrides: {
+        schemaVersion: 1,
+        groups: {
+          "group-social": {
+            routes: {
+              "facebook-route": {
+                extensionId: "blogmaatic.facebook-pages",
+                connectionId: "fb-other",
+                channel: "feed",
+                socialVariant: {
+                  extensionId: "blogmaatic.facebook-pages",
+                  connectionId: "fb-1",
+                  channel: "feed",
+                  commentaryMode: "inherit",
+                  mediaMode: "inherit",
+                  imageAssetIds: [],
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    await assert.rejects(
+      extension.compile({ publication: item, route: route(), groupId: "group-social" }),
+      /identity does not match/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
