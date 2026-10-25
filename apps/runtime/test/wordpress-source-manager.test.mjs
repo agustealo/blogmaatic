@@ -166,7 +166,7 @@ test("WordPress import creates one canonical publication and recovers it on retr
     remoteId: "7",
   });
   assert.deepEqual(first.publication.publication.current.content.attributes.publishingTargets, {
-    groupIds: ["wordpress-primary"],
+    groupIds: ["group-main"],
   });
   assert.deepEqual(first.publication.publication.current.content.attributes.sourcePublishing, {
     extensionId: "blogmaatic.wordpress-rest",
