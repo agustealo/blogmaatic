@@ -256,6 +256,7 @@ function SourceAuthorPanel({
 }) {
   const { session } = useConnection();
   const client = session!.client;
+  const routeScoped = Boolean(groupId && routeId);
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<readonly SourceAuthorRecord[]>([]);
   const [page, setPage] = useState(1);
@@ -1059,6 +1060,127 @@ function WordPressStandardTaxonomyPanel({
   );
 }
 
+function canonicalRouteFeaturedMedia(
+  entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  contentType: string,
+  groupId: string,
+  routeId: string,
+): { readonly mode: "inherit" | "none" | "asset"; readonly assetId?: string } {
+  const source = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.featuredMedia);
+  if (!source) return { mode: "inherit" };
+  if (
+    source.extensionId !== "blogmaatic.wordpress-rest" ||
+    source.connectionId !== connectionId ||
+    source.contentType !== contentType
+  ) {
+    return { mode: "inherit" };
+  }
+  if (source.mode === "none") return { mode: "none" };
+  if (source.mode === "asset" && typeof source.assetId === "string" && source.assetId.trim()) {
+    return { mode: "asset", assetId: source.assetId.trim() };
+  }
+  return { mode: "inherit" };
+}
+
+function WordPressFeaturedMediaPanel({
+  entry,
+  connectionId,
+  contentType,
+  groupId,
+  routeId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly contentType: string;
+  readonly groupId: string;
+  readonly routeId: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const canonical = canonicalRouteFeaturedMedia(entry, connectionId, contentType, groupId, routeId);
+  const [selection, setSelection] = useState(
+    canonical.mode === "asset" ? `asset:${canonical.assetId}` : canonical.mode,
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const next = canonicalRouteFeaturedMedia(entry, connectionId, contentType, groupId, routeId);
+    setSelection(next.mode === "asset" ? `asset:${next.assetId}` : next.mode);
+  }, [connectionId, contentType, entry.publication.current.id, groupId, routeId]);
+
+  const shared = entry.publication.current.content.assets.find(
+    (asset) => asset.kind === "image" && asset.attributes?.featured === true,
+  );
+  const compatibleAssets = entry.publication.current.content.assets.filter((asset) => {
+    if (asset.kind !== "image") return false;
+    if (!/^https?:\/\//i.test(asset.source)) return true;
+    const sourceConnectionId = asset.attributes?.sourceConnectionId;
+    const wordpressMediaId = asset.attributes?.wordpressMediaId;
+    const legacy =
+      sourceConnectionId === undefined &&
+      entry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
+      entry.publication.provenance.connectionId === connectionId;
+    return (
+      typeof wordpressMediaId === "number" &&
+      Number.isSafeInteger(wordpressMediaId) &&
+      wordpressMediaId > 0 &&
+      (sourceConnectionId === connectionId || legacy)
+    );
+  });
+
+  const save = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const mode = selection.startsWith("asset:") ? "asset" : selection as "inherit" | "none";
+      const assetId = mode === "asset" ? selection.slice("asset:".length) : undefined;
+      const result = await client.setSourceFeaturedMedia(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        contentType,
+        groupId,
+        routeId,
+        mode,
+        ...(assetId ? { assetId } : {}),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress featured image could not be saved"));
+    } finally {
+      setBusy(false);
+    }
+  }, [client, connectionId, contentType, entry.publication.id, entry.version, groupId, onUpdated, routeId, selection]);
+
+  const canonicalValue = canonical.mode === "asset" ? `asset:${canonical.assetId}` : canonical.mode;
+  return (
+    <Panel title="Featured image" meta="Destination ownership" className="wordpress-featured-media">
+      <ErrorBanner error={error} />
+      <div className="wordpress-featured-media__body">
+        <label className="field">
+          <span>Featured image for this destination</span>
+          <select value={selection} onChange={(event) => setSelection(event.target.value)} disabled={busy}>
+            <option value="inherit">Use shared featured image{shared ? ` — ${shared.alt?.trim() || shared.id}` : " — none"}</option>
+            <option value="none">No featured image</option>
+            {compatibleAssets.map((asset) => (
+              <option key={asset.id} value={`asset:${asset.id}`}>
+                {asset.alt?.trim() || asset.id}
+              </option>
+            ))}
+          </select>
+          <small>WordPress Media Library images are usable only on the site that owns their media ID. Local canonical images may be uploaded per destination.</small>
+        </label>
+        <button className="button button--primary" type="button" onClick={() => void save()} disabled={busy || selection === canonicalValue}>
+          {busy ? "Saving…" : "Save featured image"}
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
 function WordPressDestinationSettings({
   entry,
   onUpdated,
@@ -1160,6 +1282,22 @@ function WordPressDestinationSettings({
             groupId={route.groupId}
             routeId={route.routeId}
             onUpdated={onUpdated}
+          />
+          <WordPressFeaturedMediaPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
+          <SourceAssetLibraryPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onAttached={onUpdated}
           />
           <WordPressStandardTaxonomyPanel
             entry={entry}
@@ -1855,10 +1993,16 @@ function SourceRestMetaPanel({
 function SourceAssetLibraryPanel({
   entry,
   connectionId,
+  contentType,
+  groupId,
+  routeId,
   onAttached,
 }: {
   readonly entry: PublicationWorkspaceEntry;
   readonly connectionId: string;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
   readonly onAttached: (entry: PublicationWorkspaceEntry) => void;
 }) {
   const { session } = useConnection();
@@ -1922,7 +2066,10 @@ function SourceAssetLibraryPanel({
       const result = await client.attachSourceAsset(connectionId, asset.remoteId, {
         publicationId: entry.publication.id,
         expectedVersion: entry.version,
-        featured,
+        featured: routeScoped ? false : featured,
+        ...(contentType ? { contentType } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
       });
       onAttached(result.publication);
     } catch (cause) {
@@ -1930,7 +2077,7 @@ function SourceAssetLibraryPanel({
     } finally {
       setBusy(null);
     }
-  }, [client, connectionId, entry.publication.id, entry.version, onAttached]);
+  }, [client, connectionId, contentType, entry.publication.id, entry.version, groupId, onAttached, routeId, routeScoped]);
 
   const upload = useCallback(async () => {
     if (!uploadFile) return;
@@ -1946,7 +2093,10 @@ function SourceAssetLibraryPanel({
         filename: uploadFile.name,
         mediaType: uploadFile.type,
         bytes: new Uint8Array(await uploadFile.arrayBuffer()),
-        featured: uploadFeatured,
+        featured: routeScoped ? false : uploadFeatured,
+        ...(contentType ? { contentType } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
         ...(uploadAlt.trim() ? { alt: uploadAlt.trim() } : {}),
         ...(uploadTitle.trim() ? { title: uploadTitle.trim() } : {}),
       });
@@ -1970,6 +2120,10 @@ function SourceAssetLibraryPanel({
     entry.publication.id,
     entry.version,
     onAttached,
+    contentType,
+    groupId,
+    routeId,
+    routeScoped,
     uploadAlt,
     uploadFeatured,
     uploadFile,
@@ -1989,7 +2143,11 @@ function SourceAssetLibraryPanel({
   ), [connectionId, entry.publication.current.content.assets]);
 
   return (
-    <Panel title="Media Library" meta="Upload or attach WordPress images" className="source-asset-panel">
+    <Panel
+      title="Media Library"
+      meta={routeScoped ? "Images owned by this WordPress destination" : "Upload or attach WordPress images"}
+      className="source-asset-panel"
+    >
       <ErrorBanner error={error} />
       <div className="source-asset-upload">
         <label className="field">
@@ -2019,15 +2177,17 @@ function SourceAssetLibraryPanel({
             disabled={busy !== null}
           />
         </label>
-        <label className="source-asset-upload__featured">
-          <input
-            type="checkbox"
-            checked={uploadFeatured}
-            onChange={(event) => setUploadFeatured(event.target.checked)}
-            disabled={busy !== null}
-          />
-          <span>Use as featured image</span>
-        </label>
+        {!routeScoped ? (
+          <label className="source-asset-upload__featured">
+            <input
+              type="checkbox"
+              checked={uploadFeatured}
+              onChange={(event) => setUploadFeatured(event.target.checked)}
+              disabled={busy !== null}
+            />
+            <span>Use as featured image</span>
+          </label>
+        ) : null}
         <button
           className="button button--primary"
           type="button"
@@ -2076,9 +2236,11 @@ function SourceAssetLibraryPanel({
                   <button className="button button--quiet" type="button" onClick={() => void attach(asset, false)} disabled={busy !== null || attached}>
                     {busy === `attach:${asset.remoteId}` ? "Attaching…" : attached ? "Attached" : "Attach"}
                   </button>
-                  <button className="button button--primary" type="button" onClick={() => void attach(asset, true)} disabled={busy !== null}>
-                    {busy === `featured:${asset.remoteId}` ? "Setting…" : "Use as featured"}
-                  </button>
+                  {!routeScoped ? (
+                    <button className="button button--primary" type="button" onClick={() => void attach(asset, true)} disabled={busy !== null}>
+                      {busy === `featured:${asset.remoteId}` ? "Setting…" : "Use as featured"}
+                    </button>
+                  ) : null}
                 </div>
               </article>
             );
