@@ -92,14 +92,6 @@ Imported WordPress posts preserve their native status. Scheduled imports normali
 
 This state does not replace Blogmaatic Automation schedules. Automation determines when Blogmaatic runs; source-native state determines what WordPress status/date Blogmaatic asks WordPress to store when the matching route is compiled.
 
-## Deliberate taxonomy creation
-
-The Content editor can create missing WordPress categories and tags explicitly through the same provider-neutral source boundary used for taxonomy lookup. Control Room never calls `/wp/v2/categories` or `/wp/v2/tags` directly.
-
-Creation accepts a taxonomy kind, name, optional slug, and optional description. The WordPress extension uses the same stable slug normalization and `term_exists` recovery path that publish-time taxonomy resolution uses, so explicit creation and later delivery cannot disagree about term identity. A matching slug is idempotent, and a concurrent creation race that returns WordPress `term_exists` is recovered by fetching the existing term.
-
-The remote term creation itself is audited immediately. Adding the returned term name to the Publication remains an editor-draft action and becomes canonical only when the user performs the normal Publication Save. This preserves one clear immutable revision boundary for publication content.
-
 ## Taxonomy
 
 Tags come from Publication IR tags plus optional route tags. Categories come from `PublicationIR.attributes.categories` plus optional route categories.
