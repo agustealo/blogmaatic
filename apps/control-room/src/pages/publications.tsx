@@ -22,6 +22,7 @@ import type {
   SourceMetaValuesBody,
   SourceSeoFieldDefinition,
   SourceSeoSemantic,
+  SourceSeoValuesBody,
   SourceTaxonomyDefinitionRecord,
   SourceTaxonomyKind,
   SourceTaxonomyRecord,
@@ -2126,7 +2127,7 @@ function SourceSeoPanel({
     [connectionId, entry.publication.current.id, groupId, routeId],
   );
   const [fields, setFields] = useState<readonly SourceSeoFieldDefinition[]>([]);
-  const [values, setValues] = useState<Partial<Record<SourceSeoSemantic, string>>>({});
+  const [values, setValues] = useState<SourceSeoValuesBody["values"]>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -2145,10 +2146,15 @@ function SourceSeoPanel({
       .then((items) => {
         if (!active) return;
         setFields(items);
-        const next: Partial<Record<SourceSeoSemantic, string>> = {};
+        const next: Partial<Record<SourceSeoSemantic, string | boolean>> = {};
         for (const field of items) {
           const current = canonicalMeta[field.key];
-          if (typeof current === "string") next[field.semantic] = current;
+          if (field.valueKind === "boolean") {
+            if (current === field.trueValue) next[field.semantic] = true;
+            else if (current === field.falseValue) next[field.semantic] = false;
+          } else if (typeof current === "string") {
+            next[field.semantic] = current;
+          }
         }
         setValues(next);
       })
@@ -2196,9 +2202,45 @@ function SourceSeoPanel({
           {fields.map((field) => (
             <label className="field" key={field.semantic}>
               <span>{field.label}</span>
-              {field.semantic === "description" ? (
+              {field.valueKind === "boolean" ? (
+                <span className="source-seo-boolean">
+                  <span className="source-seo-boolean__toggle">
+                    <input
+                      type="checkbox"
+                      checked={values[field.semantic] === true}
+                      aria-checked={values[field.semantic] === undefined ? "mixed" : values[field.semantic] === true}
+                      ref={(node) => {
+                        if (node) node.indeterminate = values[field.semantic] === undefined;
+                      }}
+                      onChange={(event) => setValues((current) => ({ ...current, [field.semantic]: event.target.checked }))}
+                      disabled={saving}
+                    />
+                    <span>
+                      {values[field.semantic] === undefined
+                        ? "Use site default"
+                        : values[field.semantic] === true
+                          ? "Enabled"
+                          : "Disabled"}
+                    </span>
+                  </span>
+                  {values[field.semantic] !== undefined ? (
+                    <button
+                      className="button button--quiet"
+                      type="button"
+                      onClick={() => setValues((current) => {
+                        const next = { ...current };
+                        delete next[field.semantic];
+                        return next;
+                      })}
+                      disabled={saving}
+                    >
+                      Use site default
+                    </button>
+                  ) : null}
+                </span>
+              ) : field.semantic === "description" ? (
                 <textarea
-                  value={values[field.semantic] ?? ""}
+                  value={typeof values[field.semantic] === "string" ? values[field.semantic] : ""}
                   onChange={(event) => setValues((current) => ({ ...current, [field.semantic]: event.target.value }))}
                   placeholder="Optional SEO description"
                   disabled={saving}
@@ -2206,7 +2248,7 @@ function SourceSeoPanel({
               ) : (
                 <input
                   type={field.semantic === "canonical" ? "url" : "text"}
-                  value={values[field.semantic] ?? ""}
+                  value={typeof values[field.semantic] === "string" ? values[field.semantic] : ""}
                   onChange={(event) => setValues((current) => ({ ...current, [field.semantic]: event.target.value }))}
                   placeholder={
                     field.semantic === "title" ? "Optional SEO title" :
