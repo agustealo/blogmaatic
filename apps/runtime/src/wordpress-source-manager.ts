@@ -585,7 +585,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
 
     for (const [rawSemantic, rawValue] of Object.entries(body.values)) {
       const semantic = rawSemantic as SourceSeoSemantic;
-      if (!["title", "description", "canonical", "focus_keyphrase"].includes(semantic)) {
+      if (!["title", "description", "canonical", "focus_keyphrase", "robots_index", "robots_follow"].includes(semantic)) {
         throw new Error(`Unsupported source SEO semantic: ${rawSemantic}`);
       }
       const field = bySemantic.get(semantic);
