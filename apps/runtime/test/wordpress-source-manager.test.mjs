@@ -2300,6 +2300,127 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
   });
 });
 
+test("semantic SEO robots remain isolated across WordPress destinations with the same route id", async () => {
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const publication = {
+    id: "publication-two-site-seo",
+    createdAt: "2026-10-31T18:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-31T18:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Two-site SEO",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+          destinationOverrides: {
+            schemaVersion: 1,
+            groups: {
+              "group-a": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-a",
+                    channel: "posts",
+                    meta: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "posts",
+                      values: { seo_robots_index: true },
+                    },
+                  },
+                },
+              },
+              "group-b": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-b",
+                    channel: "posts",
+                    meta: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "posts",
+                      values: { seo_robots_index: false },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async listRestMetaFields() {
+        return [{ key: "seo_robots_index", type: "boolean", nullable: false }];
+      },
+    },
+    publisher: {},
+    publicationGroups: {
+      async get(groupId) {
+        if (groupId === "group-a") {
+          return { enabled: true, group: { id: groupId, name: "A", policySetId: "allow", routes: [routeFor("wp-a")] } };
+        }
+        if (groupId === "group-b") {
+          return { enabled: true, group: { id: groupId, name: "B", policySetId: "allow", routes: [routeFor("wp-b")] } };
+        }
+        return undefined;
+      },
+    },
+    publications: {
+      async get(id) {
+        return id === publication.id
+          ? { publication, version: 3, recordedAt: publication.createdAt, updatedAt: publication.createdAt }
+          : undefined;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const a = await manager.listSeoFields("wp-a", "posts", {
+    publicationId: publication.id,
+    groupId: "group-a",
+    routeId: "wordpress",
+  });
+  const b = await manager.listSeoFields("wp-b", "posts", {
+    publicationId: publication.id,
+    groupId: "group-b",
+    routeId: "wordpress",
+  });
+  assert.equal(a.find((field) => field.semantic === "robots_index").currentValue, true);
+  assert.equal(b.find((field) => field.semantic === "robots_index").currentValue, false);
+
+  await assert.rejects(
+    () => manager.listSeoFields("wp-a", "posts", {
+      publicationId: publication.id,
+      groupId: "group-b",
+      routeId: "wordpress",
+    }),
+    /does not match the requested connection/,
+  );
+});
+
 test("semantic SEO refuses fields that are not uniquely writable on the connected site", async () => {
   const manager = new WordPressSourceManager({
     content: {
