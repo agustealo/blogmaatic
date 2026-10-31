@@ -24,7 +24,8 @@
     "@blogmaatic/operator-api": "0.1.0",
     "@blogmaatic/secrets": "0.1.0",
     "@blogmaatic/state-sqlite": "0.1.0",
-    "@restatedev/restate-sdk": "1.17.2"
+    "@restatedev/restate-sdk": "1.17.2",
+    "@wordpress/block-serialization-default-parser": "5.57.0"
   },
   "optionalDependencies": {
     "@restatedev/restate": "1.7.10",
