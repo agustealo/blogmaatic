@@ -14,7 +14,9 @@ import {
   WORDPRESS_REST_EXTENSION_ID,
   WordPressContentService,
   WordPressRestPublisher,
+  decodeSeoValue,
   discoverSeoFields,
+  encodeSeoValue,
   type WordPressContentTypeView,
   type WordPressMediaView,
   type WordPressPostView,
@@ -55,7 +57,9 @@ import type {
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourceSeoFieldDefinition,
+  SourceSeoFieldQuery,
   SourceSeoSemantic,
+  SourceSeoValue,
   SourceSeoValuesBody,
   SourceSeoValuesResult,
   SourcePageStructureBody,
@@ -537,23 +541,73 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   async listSeoFields(
     connectionId: string,
     contentType: string,
+    query: SourceSeoFieldQuery = {},
   ): Promise<readonly SourceSeoFieldDefinition[]> {
     const normalized = contentType.trim();
     if (!normalized) throw new Error("Source SEO content type is required");
+    if ((query.groupId === undefined) !== (query.routeId === undefined)) {
+      throw new Error("Source SEO field context requires groupId and routeId together");
+    }
+    if ((query.groupId || query.routeId) && !query.publicationId) {
+      throw new Error("Source SEO route context requires publicationId");
+    }
+
     const fields = discoverSeoFields(await this.#content.listRestMetaFields(connectionId, normalized));
-    return fields.map((field) => ({
-      semantic: field.semantic,
-      key: field.key,
-      label: field.label,
-      provider: field.provider,
-      ...(field.description ? { description: field.description } : {}),
-      metadata: {
-        extensionId: WORDPRESS_REST_EXTENSION_ID,
-        connectionId,
-        contentType: normalized,
-        source: "wordpress-rest-meta",
-      },
-    }));
+    let existingValues: Readonly<Record<string, JsonValue>> = {};
+
+    if (query.publicationId) {
+      const current = await this.#publications.get(query.publicationId);
+      if (!current) throw new Error(`Publication is not registered: ${query.publicationId}`);
+
+      let existingSource: JsonValue | undefined;
+      if (query.groupId && query.routeId) {
+        const route = await assertTargetWordPressRoute(
+          this.#publicationGroups,
+          current.publication,
+          connectionId,
+          query.groupId,
+          query.routeId,
+        );
+        if (route.destination.channel !== normalized) {
+          throw new Error("WordPress route content type does not match SEO content type");
+        }
+        existingSource = destinationOverride(current.publication, query.groupId, query.routeId)?.meta;
+      } else {
+        if (
+          current.publication.provenance.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+          current.publication.provenance.connectionId !== connectionId
+        ) {
+          throw new Error("Source SEO connection does not match the publication source");
+        }
+        const wordpress = current.publication.current.content.attributes.wordpress;
+        if (!isRecord(wordpress) || wordpress.contentType !== normalized) {
+          throw new Error("Source SEO content type does not match the publication source");
+        }
+        existingSource = current.publication.current.content.attributes.sourceMeta;
+      }
+      existingValues = isRecord(existingSource) && isRecord(existingSource.values)
+        ? existingSource.values
+        : {};
+    }
+
+    return fields.map((field) => {
+      const currentValue = decodeSeoValue(field, existingValues[field.key]);
+      return {
+        semantic: field.semantic,
+        key: field.key,
+        label: field.label,
+        provider: field.provider,
+        valueType: field.valueType,
+        ...(currentValue === undefined ? {} : { currentValue }),
+        ...(field.description ? { description: field.description } : {}),
+        metadata: {
+          extensionId: WORDPRESS_REST_EXTENSION_ID,
+          connectionId,
+          contentType: normalized,
+          source: "wordpress-rest-meta",
+        },
+      };
+    });
   }
 
   async setSeoValues(
@@ -562,9 +616,10 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   ): Promise<SourceSeoValuesResult> {
     const contentType = body.contentType.trim();
     if (!contentType) throw new Error("Source SEO content type is required");
-    const fields = await this.listSeoFields(connectionId, contentType);
+
+    const fields = discoverSeoFields(await this.#content.listRestMetaFields(connectionId, contentType));
     const bySemantic = new Map(fields.map((field) => [field.semantic, field] as const));
-    const normalized: Partial<Record<SourceSeoSemantic, string>> = {};
+    const normalized: Partial<Record<SourceSeoSemantic, SourceSeoValue>> = {};
 
     const current = await this.#publications.get(body.publicationId);
     if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
@@ -581,13 +636,30 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
 
     for (const [rawSemantic, rawValue] of Object.entries(body.values)) {
       const semantic = rawSemantic as SourceSeoSemantic;
-      if (!["title", "description", "canonical", "focus_keyphrase"].includes(semantic)) {
+      if (![
+        "title",
+        "description",
+        "canonical",
+        "focus_keyphrase",
+        "robots_index",
+        "robots_follow",
+      ].includes(semantic)) {
         throw new Error(`Unsupported source SEO semantic: ${rawSemantic}`);
       }
       const field = bySemantic.get(semantic);
       if (!field) {
         throw new Error(`WordPress SEO field is not writable for ${contentType}: ${semantic}`);
       }
+
+      if (field.valueType === "boolean") {
+        if (typeof rawValue !== "boolean") {
+          throw new Error(`WordPress SEO value must be a boolean: ${semantic}`);
+        }
+        normalized[semantic] = rawValue;
+        metaValues[field.key] = encodeSeoValue(field, rawValue);
+        continue;
+      }
+
       if (typeof rawValue !== "string") {
         throw new Error(`WordPress SEO value must be a string: ${semantic}`);
       }
@@ -608,7 +680,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         }
       }
       normalized[semantic] = value;
-      metaValues[field.key] = value;
+      metaValues[field.key] = encodeSeoValue(field, value);
     }
 
     const result = await this.setMetaValues(connectionId, {
