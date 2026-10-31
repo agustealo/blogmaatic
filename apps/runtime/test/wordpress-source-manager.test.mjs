@@ -2229,14 +2229,14 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
 
   const discovered = await manager.listSeoFields("wp-main", "posts");
   assert.deepEqual(
-    discovered.map((field) => [field.semantic, field.key]),
-    [
-      ["description", "seo_description"],
-      ["title", "seo_title"],
-      ["canonical", "seo_canonical_url"],
-      ["robots_index", "seo_robots_index"],
-      ["robots_follow", "seo_robots_follow"],
-    ].sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    Object.fromEntries(discovered.map((field) => [field.semantic, field.key])),
+    {
+      canonical: "seo_canonical_url",
+      description: "seo_description",
+      robots_follow: "seo_robots_follow",
+      robots_index: "seo_robots_index",
+      title: "seo_title",
+    },
   );
 
   const contextual = await manager.listSeoFields("wp-main", "posts", {
