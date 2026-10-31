@@ -1,21 +1,32 @@
+import type { JsonValue } from "@blogmaatic/core";
+
 import type { WordPressRestMetaFieldDefinition } from "./types.js";
 
 export type WordPressSeoSemantic =
   | "title"
   | "description"
   | "canonical"
-  | "focus_keyphrase";
+  | "focus_keyphrase"
+  | "robots_index"
+  | "robots_follow";
+
+export type WordPressSeoValue = string | boolean;
 
 export interface WordPressSeoFieldDefinition {
   readonly semantic: WordPressSeoSemantic;
   readonly key: string;
   readonly label: string;
   readonly provider: "generic-registered-meta" | "yoast-compatible-meta" | "rank-math-compatible-meta";
+  readonly valueType: "text" | "boolean";
   readonly description?: string;
+  readonly booleanEncoding?: {
+    readonly trueValue: boolean | string;
+    readonly falseValue: boolean | string;
+  };
 }
 
 const SEO_ALIASES: Readonly<Record<string, {
-  readonly semantic: WordPressSeoSemantic;
+  readonly semantic: Extract<WordPressSeoSemantic, "title" | "description" | "canonical" | "focus_keyphrase">;
   readonly label: string;
   readonly provider: WordPressSeoFieldDefinition["provider"];
 }>> = {
@@ -52,22 +63,115 @@ const SEO_ALIASES: Readonly<Record<string, {
   rank_math_focus_keyword: { semantic: "focus_keyphrase", label: "Focus keyphrase", provider: "rank-math-compatible-meta" },
 };
 
+const ROBOTS_ALIASES: Readonly<Record<string, {
+  readonly semantic: Extract<WordPressSeoSemantic, "robots_index" | "robots_follow">;
+  readonly label: string;
+}>> = {
+  seo_robots_index: { semantic: "robots_index", label: "Index this content" },
+  _seo_robots_index: { semantic: "robots_index", label: "Index this content" },
+  robots_index: { semantic: "robots_index", label: "Index this content" },
+  _robots_index: { semantic: "robots_index", label: "Index this content" },
+  seo_index: { semantic: "robots_index", label: "Index this content" },
+  _seo_index: { semantic: "robots_index", label: "Index this content" },
+
+  seo_robots_follow: { semantic: "robots_follow", label: "Follow links" },
+  _seo_robots_follow: { semantic: "robots_follow", label: "Follow links" },
+  robots_follow: { semantic: "robots_follow", label: "Follow links" },
+  _robots_follow: { semantic: "robots_follow", label: "Follow links" },
+  seo_follow: { semantic: "robots_follow", label: "Follow links" },
+  _seo_follow: { semantic: "robots_follow", label: "Follow links" },
+};
+
+function safeBooleanEncoding(
+  field: WordPressRestMetaFieldDefinition,
+  semantic: Extract<WordPressSeoSemantic, "robots_index" | "robots_follow">,
+): WordPressSeoFieldDefinition["booleanEncoding"] | undefined {
+  if (field.type === "boolean") {
+    return { trueValue: true, falseValue: false };
+  }
+  if (field.type !== "string" || !field.enum || field.enum.length !== 2) return undefined;
+  const strings = field.enum.filter((value): value is string => typeof value === "string");
+  if (strings.length !== 2) return undefined;
+
+  const expected = semantic === "robots_index"
+    ? { trueToken: "index", falseToken: "noindex" }
+    : { trueToken: "follow", falseToken: "nofollow" };
+  const byNormalized = new Map(strings.map((value) => [value.trim().toLowerCase(), value] as const));
+  if (
+    byNormalized.size !== 2 ||
+    !byNormalized.has(expected.trueToken) ||
+    !byNormalized.has(expected.falseToken)
+  ) {
+    return undefined;
+  }
+  return {
+    trueValue: byNormalized.get(expected.trueToken)!,
+    falseValue: byNormalized.get(expected.falseToken)!,
+  };
+}
+
+export function encodeSeoValue(
+  field: WordPressSeoFieldDefinition,
+  value: WordPressSeoValue,
+): JsonValue {
+  if (field.valueType === "text") {
+    if (typeof value !== "string") {
+      throw new Error(`WordPress SEO value must be a string: ${field.semantic}`);
+    }
+    return value;
+  }
+  if (typeof value !== "boolean" || !field.booleanEncoding) {
+    throw new Error(`WordPress SEO value must be a boolean: ${field.semantic}`);
+  }
+  return value ? field.booleanEncoding.trueValue : field.booleanEncoding.falseValue;
+}
+
+export function decodeSeoValue(
+  field: WordPressSeoFieldDefinition,
+  value: JsonValue | undefined,
+): WordPressSeoValue | undefined {
+  if (value === undefined) return undefined;
+  if (field.valueType === "text") return typeof value === "string" ? value : undefined;
+  const encoding = field.booleanEncoding;
+  if (!encoding) return undefined;
+  if (JSON.stringify(value) === JSON.stringify(encoding.trueValue)) return true;
+  if (JSON.stringify(value) === JSON.stringify(encoding.falseValue)) return false;
+  return undefined;
+}
+
 export function discoverSeoFields(
   fields: readonly WordPressRestMetaFieldDefinition[],
 ): readonly WordPressSeoFieldDefinition[] {
   const candidates = new Map<WordPressSeoSemantic, WordPressSeoFieldDefinition[]>();
   for (const field of fields) {
-    if (field.type !== "string") continue;
     const alias = SEO_ALIASES[field.key.toLowerCase()];
-    if (!alias) continue;
+    if (alias && field.type === "string") {
+      const candidate: WordPressSeoFieldDefinition = {
+        semantic: alias.semantic,
+        key: field.key,
+        label: field.title?.trim() || alias.label,
+        provider: alias.provider,
+        valueType: "text",
+        ...(field.description?.trim() ? { description: field.description.trim() } : {}),
+      };
+      candidates.set(alias.semantic, [...(candidates.get(alias.semantic) ?? []), candidate]);
+      continue;
+    }
+
+    const robots = ROBOTS_ALIASES[field.key.toLowerCase()];
+    if (!robots) continue;
+    const booleanEncoding = safeBooleanEncoding(field, robots.semantic);
+    if (!booleanEncoding) continue;
     const candidate: WordPressSeoFieldDefinition = {
-      semantic: alias.semantic,
+      semantic: robots.semantic,
       key: field.key,
-      label: field.title?.trim() || alias.label,
-      provider: alias.provider,
+      label: field.title?.trim() || robots.label,
+      provider: "generic-registered-meta",
+      valueType: "boolean",
+      booleanEncoding,
       ...(field.description?.trim() ? { description: field.description.trim() } : {}),
     };
-    candidates.set(alias.semantic, [...(candidates.get(alias.semantic) ?? []), candidate]);
+    candidates.set(robots.semantic, [...(candidates.get(robots.semantic) ?? []), candidate]);
   }
 
   return [...candidates.entries()]
