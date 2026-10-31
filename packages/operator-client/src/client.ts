@@ -83,6 +83,7 @@ import type {
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourceSeoFieldDefinition,
+  SourceSeoFieldQuery,
   SourceSeoValuesBody,
   SourceSeoValuesResult,
   SourceStandardTaxonomyBody,
