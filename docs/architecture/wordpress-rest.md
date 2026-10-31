@@ -164,10 +164,23 @@ The first SEO adapter is deliberately conservative: it derives semantic SEO fiel
 - meta description
 - canonical URL
 - focus keyphrase
+- robots index
+- robots follow
 
-The adapter recognizes a small set of exact generic and compatibility aliases, but an alias is surfaced only when the live WordPress content-type schema exposes that meta key as writable and string-compatible. If multiple writable keys compete for the same semantic role, Blogmaatic omits that semantic field rather than guessing which plugin owns it.
+Text semantics remain string values. Robots semantics are booleans at the Blogmaatic boundary regardless of how the connected WordPress site stores them.
 
-Yoast's official SEO REST endpoint is read-only. Fields such as `yoast_head` and `yoast_head_json` are therefore never presented as editable merely because they appear in WordPress responses. A Yoast-compatible private meta key is writable through this adapter only when the site has separately registered that key for writable core REST meta access.
+A robots control is surfaced only when the live registered-meta schema proves a reversible two-state mapping:
+
+- native WordPress REST boolean meta maps directly to `true` / `false`
+- string meta is accepted only when its enum is exactly `index/noindex` for indexing or `follow/nofollow` for link following
+- enum matching is case-insensitive, but Blogmaatic preserves the exact advertised string values when writing
+- numeric flags, `0/1` strings, yes/no conventions, third-state enums such as `default`, inverse `noindex` plugin fields, arrays, and other plugin-private encodings are not guessed
+
+The adapter recognizes a small set of exact generic and compatibility aliases, but a field is surfaced only when the live WordPress content-type schema proves a safe writable representation. If multiple writable keys compete for the same semantic role, Blogmaatic omits that semantic field rather than guessing which plugin owns it.
+
+Yoast's official SEO REST endpoint is read-only. Fields such as `yoast_head` and `yoast_head_json` are therefore never presented as editable merely because they appear in WordPress responses. Existing Yoast-compatible text meta remains writable only when the site separately registers that key for writable core REST meta access. Blogmaatic does not infer robots behavior from Yoast's private numeric/string conventions.
+
+SEO discovery may receive Publication Group + route context. When it does, the runtime decodes the exact stored destination meta into provider-neutral semantic current values before returning them to Control Room. The browser therefore never needs to know whether a robots boolean is backed by a WordPress boolean or a safe string enum.
 
 SEO values reuse the existing destination-scoped WordPress REST-meta state. There is no second SEO persistence tree:
 
@@ -175,7 +188,7 @@ SEO values reuse the existing destination-scoped WordPress REST-meta state. Ther
 - saves create immutable canonical Publication revisions
 - unrelated managed REST meta is preserved during SEO updates
 - the existing WordPress projection fingerprint and remote drift hash already cover those managed meta values
-- SEO audit events record semantic field names, not the SEO text itself
+- SEO audit events record semantic field names only, never text or boolean values
 
 Control Room renders an SEO panel only when the selected WordPress destination advertises at least one unambiguous writable semantic field. Unsupported or read-only SEO integrations do not produce editable controls.
 
