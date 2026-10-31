@@ -8,7 +8,13 @@ import { deflateSync } from "node:zlib";
 
 import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
-import { WordPressContentService, WordPressRestPublisher, discoverSeoFields } from "../dist/index.js";
+import {
+  WordPressContentService,
+  WordPressRestPublisher,
+  decodeSeoValue,
+  discoverSeoFields,
+  encodeSeoValue,
+} from "../dist/index.js";
 
 function makeServer() {
   const posts = new Map();
@@ -2966,6 +2972,49 @@ test("SEO discovery exposes only unique writable string semantics", () => {
   ]);
   assert.equal(fields.some((field) => field.semantic === "title"), false);
   assert.equal(fields.find((field) => field.semantic === "description").key, "seo_description");
+});
+
+test("SEO robots discovery negotiates booleans and exact safe string enums", () => {
+  const fields = discoverSeoFields([
+    { key: "seo_robots_index", type: "boolean", nullable: false },
+    { key: "seo_robots_follow", type: "string", nullable: false, enum: ["follow", "nofollow"] },
+  ]);
+  const index = fields.find((field) => field.semantic === "robots_index");
+  const follow = fields.find((field) => field.semantic === "robots_follow");
+  assert.equal(index?.valueType, "boolean");
+  assert.equal(follow?.valueType, "boolean");
+  assert.equal(encodeSeoValue(index, true), true);
+  assert.equal(encodeSeoValue(index, false), false);
+  assert.equal(encodeSeoValue(follow, true), "follow");
+  assert.equal(encodeSeoValue(follow, false), "nofollow");
+  assert.equal(decodeSeoValue(index, true), true);
+  assert.equal(decodeSeoValue(index, false), false);
+  assert.equal(decodeSeoValue(follow, "follow"), true);
+  assert.equal(decodeSeoValue(follow, "nofollow"), false);
+});
+
+test("SEO robots discovery fails closed for ambiguous or unsupported encodings", () => {
+  const fields = discoverSeoFields([
+    { key: "seo_robots_index", type: "string", nullable: false, enum: ["index", "noindex", "default"] },
+    { key: "seo_robots_follow", type: "integer", nullable: false, enum: [0, 1] },
+    { key: "_yoast_wpseo_meta-robots-noindex", type: "string", nullable: false, enum: ["0", "1"] },
+    { key: "robots_index", type: "boolean", nullable: false },
+    { key: "_robots_index", type: "boolean", nullable: false },
+  ]);
+  assert.equal(fields.some((field) => field.semantic === "robots_follow"), false);
+  assert.equal(fields.some((field) => field.key === "_yoast_wpseo_meta-robots-noindex"), false);
+  assert.equal(fields.some((field) => field.semantic === "robots_index"), false);
+});
+
+test("SEO robots enum negotiation is case-insensitive but preserves advertised values", () => {
+  const [field] = discoverSeoFields([
+    { key: "robots_follow", type: "string", nullable: false, enum: ["FOLLOW", "NOFOLLOW"] },
+  ]);
+  assert.equal(field.semantic, "robots_follow");
+  assert.equal(encodeSeoValue(field, true), "FOLLOW");
+  assert.equal(encodeSeoValue(field, false), "NOFOLLOW");
+  assert.equal(decodeSeoValue(field, "FOLLOW"), true);
+  assert.equal(decodeSeoValue(field, "NOFOLLOW"), false);
 });
 
 test("SEO discovery recognizes compatible registered Yoast and Rank Math meta without assuming plugin APIs", () => {

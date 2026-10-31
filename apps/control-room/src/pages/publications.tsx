@@ -22,6 +22,7 @@ import type {
   SourceMetaValuesBody,
   SourceSeoFieldDefinition,
   SourceSeoSemantic,
+  SourceSeoValue,
   SourceTaxonomyDefinitionRecord,
   SourceTaxonomyKind,
   SourceTaxonomyRecord,
@@ -2121,12 +2122,8 @@ function SourceSeoPanel({
   const { session } = useConnection();
   const client = session!.client;
   const contentType = explicitContentType ?? wordpressContentType(entry);
-  const canonicalMeta = useMemo(
-    () => canonicalSourceMetaValues(entry, connectionId, groupId, routeId),
-    [connectionId, entry.publication.current.id, groupId, routeId],
-  );
   const [fields, setFields] = useState<readonly SourceSeoFieldDefinition[]>([]);
-  const [values, setValues] = useState<Partial<Record<SourceSeoSemantic, string>>>({});
+  const [values, setValues] = useState<Partial<Record<SourceSeoSemantic, SourceSeoValue>>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -2141,14 +2138,17 @@ function SourceSeoPanel({
     }
     setLoading(true);
     setError(null);
-    void client.listSourceSeoFields(connectionId, contentType)
+    void client.listSourceSeoFields(connectionId, contentType, {
+      publicationId: entry.publication.id,
+      ...(groupId ? { groupId } : {}),
+      ...(routeId ? { routeId } : {}),
+    })
       .then((items) => {
         if (!active) return;
         setFields(items);
-        const next: Partial<Record<SourceSeoSemantic, string>> = {};
+        const next: Partial<Record<SourceSeoSemantic, SourceSeoValue>> = {};
         for (const field of items) {
-          const current = canonicalMeta[field.key];
-          if (typeof current === "string") next[field.semantic] = current;
+          if (field.currentValue !== undefined) next[field.semantic] = field.currentValue;
         }
         setValues(next);
       })
@@ -2159,7 +2159,15 @@ function SourceSeoPanel({
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [canonicalMeta, client, connectionId, contentType]);
+  }, [
+    client,
+    connectionId,
+    contentType,
+    entry.publication.current.id,
+    entry.publication.id,
+    groupId,
+    routeId,
+  ]);
 
   const save = useCallback(async () => {
     if (!contentType || fields.length === 0) return;
@@ -2189,38 +2197,54 @@ function SourceSeoPanel({
       <ErrorBanner error={error} />
       <div className="source-seo-note">
         <strong>Capability-driven, not plugin-assumed.</strong>
-        <span>Only SEO fields explicitly exposed as writable REST meta by this site appear here. Read-only plugin output is never presented as editable.</span>
+        <span>Only SEO fields explicitly exposed as safely writable REST meta by this site appear here. Read-only plugin output and ambiguous robots encodings are never presented as editable.</span>
       </div>
       {loading ? <LoadingBlock /> : (
         <div className="source-seo-grid">
-          {fields.map((field) => (
-            <label className="field" key={field.semantic}>
-              <span>{field.label}</span>
-              {field.semantic === "description" ? (
-                <textarea
-                  value={values[field.semantic] ?? ""}
-                  onChange={(event) => setValues((current) => ({ ...current, [field.semantic]: event.target.value }))}
-                  placeholder="Optional SEO description"
-                  disabled={saving}
-                />
-              ) : (
-                <input
-                  type={field.semantic === "canonical" ? "url" : "text"}
-                  value={values[field.semantic] ?? ""}
-                  onChange={(event) => setValues((current) => ({ ...current, [field.semantic]: event.target.value }))}
-                  placeholder={
-                    field.semantic === "title" ? "Optional SEO title" :
-                      field.semantic === "canonical" ? "https://example.com/canonical-url" :
-                        field.semantic === "focus_keyphrase" ? "Optional focus keyphrase" : ""
-                  }
-                  disabled={saving}
-                />
-              )}
-              <small>
-                {field.description ?? `${field.provider} · REST meta ${field.key}`}
-              </small>
-            </label>
-          ))}
+          {fields.map((field) => {
+            const current = values[field.semantic];
+            return (
+              <label className={field.valueType === "boolean" ? "field source-seo-toggle" : "field"} key={field.semantic}>
+                <span>{field.label}</span>
+                {field.valueType === "boolean" ? (
+                  <span className="source-seo-toggle__control">
+                    <input
+                      type="checkbox"
+                      checked={current === true}
+                      onChange={(event) => setValues((existing) => ({
+                        ...existing,
+                        [field.semantic]: event.target.checked,
+                      }))}
+                      disabled={saving}
+                    />
+                    <span>{current === true ? "Yes" : current === false ? "No" : "Not set"}</span>
+                  </span>
+                ) : field.semantic === "description" ? (
+                  <textarea
+                    value={typeof current === "string" ? current : ""}
+                    onChange={(event) => setValues((existing) => ({ ...existing, [field.semantic]: event.target.value }))}
+                    placeholder="Optional SEO description"
+                    disabled={saving}
+                  />
+                ) : (
+                  <input
+                    type={field.semantic === "canonical" ? "url" : "text"}
+                    value={typeof current === "string" ? current : ""}
+                    onChange={(event) => setValues((existing) => ({ ...existing, [field.semantic]: event.target.value }))}
+                    placeholder={
+                      field.semantic === "title" ? "Optional SEO title" :
+                        field.semantic === "canonical" ? "https://example.com/canonical-url" :
+                          field.semantic === "focus_keyphrase" ? "Optional focus keyphrase" : ""
+                    }
+                    disabled={saving}
+                  />
+                )}
+                <small>
+                  {field.description ?? `${field.provider} · negotiated REST meta`}
+                </small>
+              </label>
+            );
+          })}
           <button className="button button--primary" type="button" onClick={() => void save()} disabled={saving || fields.length === 0}>
             {saving ? "Saving…" : "Save SEO"}
           </button>

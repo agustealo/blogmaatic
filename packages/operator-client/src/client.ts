@@ -83,6 +83,7 @@ import type {
   SourcePublishingStateBody,
   SourcePublishingStateResult,
   SourceSeoFieldDefinition,
+  SourceSeoFieldQuery,
   SourceSeoValuesBody,
   SourceSeoValuesResult,
   SourceStandardTaxonomyBody,
@@ -330,9 +331,13 @@ export class OperatorClient {
   async listSourceSeoFields(
     connectionId: string,
     contentType: string,
+    query: SourceSeoFieldQuery = {},
   ): Promise<readonly SourceSeoFieldDefinition[]> {
     const response = await this.#request<{ readonly items: readonly SourceSeoFieldDefinition[] }>(
-      pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/seo-fields`, { contentType }),
+      pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/seo-fields`, {
+        contentType,
+        ...query,
+      }),
     );
     return response.items;
   }

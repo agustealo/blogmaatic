@@ -2155,6 +2155,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
                         values: {
                           custom_score: 9,
                           seo_title: "Old SEO title",
+                          seo_robots_index: false,
+                          seo_robots_follow: "nofollow",
                         },
                       },
                     },
@@ -2177,6 +2179,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
     { key: "seo_title", type: "string", nullable: false, title: "Search title" },
     { key: "seo_description", type: "string", nullable: false },
     { key: "seo_canonical_url", type: "string", nullable: true },
+    { key: "seo_robots_index", type: "boolean", nullable: false },
+    { key: "seo_robots_follow", type: "string", nullable: false, enum: ["follow", "nofollow"] },
   ];
   const manager = new WordPressSourceManager({
     content: {
@@ -2225,13 +2229,24 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
 
   const discovered = await manager.listSeoFields("wp-main", "posts");
   assert.deepEqual(
-    discovered.map((field) => [field.semantic, field.key]),
-    [
-      ["description", "seo_description"],
-      ["title", "seo_title"],
-      ["canonical", "seo_canonical_url"],
-    ].sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
+    Object.fromEntries(discovered.map((field) => [field.semantic, field.key])),
+    {
+      canonical: "seo_canonical_url",
+      description: "seo_description",
+      robots_follow: "seo_robots_follow",
+      robots_index: "seo_robots_index",
+      title: "seo_title",
+    },
   );
+
+  const contextual = await manager.listSeoFields("wp-main", "posts", {
+    publicationId: "publication-seo",
+    groupId: "group-main",
+    routeId: "wordpress",
+  });
+  assert.equal(contextual.find((field) => field.semantic === "robots_index").currentValue, false);
+  assert.equal(contextual.find((field) => field.semantic === "robots_follow").currentValue, false);
+  assert.equal(contextual.find((field) => field.semantic === "title").currentValue, "Old SEO title");
 
   await assert.rejects(
     () => manager.setSeoValues("wp-main", {
@@ -2256,6 +2271,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
       title: "New SEO title",
       description: "A useful description",
       canonical: "https://example.test/articles/seo-proof",
+      robots_index: true,
+      robots_follow: false,
     },
   });
   assert.equal(result.publication.version, 5);
@@ -2263,6 +2280,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
     title: "New SEO title",
     description: "A useful description",
     canonical: "https://example.test/articles/seo-proof",
+    robots_index: true,
+    robots_follow: false,
   });
   assert.deepEqual(persisted, {
     extensionId: "blogmaatic.wordpress-rest",
@@ -2275,8 +2294,131 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
       seo_title: "New SEO title",
       seo_description: "A useful description",
       seo_canonical_url: "https://example.test/articles/seo-proof",
+      seo_robots_index: true,
+      seo_robots_follow: "nofollow",
     },
   });
+});
+
+test("semantic SEO robots remain isolated across WordPress destinations with the same route id", async () => {
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const publication = {
+    id: "publication-two-site-seo",
+    createdAt: "2026-10-31T18:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-10-31T18:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Two-site SEO",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+          destinationOverrides: {
+            schemaVersion: 1,
+            groups: {
+              "group-a": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-a",
+                    channel: "posts",
+                    meta: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      contentType: "posts",
+                      values: { seo_robots_index: true },
+                    },
+                  },
+                },
+              },
+              "group-b": {
+                routes: {
+                  wordpress: {
+                    extensionId: "blogmaatic.wordpress-rest",
+                    connectionId: "wp-b",
+                    channel: "posts",
+                    meta: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      contentType: "posts",
+                      values: { seo_robots_index: false },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const manager = new WordPressSourceManager({
+    content: {
+      async listRestMetaFields() {
+        return [{ key: "seo_robots_index", type: "boolean", nullable: false }];
+      },
+    },
+    publisher: {},
+    publicationGroups: {
+      async get(groupId) {
+        if (groupId === "group-a") {
+          return { enabled: true, group: { id: groupId, name: "A", policySetId: "allow", routes: [routeFor("wp-a")] } };
+        }
+        if (groupId === "group-b") {
+          return { enabled: true, group: { id: groupId, name: "B", policySetId: "allow", routes: [routeFor("wp-b")] } };
+        }
+        return undefined;
+      },
+    },
+    publications: {
+      async get(id) {
+        return id === publication.id
+          ? { publication, version: 3, recordedAt: publication.createdAt, updatedAt: publication.createdAt }
+          : undefined;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const a = await manager.listSeoFields("wp-a", "posts", {
+    publicationId: publication.id,
+    groupId: "group-a",
+    routeId: "wordpress",
+  });
+  const b = await manager.listSeoFields("wp-b", "posts", {
+    publicationId: publication.id,
+    groupId: "group-b",
+    routeId: "wordpress",
+  });
+  assert.equal(a.find((field) => field.semantic === "robots_index").currentValue, true);
+  assert.equal(b.find((field) => field.semantic === "robots_index").currentValue, false);
+
+  await assert.rejects(
+    () => manager.listSeoFields("wp-a", "posts", {
+      publicationId: publication.id,
+      groupId: "group-b",
+      routeId: "wordpress",
+    }),
+    /does not match the requested connection/,
+  );
 });
 
 test("semantic SEO refuses fields that are not uniquely writable on the connected site", async () => {

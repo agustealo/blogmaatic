@@ -498,13 +498,29 @@ export interface SourceMetaValuesResult {
   readonly values: Readonly<Record<string, JsonValue>>;
 }
 
-export type SourceSeoSemantic = "title" | "description" | "canonical" | "focus_keyphrase";
+export type SourceSeoSemantic =
+  | "title"
+  | "description"
+  | "canonical"
+  | "focus_keyphrase"
+  | "robots_index"
+  | "robots_follow";
+
+export type SourceSeoValue = string | boolean;
+
+export interface SourceSeoFieldQuery {
+  readonly publicationId?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
+}
 
 export interface SourceSeoFieldDefinition {
   readonly semantic: SourceSeoSemantic;
   readonly key: string;
   readonly label: string;
   readonly provider: string;
+  readonly valueType: "text" | "boolean";
+  readonly currentValue?: SourceSeoValue;
   readonly description?: string;
   readonly metadata: Readonly<Record<string, JsonValue>>;
 }
@@ -513,7 +529,7 @@ export interface SourceSeoValuesBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
   readonly contentType: string;
-  readonly values: Partial<Readonly<Record<SourceSeoSemantic, string>>>;
+  readonly values: Partial<Readonly<Record<SourceSeoSemantic, SourceSeoValue>>>;
   readonly groupId?: string;
   readonly routeId?: string;
 }
@@ -521,7 +537,7 @@ export interface SourceSeoValuesBody {
 export interface SourceSeoValuesResult {
   readonly publication: PublicationWorkspaceEntry;
   readonly contentType: string;
-  readonly values: Partial<Readonly<Record<SourceSeoSemantic, string>>>;
+  readonly values: Partial<Readonly<Record<SourceSeoSemantic, SourceSeoValue>>>;
 }
 
 export interface SourceTaxonomyPage {
@@ -558,7 +574,11 @@ export interface OperatorSourceContentManager {
   setStandardTaxonomy(connectionId: string, body: SourceStandardTaxonomyBody): Promise<SourceStandardTaxonomyResult>;
   listMetaFields(connectionId: string, contentType: string): Promise<readonly SourceMetaFieldDefinition[]>;
   setMetaValues(connectionId: string, body: SourceMetaValuesBody): Promise<SourceMetaValuesResult>;
-  listSeoFields(connectionId: string, contentType: string): Promise<readonly SourceSeoFieldDefinition[]>;
+  listSeoFields(
+    connectionId: string,
+    contentType: string,
+    query?: SourceSeoFieldQuery,
+  ): Promise<readonly SourceSeoFieldDefinition[]>;
   setSeoValues(connectionId: string, body: SourceSeoValuesBody): Promise<SourceSeoValuesResult>;
   import(connectionId: string, remoteId: string, body: SourceContentImportBody): Promise<SourceContentImportResult>;
   trash(connectionId: string, remoteId: string, contentType?: string): Promise<SourceContentRecord>;
