@@ -2155,6 +2155,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
                         values: {
                           custom_score: 9,
                           seo_title: "Old SEO title",
+                          seo_robots_index: false,
+                          seo_robots_follow: "nofollow",
                         },
                       },
                     },
@@ -2177,6 +2179,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
     { key: "seo_title", type: "string", nullable: false, title: "Search title" },
     { key: "seo_description", type: "string", nullable: false },
     { key: "seo_canonical_url", type: "string", nullable: true },
+    { key: "seo_robots_index", type: "boolean", nullable: false },
+    { key: "seo_robots_follow", type: "string", nullable: false, enum: ["follow", "nofollow"] },
   ];
   const manager = new WordPressSourceManager({
     content: {
@@ -2230,8 +2234,19 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
       ["description", "seo_description"],
       ["title", "seo_title"],
       ["canonical", "seo_canonical_url"],
+      ["robots_index", "seo_robots_index"],
+      ["robots_follow", "seo_robots_follow"],
     ].sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
   );
+
+  const contextual = await manager.listSeoFields("wp-main", "posts", {
+    publicationId: "publication-seo",
+    groupId: "group-main",
+    routeId: "wordpress",
+  });
+  assert.equal(contextual.find((field) => field.semantic === "robots_index").currentValue, false);
+  assert.equal(contextual.find((field) => field.semantic === "robots_follow").currentValue, false);
+  assert.equal(contextual.find((field) => field.semantic === "title").currentValue, "Old SEO title");
 
   await assert.rejects(
     () => manager.setSeoValues("wp-main", {
@@ -2256,6 +2271,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
       title: "New SEO title",
       description: "A useful description",
       canonical: "https://example.test/articles/seo-proof",
+      robots_index: true,
+      robots_follow: false,
     },
   });
   assert.equal(result.publication.version, 5);
@@ -2263,6 +2280,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
     title: "New SEO title",
     description: "A useful description",
     canonical: "https://example.test/articles/seo-proof",
+    robots_index: true,
+    robots_follow: false,
   });
   assert.deepEqual(persisted, {
     extensionId: "blogmaatic.wordpress-rest",
@@ -2275,6 +2294,8 @@ test("semantic SEO discovery and updates reuse destination REST meta without era
       seo_title: "New SEO title",
       seo_description: "A useful description",
       seo_canonical_url: "https://example.test/articles/seo-proof",
+      seo_robots_index: true,
+      seo_robots_follow: "nofollow",
     },
   });
 });
