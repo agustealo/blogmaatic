@@ -250,14 +250,22 @@ function parseSeoValuesBody(body: unknown): SourceSeoValuesBody {
   if (values === null || typeof values !== "object" || Array.isArray(values)) {
     throw new OperatorRequestError("values must be an object");
   }
-  const allowedSemantics = new Set(["title", "description", "canonical", "focus_keyphrase"]);
+  const textSemantics = new Set(["title", "description", "canonical", "focus_keyphrase"]);
+  const booleanSemantics = new Set(["robots_index", "robots_follow"]);
   for (const [semantic, value] of Object.entries(values as Record<string, unknown>)) {
-    if (!allowedSemantics.has(semantic)) {
-      throw new OperatorRequestError(`unsupported SEO field: ${semantic}`);
+    if (textSemantics.has(semantic)) {
+      if (typeof value !== "string") {
+        throw new OperatorRequestError(`SEO value must be a string: ${semantic}`);
+      }
+      continue;
     }
-    if (typeof value !== "string") {
-      throw new OperatorRequestError(`SEO value must be a string: ${semantic}`);
+    if (booleanSemantics.has(semantic)) {
+      if (typeof value !== "boolean") {
+        throw new OperatorRequestError(`SEO value must be a boolean: ${semantic}`);
+      }
+      continue;
     }
+    throw new OperatorRequestError(`unsupported SEO field: ${semantic}`);
   }
   const groupId = optionalString(input, "groupId");
   const routeId = optionalString(input, "routeId");
@@ -1049,12 +1057,27 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
   app.get("/v1/connections/:connectionId/seo-fields", async (request) => {
     await authorize(options, request, "source-content:read");
     const connectionId = requirePathString(params(request).connectionId, "connectionId");
-    const queryValue = query(request).contentType;
-    if (typeof queryValue !== "string" || !queryValue.trim()) {
-      throw new OperatorRequestError("contentType is required");
+    const input = query(request);
+    const allowed = new Set(["contentType", "publicationId", "groupId", "routeId"]);
+    const unknown = Object.keys(input).find((key) => !allowed.has(key));
+    if (unknown) throw new OperatorRequestError(`query contains unknown field: ${unknown}`);
+    const contentType = optionalContentType(input.contentType);
+    if (!contentType) throw new OperatorRequestError("contentType is required");
+    const publicationId = optionalString(input, "publicationId");
+    const groupId = optionalString(input, "groupId");
+    const routeId = optionalString(input, "routeId");
+    if ((groupId === undefined) !== (routeId === undefined)) {
+      throw new OperatorRequestError("groupId and routeId must be provided together");
+    }
+    if ((groupId || routeId) && !publicationId) {
+      throw new OperatorRequestError("publicationId is required with groupId and routeId");
     }
     return {
-      items: await domainCall(() => manager(options).listSeoFields(connectionId, queryValue.trim())),
+      items: await domainCall(() => manager(options).listSeoFields(connectionId, contentType, {
+        ...(publicationId ? { publicationId } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
+      })),
     };
   });
 
