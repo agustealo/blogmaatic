@@ -1361,6 +1361,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
 
     const blockers = new Set<string>([
       "permanent_deletion_not_enabled",
+      "remote_media_ownership_unverified",
       "external_and_private_plugin_media_reuse_unverifiable",
       "non_transactional_cross_system_inspection",
     ]);
