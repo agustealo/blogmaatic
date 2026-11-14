@@ -2942,6 +2942,7 @@ test("WordPress deletion preflight inventories current, historical, scheduled an
   const pages = (items) => ({ items, nextCursor: undefined });
   const manager = new WordPressSourceManager({
     content: {
+      defaultContentType() { return "posts"; },
       async getMedia(connectionId, remoteId) {
         mediaReads++;
         assert.equal(connectionId, "wp-a");
@@ -3021,6 +3022,7 @@ test("WordPress media deletion preflight fails closed on missing media and incom
   let deleteCalls = 0;
   const manager = new WordPressSourceManager({
     content: {
+      defaultContentType() { return "posts"; },
       async getMedia() { throw new Error("WordPress offline"); },
       async listContentTypes() { throw new Error("Discovery unavailable"); },
       async deleteMediaPermanent() { deleteCalls++; },
