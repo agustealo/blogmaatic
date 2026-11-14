@@ -292,6 +292,15 @@ async function navigate(origin, path, readyText) {
   await new Promise((resolveWait) => setTimeout(resolveWait, 350));
 }
 
+async function waitForSeededSchedule(schedule) {
+  await waitForExpression(`(() => {
+    const title = ${JSON.stringify(schedule.publication.current.content.title)};
+    const localDate = ${JSON.stringify(schedule.localDate)};
+    return [...document.querySelectorAll(".data-table--schedules .data-table__row")]
+      .some((row) => row.textContent?.includes(title) && row.textContent?.includes(localDate));
+  })()`);
+}
+
 async function assertMobileLayout() {
   await waitForExpression(`(() => {
     const nav = document.querySelector(".mobile-nav");
@@ -540,7 +549,7 @@ try {
   await capture("10-publications");
 
   await navigate(origin, "/schedules", "Calendar");
-  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await waitForSeededSchedule(state.schedule);
   await capture("11-schedules");
 
   await setViewport(mobileViewport);
@@ -554,7 +563,7 @@ try {
 
   await navigate(origin, "/schedules", "Calendar");
   await assertMobileLayout();
-  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await waitForSeededSchedule(state.schedule);
   await capture("14-mobile-schedules");
 
   const manifest = {
