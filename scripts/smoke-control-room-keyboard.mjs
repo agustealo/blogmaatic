@@ -87,7 +87,7 @@ async function startBrowser() {
   child.once("exit", () => { state.exited = true; });
 
   const activePortFile = join(chromeProfile, "DevToolsActivePort");
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     if (state.exited) throw new Error(`Browser exited before DevTools was ready:\n${state.output}`);
     try {
