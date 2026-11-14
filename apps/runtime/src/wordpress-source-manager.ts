@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import type { ControlPlaneStore } from "@blogmaatic/control-plane";
+
 import type {
   DistributionHistoryStore,
   JsonValue,
@@ -33,6 +35,8 @@ import type {
   SourceAssetAttachResult,
   SourceAssetDetachBody,
   SourceAssetDetachResult,
+  SourceAssetDeletionPreflight,
+  SourceAssetReferenceRecord,
   SourceAssetMetadataUpdateBody,
   SourceAssetMetadataUpdateResult,
   SourceAssetPage,
@@ -97,6 +101,7 @@ export interface WordPressSourceManagerOptions {
   readonly publications: PublicationWorkspaceManager;
   readonly projectionState: ProjectionStateStore;
   readonly distributionHistory: DistributionHistoryStore;
+  readonly schedules?: Pick<ControlPlaneStore, "listSchedules">;
   readonly now?: () => string;
   readonly id?: () => string;
 }
@@ -459,6 +464,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   readonly #publications: PublicationWorkspaceManager;
   readonly #projectionState: ProjectionStateStore;
   readonly #distributionHistory: DistributionHistoryStore;
+  readonly #schedules?: Pick<ControlPlaneStore, "listSchedules">;
   readonly #now: () => string;
   readonly #id: () => string;
 
@@ -469,6 +475,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     this.#publications = options.publications;
     this.#projectionState = options.projectionState;
     this.#distributionHistory = options.distributionHistory;
+    this.#schedules = options.schedules;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#id = options.id ?? randomUUID;
   }
@@ -1338,6 +1345,177 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       page: page.page,
       limit: page.perPage,
       hasMore: page.hasMore,
+    };
+  }
+
+  async preflightAssetDeletion(connectionId: string, remoteId: string): Promise<SourceAssetDeletionPreflight> {
+    const id = Number(remoteId);
+    if (!Number.isSafeInteger(id) || id < 1 || String(id) !== remoteId) {
+      throw new Error("WordPress media id must be a canonical positive integer");
+    }
+
+    const blockers = new Set<string>([
+      "permanent_deletion_not_enabled",
+      "external_and_plugin_media_reuse_unverifiable",
+      "historical_delivery_and_inflight_run_reuse_unverifiable",
+    ]);
+    const references: SourceAssetReferenceRecord[] = [];
+    const seen = new Set<string>();
+    const inspected = {
+      publicationHeads: 0,
+      publicationVersions: 0,
+      schedules: 0,
+      wordpressContentTypes: 0,
+      wordpressPosts: 0,
+    };
+    const add = (reference: SourceAssetReferenceRecord) => {
+      const key = JSON.stringify(reference);
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (references.length < 1000) references.push(reference);
+      else blockers.add("reference_report_truncated");
+    };
+    let media: WordPressMediaView | undefined;
+    try {
+      media = await this.#content.getMedia(connectionId, remoteId);
+      if (media.id !== id) {
+        media = undefined;
+        blockers.add("remote_media_identity_mismatch");
+      }
+    } catch {
+      blockers.add("remote_media_unavailable");
+    }
+
+    const matchesPublication = (publication: Publication): boolean => {
+      const content = publication.current.content;
+      const legacySource = publication.provenance.extensionId === WORDPRESS_REST_EXTENSION_ID &&
+        publication.provenance.connectionId === connectionId;
+      const matchAsset = content.assets.some((asset) => {
+        const attr = asset.attributes;
+        const explicitSource = attr?.sourceConnectionId === connectionId &&
+          (attr.sourceExtensionId === undefined || attr.sourceExtensionId === WORDPRESS_REST_EXTENSION_ID);
+        const matchedId = attr?.wordpressMediaId === id &&
+          (attr.sourceRemoteId === undefined || attr.sourceRemoteId === remoteId) &&
+          (explicitSource || (attr.sourceConnectionId === undefined && legacySource));
+        return matchedId || (media !== undefined && asset.source === media.sourceUrl);
+      });
+      if (matchAsset) return true;
+      const text = JSON.stringify({ blocks: content.blocks, attributes: content.attributes });
+      return media !== undefined && Boolean(media.sourceUrl) && text.includes(media.sourceUrl);
+    };
+
+    // Inspect all present and historical workspace revisions, not only current heads.
+    try {
+      let cursor: string | undefined;
+      for (let page = 0; page < 500; page += 1) {
+        const batch = await this.#publications.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+        inspected.publicationHeads += batch.items.length;
+        for (const head of batch.items) {
+          if (matchesPublication(head.publication)) add({
+            kind: "publication_current",
+            publicationId: head.publication.id,
+            revisionId: head.publication.current.id,
+          });
+          let historyCursor: string | undefined;
+          let finished = false;
+          for (let versionPage = 0; versionPage < 500; versionPage += 1) {
+            const versions = await this.#publications.listVersions(head.publication.id, {
+              limit: 100, ...(historyCursor ? { cursor: historyCursor } : {}),
+            });
+            inspected.publicationVersions += versions.items.length;
+            for (const entry of versions.items) {
+              if (entry.version === head.version) continue;
+              if (matchesPublication(entry.publication)) add({
+                kind: "publication_history",
+                publicationId: entry.publication.id,
+                revisionId: entry.publication.current.id,
+              });
+            }
+            if (!versions.nextCursor) { finished = true; break; }
+            if (versions.nextCursor === historyCursor) throw new Error("Non-advancing version cursor");
+            historyCursor = versions.nextCursor;
+          }
+          if (!finished) blockers.add("canonical_version_scan_truncated");
+        }
+        if (!batch.nextCursor) { cursor = undefined; break; }
+        if (batch.nextCursor === cursor) throw new Error("Non-advancing publication cursor");
+        cursor = batch.nextCursor;
+      }
+      if (cursor) blockers.add("canonical_publication_scan_truncated");
+    } catch {
+      blockers.add("canonical_publication_scan_incomplete");
+    }
+
+    // Schedule payloads are frozen and might outlive the matching current revision.
+    if (!this.#schedules) {
+      blockers.add("schedule_scan_unavailable");
+    } else {
+      try {
+        let cursor: string | undefined;
+        for (let page = 0; page < 500; page += 1) {
+          const batch = await this.#schedules.listSchedules({ limit: 100, ...(cursor ? { cursor } : {}) });
+          inspected.schedules += batch.items.length;
+          for (const schedule of batch.items) {
+            if (matchesPublication(schedule.publication)) add({
+              kind: "schedule_snapshot",
+              publicationId: schedule.publication.id,
+              revisionId: schedule.publication.current.id,
+              scheduleId: schedule.id,
+            });
+          }
+          if (!batch.nextCursor) { cursor = undefined; break; }
+          if (batch.nextCursor === cursor) throw new Error("Non-advancing schedule cursor");
+          cursor = batch.nextCursor;
+        }
+        if (cursor) blockers.add("schedule_scan_truncated");
+      } catch {
+        blockers.add("schedule_scan_incomplete");
+      }
+    }
+
+    // A best-effort WordPress read is evidence, never proof that all plugin and
+    // embedded references have been found. Even a completed scan cannot authorize DELETE.
+    try {
+      const types = await this.#content.listContentTypes(connectionId);
+      inspected.wordpressContentTypes = types.length;
+      for (const type of types) {
+        let finished = false;
+        try {
+          for (let page = 1; page <= 20; page += 1) {
+            const batch = await this.#content.list(connectionId, {
+              contentType: type.restBase, page, perPage: 100,
+            });
+            inspected.wordpressPosts += batch.items.length;
+            for (const post of batch.items) {
+              if (post.featuredMediaId === id) add({
+                kind: "wordpress_featured", remotePostId: String(post.id), contentType: type.restBase,
+              });
+              if (media && post.contentHtml.includes(media.sourceUrl)) add({
+                kind: "wordpress_content", remotePostId: String(post.id), contentType: type.restBase,
+              });
+            }
+            if (!batch.hasMore) { finished = true; break; }
+          }
+        } catch {
+          blockers.add("wordpress_post_scan_incomplete");
+        }
+        if (!finished) blockers.add("wordpress_post_scan_truncated_or_incomplete");
+      }
+    } catch {
+      blockers.add("wordpress_content_type_scan_incomplete");
+    }
+    if (references.length) blockers.add("known_media_references_exist");
+
+    return {
+      connectionId,
+      remoteId,
+      disposition: "blocked",
+      canDelete: false,
+      wordpressMediaRetained: true,
+      ...(media ? { media: sourceAssetRecord(connectionId, media) } : {}),
+      references,
+      inspected,
+      blockers: [...blockers].sort(),
     };
   }
 
