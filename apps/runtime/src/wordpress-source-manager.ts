@@ -1356,23 +1356,25 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     if (!Number.isSafeInteger(id) || id < 1 || String(id) !== remoteId) {
       throw new Error("WordPress media id must be a canonical positive integer");
     }
-    // Reuse the authenticated active-connection gate before exposing canonical references.
+    // This validates the active connection *before* any canonical evidence can be read.
     this.#content.defaultContentType(connectionId);
 
     const blockers = new Set<string>([
       "permanent_deletion_not_enabled",
-      "external_and_plugin_media_reuse_unverifiable",
-      "historical_delivery_and_inflight_run_reuse_unverifiable",
+      "external_and_private_plugin_media_reuse_unverifiable",
+      "non_transactional_cross_system_inspection",
     ]);
-    const references: SourceAssetReferenceRecord[] = [];
-    const seen = new Set<string>();
     const inspected = {
       publicationHeads: 0,
       publicationVersions: 0,
       schedules: 0,
+      automationRuns: 0,
+      deliveryHistory: 0,
       wordpressContentTypes: 0,
       wordpressPosts: 0,
     };
+    const references: SourceAssetReferenceRecord[] = [];
+    const seen = new Set<string>();
     const add = (reference: SourceAssetReferenceRecord) => {
       const key = JSON.stringify(reference);
       if (seen.has(key)) return;
@@ -1380,79 +1382,122 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       if (references.length < 1000) references.push(reference);
       else blockers.add("reference_report_truncated");
     };
+    let scanChanged = false;
     let media: WordPressMediaView | undefined;
     try {
-      media = await this.#content.getMedia(connectionId, remoteId);
-      if (media.id !== id) {
-        media = undefined;
-        blockers.add("remote_media_identity_mismatch");
-      }
+      const found = await this.#content.getMedia(connectionId, remoteId);
+      if (found.id === id && found.sourceUrl.trim()) media = found;
+      else blockers.add("remote_media_identity_mismatch");
     } catch {
       blockers.add("remote_media_unavailable");
     }
-
     const matchesPublication = (publication: Publication): boolean => {
       const content = publication.current.content;
       const legacySource = publication.provenance.extensionId === WORDPRESS_REST_EXTENSION_ID &&
         publication.provenance.connectionId === connectionId;
-      const matchAsset = content.assets.some((asset) => {
+      if (content.assets.some((asset) => {
         const attr = asset.attributes;
         const explicitSource = attr?.sourceConnectionId === connectionId &&
           (attr.sourceExtensionId === undefined || attr.sourceExtensionId === WORDPRESS_REST_EXTENSION_ID);
-        const matchedId = attr?.wordpressMediaId === id &&
-          (attr.sourceRemoteId === undefined || attr.sourceRemoteId === remoteId) &&
-          (explicitSource || (attr.sourceConnectionId === undefined && legacySource));
-        return matchedId || (media !== undefined && asset.source === media.sourceUrl);
-      });
-      if (matchAsset) return true;
-      const text = JSON.stringify({ blocks: content.blocks, attributes: content.attributes });
-      return media !== undefined && Boolean(media.sourceUrl) && text.includes(media.sourceUrl);
+        const sameMedia = attr?.wordpressMediaId === id &&
+          (attr.sourceRemoteId === undefined || attr.sourceRemoteId === remoteId);
+        return (sameMedia && (explicitSource || (attr.sourceConnectionId === undefined && legacySource))) ||
+          (media !== undefined && asset.source === media.sourceUrl);
+      })) return true;
+      const referenced = JSON.stringify({ blocks: content.blocks, attributes: content.attributes });
+      return (media !== undefined && referenced.includes(media.sourceUrl)) ||
+        referenced.includes(JSON.stringify("wordpress-media-" + connectionId + "-" + remoteId)) ||
+        (legacySource && referenced.includes(JSON.stringify("wordpress-media-" + remoteId)));
     };
+    const matchesDestination = (destination: { readonly extensionId: string; readonly connectionId: string }): boolean =>
+      destination.extensionId === WORDPRESS_REST_EXTENSION_ID && destination.connectionId === connectionId;
+    const belongsToDestination = (groups: readonly { readonly routes: readonly PublicationRoute[] }[]): boolean =>
+      groups.some((group) => group.routes.some((route) => matchesDestination(route.destination)));
 
-    // Inspect all present and historical workspace revisions, not only current heads.
-    // Shared request budget prevents one publication with huge history from starving the API.
+    // Every canonical head and immutable version is inspected. A historical
+    // delivery can name an earlier revision, so correlate those identities
+    // rather than relying on current publication state.
+    const headVersions = new Map<string, number>();
     let canonicalRequests = 0;
+    let deliveryRequests = 0;
     try {
       let cursor: string | undefined;
       for (let page = 0; page < 500; page += 1) {
-        if (canonicalRequests >= 300) {
-          blockers.add("canonical_publication_scan_budget_exhausted");
-          break;
-        }
+        if (canonicalRequests >= 300) { blockers.add("canonical_publication_scan_budget_exhausted"); break; }
         canonicalRequests += 1;
         const batch = await this.#publications.list({ limit: 100, ...(cursor ? { cursor } : {}) });
         inspected.publicationHeads += batch.items.length;
         for (const head of batch.items) {
-          if (matchesPublication(head.publication)) add({
-            kind: "publication_current",
-            publicationId: head.publication.id,
+          headVersions.set(head.publication.id, head.version);
+          const matchesByRevision = new Map<string, boolean>();
+          matchesByRevision.set(head.publication.current.id, matchesPublication(head.publication));
+          if (matchesByRevision.get(head.publication.current.id)) add({
+            kind: "publication_current", publicationId: head.publication.id,
             revisionId: head.publication.current.id,
           });
+
           let historyCursor: string | undefined;
-          let finished = false;
+          let versionsFinished = false;
           for (let versionPage = 0; versionPage < 500; versionPage += 1) {
-            if (canonicalRequests >= 300) {
-              blockers.add("canonical_version_scan_budget_exhausted");
-              break;
-            }
+            if (canonicalRequests >= 300) { blockers.add("canonical_version_scan_budget_exhausted"); break; }
             canonicalRequests += 1;
             const versions = await this.#publications.listVersions(head.publication.id, {
               limit: 100, ...(historyCursor ? { cursor: historyCursor } : {}),
             });
             inspected.publicationVersions += versions.items.length;
             for (const entry of versions.items) {
-              if (entry.version === head.version) continue;
-              if (matchesPublication(entry.publication)) add({
-                kind: "publication_history",
-                publicationId: entry.publication.id,
+              const matched = matchesPublication(entry.publication);
+              matchesByRevision.set(entry.publication.current.id, matched);
+              if (entry.version !== head.version && matched) add({
+                kind: "publication_history", publicationId: entry.publication.id,
                 revisionId: entry.publication.current.id,
               });
             }
-            if (!versions.nextCursor) { finished = true; break; }
+            if (!versions.nextCursor) { versionsFinished = true; break; }
             if (versions.nextCursor === historyCursor) throw new Error("Non-advancing version cursor");
             historyCursor = versions.nextCursor;
           }
-          if (!finished) blockers.add("canonical_version_scan_truncated");
+          if (!versionsFinished) blockers.add("canonical_version_scan_truncated");
+
+          if (typeof this.#distributionHistory.list !== "function") {
+            blockers.add("delivery_history_scan_unavailable");
+          } else {
+            try {
+              let historyPageCursor: string | undefined;
+              let deliveriesFinished = false;
+              for (let deliveryPage = 0; deliveryPage < 100; deliveryPage += 1) {
+                if (deliveryRequests >= 200) { blockers.add("delivery_history_scan_budget_exhausted"); break; }
+                deliveryRequests += 1;
+                const deliveries = await this.#distributionHistory.list(head.publication.id, {
+                  limit: 100, ...(historyPageCursor ? { cursor: historyPageCursor } : {}),
+                });
+                inspected.deliveryHistory += deliveries.items.length;
+                for (const delivery of deliveries.items) {
+                  if (!matchesDestination(delivery.destination)) continue;
+                  const matched = matchesByRevision.get(delivery.revisionId);
+                  if (matched === undefined) {
+                    blockers.add("delivery_revision_unresolved");
+                  } else if (matched) {
+                    add({
+                      kind: "delivery_history", publicationId: delivery.publicationId,
+                      revisionId: delivery.revisionId, deliveryId: delivery.id,
+                    });
+                  } else if (media?.sourceUrl && JSON.stringify(delivery.receipt.evidence ?? {}).includes(media.sourceUrl)) {
+                    add({
+                      kind: "delivery_history", publicationId: delivery.publicationId,
+                      revisionId: delivery.revisionId, deliveryId: delivery.id,
+                    });
+                  }
+                }
+                if (!deliveries.nextCursor) { deliveriesFinished = true; break; }
+                if (deliveries.nextCursor === historyPageCursor) throw new Error("Non-advancing delivery cursor");
+                historyPageCursor = deliveries.nextCursor;
+              }
+              if (!deliveriesFinished) blockers.add("delivery_history_scan_truncated");
+            } catch {
+              blockers.add("delivery_history_scan_incomplete");
+            }
+          }
         }
         if (!batch.nextCursor) { cursor = undefined; break; }
         if (batch.nextCursor === cursor) throw new Error("Non-advancing publication cursor");
@@ -1463,21 +1508,22 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       blockers.add("canonical_publication_scan_incomplete");
     }
 
-    // Schedule payloads are frozen and might outlive the matching current revision.
+    const scheduleVersions = new Map<string, string>();
     if (!this.#schedules) {
       blockers.add("schedule_scan_unavailable");
     } else {
       try {
         let cursor: string | undefined;
-        for (let page = 0; page < 500; page += 1) {
-          const batch = await this.#schedules.listSchedules({ limit: 100, ...(cursor ? { cursor } : {}) });
+        for (let page = 0; page < 100; page += 1) {
+          const batch = await this.#schedules.listSchedules({
+            limit: 100, ...(cursor ? { cursor } : {}),
+          });
           inspected.schedules += batch.items.length;
           for (const schedule of batch.items) {
-            if (matchesPublication(schedule.publication)) add({
-              kind: "schedule_snapshot",
-              publicationId: schedule.publication.id,
-              revisionId: schedule.publication.current.id,
-              scheduleId: schedule.id,
+            scheduleVersions.set(schedule.id, schedule.updatedAt);
+            if (matchesPublication(schedule.publication) && belongsToDestination(schedule.groups)) add({
+              kind: "schedule_snapshot", publicationId: schedule.publication.id,
+              revisionId: schedule.publication.current.id, scheduleId: schedule.id,
             });
           }
           if (!batch.nextCursor) { cursor = undefined; break; }
@@ -1490,8 +1536,40 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       }
     }
 
-    // A best-effort WordPress read is evidence, never proof that all plugin and
-    // embedded references have been found. Even a completed scan cannot authorize DELETE.
+    // Control Plane runs persist frozen publication/group inputs even after
+    // completion, and may contain an earlier media reference no longer in the head.
+    if (!this.#runs) {
+      blockers.add("automation_run_scan_unavailable");
+    } else {
+      try {
+        let cursor: string | undefined;
+        for (let page = 0; page < 100; page += 1) {
+          const batch = await this.#runs.listRuns({
+            limit: 100, ...(cursor ? { cursor } : {}),
+          });
+          inspected.automationRuns += batch.items.length;
+          for (const run of batch.items) {
+            if (matchesPublication(run.request.publication) &&
+                belongsToDestination(run.request.groups)) {
+              add({
+                kind: "automation_run", publicationId: run.request.publication.id,
+                revisionId: run.request.publication.current.id, runId: run.runId,
+              });
+            }
+          }
+          if (!batch.nextCursor) { cursor = undefined; break; }
+          if (batch.nextCursor === cursor) throw new Error("Non-advancing run cursor");
+          cursor = batch.nextCursor;
+        }
+        if (cursor) blockers.add("automation_run_scan_truncated");
+      } catch {
+        blockers.add("automation_run_scan_incomplete");
+      }
+    }
+
+    // Only REST-exposed post types, statuses, plugin meta and custom fields can
+    // be read. Taxonomy options, private plugin tables and external use remain
+    // unprovable, regardless of this scan's results.
     try {
       const types = await this.#content.listContentTypes(connectionId);
       inspected.wordpressContentTypes = types.length;
@@ -1500,28 +1578,34 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         let finished = false;
         try {
           for (let page = 1; page <= 20; page += 1) {
-            if (remoteRequests >= 60) {
-              blockers.add("wordpress_post_scan_budget_exhausted");
-              break;
-            }
+            if (remoteRequests >= 60) { blockers.add("wordpress_post_scan_budget_exhausted"); break; }
             remoteRequests += 1;
-            const batch = await this.#content.list(connectionId, {
-              contentType: type.restBase, page, perPage: 100,
-            });
-            inspected.wordpressPosts += batch.items.length;
-            for (const post of batch.items) {
-              if (post.featuredMediaId === id) add({
-                kind: "wordpress_featured", remotePostId: String(post.id), contentType: type.restBase,
+            if (typeof this.#content.listMediaReferences === "function") {
+              const batch = await this.#content.listMediaReferences(connectionId, remoteId, media?.sourceUrl ?? "", {
+                contentType: type.restBase, page, perPage: 100,
               });
-              const embeddedBlockId = new RegExp(
-                `<!--\\s*wp:(?:image|cover)\\s+\\{[^>]*"id"\\s*:\\s*${id}(?!\\d)`,
-                "i",
-              ).test(post.contentHtml);
-              if ((media?.sourceUrl && post.contentHtml.includes(media.sourceUrl)) || embeddedBlockId) add({
-                kind: "wordpress_content", remotePostId: String(post.id), contentType: type.restBase,
+              inspected.wordpressPosts += batch.scannedPosts;
+              if (batch.scanIncomplete) blockers.add("wordpress_plugin_payload_scan_incomplete");
+              for (const evidence of batch.items) add({
+                kind: evidence.kind, remotePostId: String(evidence.remotePostId), contentType: type.restBase,
               });
+              if (!batch.hasMore) { finished = true; break; }
+            } else {
+              blockers.add("wordpress_plugin_evidence_unavailable");
+              const batch = await this.#content.list(connectionId, {
+                contentType: type.restBase, page, perPage: 100,
+              });
+              inspected.wordpressPosts += batch.items.length;
+              for (const post of batch.items) {
+                if (post.featuredMediaId === id) add({
+                  kind: "wordpress_featured", remotePostId: String(post.id), contentType: type.restBase,
+                });
+                if (media?.sourceUrl && post.contentHtml.includes(media.sourceUrl)) add({
+                  kind: "wordpress_content", remotePostId: String(post.id), contentType: type.restBase,
+                });
+              }
+              if (!batch.hasMore) { finished = true; break; }
             }
-            if (!batch.hasMore) { finished = true; break; }
           }
         } catch {
           blockers.add("wordpress_post_scan_incomplete");
@@ -1531,18 +1615,66 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     } catch {
       blockers.add("wordpress_content_type_scan_incomplete");
     }
-    if (references.length) blockers.add("known_media_references_exist");
 
+    // Detect observable changes after the scan. These are drift *signals*, not
+    // an authorization lock: additional changes can occur immediately afterward.
+    if (typeof this.#publications.get !== "function") {
+      blockers.add("canonical_recheck_unavailable");
+    } else {
+      let checked = 0;
+      for (const [publicationId, version] of headVersions) {
+        if (checked >= 100) { blockers.add("canonical_recheck_budget_exhausted"); break; }
+        checked += 1;
+        try {
+          const current = await this.#publications.get(publicationId);
+          if (!current || current.version !== version) {
+            scanChanged = true;
+            blockers.add("canonical_head_changed_during_scan");
+          }
+        } catch {
+          blockers.add("canonical_recheck_incomplete");
+        }
+      }
+    }
+    if (!this.#schedules || typeof this.#schedules.getSchedule !== "function") {
+      blockers.add("schedule_recheck_unavailable");
+    } else {
+      let checked = 0;
+      for (const [scheduleId, updatedAt] of scheduleVersions) {
+        if (checked >= 100) { blockers.add("schedule_recheck_budget_exhausted"); break; }
+        checked += 1;
+        try {
+          const current = await this.#schedules.getSchedule(scheduleId);
+          if (!current || current.updatedAt !== updatedAt) {
+            scanChanged = true;
+            blockers.add("schedule_changed_during_scan");
+          }
+        } catch {
+          blockers.add("schedule_recheck_incomplete");
+        }
+      }
+    }
+    if (media) {
+      try {
+        const current = await this.#content.getMedia(connectionId, remoteId);
+        if (current.id !== media.id ||
+            current.sourceUrl !== media.sourceUrl ||
+            current.modifiedGmt !== media.modifiedGmt) {
+          scanChanged = true;
+          blockers.add("remote_media_changed_during_scan");
+        }
+      } catch {
+        blockers.add("remote_media_recheck_incomplete");
+      }
+    }
+
+    if (references.length > 0) blockers.add("known_media_references_exist");
     return {
-      connectionId,
-      remoteId,
-      disposition: "blocked",
-      canDelete: false,
+      connectionId, remoteId, disposition: "blocked", canDelete: false,
       wordpressMediaRetained: true,
       ...(media ? { media: sourceAssetRecord(connectionId, media) } : {}),
-      references,
-      inspected,
-      blockers: [...blockers].sort(),
+      references, inspected, blockers: [...blockers].sort(),
+      scanConsistency: scanChanged ? "changed" : "not_proven",
     };
   }
 
