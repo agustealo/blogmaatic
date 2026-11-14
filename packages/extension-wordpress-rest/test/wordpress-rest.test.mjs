@@ -1954,12 +1954,14 @@ test("route-scoped top-level REST fields compile independently for two WordPress
     assert.deepEqual(siteA.payload.restFields, { partner_label: "Alpha" });
     assert.deepEqual(siteB.payload.restFields, { partner_label: "Beta" });
 
-    const wrongCoordinate = await publisher.compile({
-      publication,
-      route: routeFor("wp-a"),
-      groupId: "group-b",
-    });
-    assert.equal(wrongCoordinate.payload.restFields, undefined);
+    await assert.rejects(
+      publisher.compile({
+        publication,
+        route: routeFor("wp-a"),
+        groupId: "group-b",
+      }),
+      /Canonical destination override identity no longer matches route group-b\/wordpress/,
+    );
   } finally {
     api.server.close();
   }
