@@ -1711,6 +1711,156 @@ test("WordPress REST meta schema discovery filters unsafe fields and preserves t
   }
 });
 
+test("WordPress writable top-level REST field discovery excludes core taxonomy sensitive and read-only fields", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.books.set(81, {
+      id: 81,
+      author: 1,
+      link: "http://example.test/?book=81",
+      slug: "rest-field-book",
+      status: "draft",
+      title: { raw: "REST Field Book" },
+      excerpt: { raw: "Field excerpt" },
+      content: { raw: "<p>Field body.</p>" },
+      categories: [],
+      tags: [],
+      genres: [44],
+      featured_media: 0,
+      reading_time: 12,
+      shelf_label: "Reference",
+      access_level: "members",
+      promo_data: { badge: "staff-pick" },
+      optional_score: null,
+      api_secret: "DO_NOT_LEAK",
+      readonly_note: "server-owned",
+      schema_only: true,
+      meta: {},
+      date_gmt: null,
+      modified_gmt: "2026-11-13T22:00:00",
+    });
+    api.genres.set(44, { id: 44, name: "Systems", slug: "systems", description: "", count: 1 });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-13T21:00:00.000Z",
+      updatedAt: "2026-11-13T21:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+
+    const fields = await content.listRestFields("wp-1", "books");
+    assert.deepEqual(fields.map((field) => field.key), [
+      "access_level", "optional_score", "promo_data", "reading_time", "shelf_label",
+    ]);
+    assert.equal(fields.some((field) => field.key === "title"), false);
+    assert.equal(fields.some((field) => field.key === "genres"), false);
+    assert.equal(fields.some((field) => field.key === "api_secret"), false);
+    assert.equal(fields.some((field) => field.key === "readonly_note"), false);
+    assert.equal(fields.some((field) => field.key === "schema_only"), false);
+    assert.deepEqual(fields.find((field) => field.key === "access_level").enum, ["public", "members"]);
+    assert.equal(fields.find((field) => field.key === "optional_score").nullable, true);
+
+    const snapshot = await content.importSnapshot("wp-1", "81", "books");
+    assert.deepEqual(snapshot.restFields.values, {
+      access_level: "members",
+      optional_score: null,
+      promo_data: { badge: "staff-pick" },
+      reading_time: 12,
+      shelf_label: "Reference",
+    });
+    assert.equal("api_secret" in snapshot.restFields.values, false);
+    assert.equal("readonly_note" in snapshot.restFields.values, false);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress managed top-level REST fields deliver at request root and drift only on managed keys", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-13T21:00:00.000Z",
+      updatedAt: "2026-11-13T21:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = textPublication();
+    const publication = {
+      ...base,
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
+      current: {
+        ...base.current,
+        content: {
+          ...base.current.content,
+          attributes: {
+            ...base.current.content.attributes,
+            sourceRestFields: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "books",
+              values: {
+                reading_time: 14,
+                shelf_label: "Architecture",
+                access_level: "members",
+                promo_data: { badge: "featured" },
+              },
+            },
+          },
+        },
+      },
+    };
+    const bookRoute = { ...route(), destination: { ...route().destination, channel: "books" } };
+    const projection = await publisher.compile({ publication, route: bookRoute });
+    assert.deepEqual(projection.payload.restFields, {
+      reading_time: 14,
+      shelf_label: "Architecture",
+      access_level: "members",
+      promo_data: { badge: "featured" },
+    });
+    const delivered = await publisher.deliver({ idempotencyKey: "book-rest-fields", projection });
+    const stored = api.books.get(Number(delivered.remote.id));
+    assert.equal(stored.reading_time, 14);
+    assert.equal(stored.shelf_label, "Architecture");
+    assert.equal(stored.access_level, "members");
+    assert.deepEqual(stored.promo_data, { badge: "featured" });
+    assert.deepEqual(stored.meta, {});
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+    stored.reading_time = 6;
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+
+    stored.reading_time = 14;
+    stored.unmanaged_plugin_field = "changed elsewhere";
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+  } finally {
+    api.server.close();
+  }
+});
+
 test("WordPress managed REST meta compiles delivers and detects only managed-key drift", async () => {
   const api = makeServer();
   await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
