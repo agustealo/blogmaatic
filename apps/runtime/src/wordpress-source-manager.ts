@@ -1458,7 +1458,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       current.publication.provenance.connectionId === connectionId;
     const matches = current.publication.current.content.assets.filter((asset) => {
       const attributes = asset.attributes;
-      if (asset.kind !== "image" || attributes?.wordpressMediaId !== mediaId) return false;
+      if (asset.kind !== "image" || !attributes || attributes.wordpressMediaId !== mediaId) return false;
       if (attributes.sourceConnectionId === connectionId) {
         return (attributes.sourceExtensionId === undefined ||
           attributes.sourceExtensionId === WORDPRESS_REST_EXTENSION_ID) &&
