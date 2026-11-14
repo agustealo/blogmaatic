@@ -3176,3 +3176,64 @@ test("media preflight rejects inactive cross-connection requests before disclosi
   assert.equal(canonicalReads, 0);
   assert.equal(remoteDeleteCalls, 0);
 });
+
+
+test("preflight blocks dangling historical deliveries and uninspectable plugin payloads", async () => {
+  let deletes = 0;
+  const publication = {
+    id: "pub-detached", status: "draft",
+    provenance: { source: "blogmaatic.publication-workspace" },
+    current: {
+      id: "revision-now", content: {
+        schemaVersion: 1, title: "Detached", language: "en",
+        blocks: [], assets: [], tags: [], attributes: {},
+      },
+    },
+  };
+  const page = (items) => ({ items });
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { return "posts"; },
+      async getMedia() { return {
+        id: 77, sourceUrl: "https://wp-a.test/media/77.png",
+        slug: "77", title: "Existing", alt: "", caption: "", description: "",
+      }; },
+      async listContentTypes() { return [{ restBase: "posts" }]; },
+      async listMediaReferences() {
+        return { items: [], scannedPosts: 1, hasMore: false, scanIncomplete: true };
+      },
+      async deleteMediaPermanent() { deletes++; },
+    },
+    publisher: {}, publicationGroups: {},
+    publications: {
+      async list() { return page([{ publication, version: 5 }]); },
+      async listVersions() { return page([{ publication, version: 5 }]); },
+      async get() { return { publication, version: 5 }; },
+    },
+    distributionHistory: {
+      async list() {
+        return page([{
+          id: "delivery-from-lost-revision", publicationId: publication.id,
+          revisionId: "revision-unavailable", receipt: { evidence: {} },
+          destination: { extensionId: "blogmaatic.wordpress-rest", connectionId: "wp-a", channel: "posts" },
+        }]);
+      },
+    },
+    schedules: {
+      async listSchedules() { return page([]); },
+      async getSchedule() { throw new Error("Not reached"); },
+    },
+    runs: { async listRuns() { return page([]); } },
+    projectionState: {},
+  });
+  const result = await manager.preflightAssetDeletion("wp-a", "77");
+  assert.equal(result.canDelete, false);
+  assert.equal(result.scanConsistency, "not_proven");
+  assert.equal(result.inspected.deliveryHistory, 1);
+  assert.equal(result.inspected.wordpressPosts, 1);
+  assert.equal(result.references.length, 0);
+  assert.ok(result.blockers.includes("delivery_revision_unresolved"));
+  assert.ok(result.blockers.includes("wordpress_plugin_payload_scan_incomplete"));
+  assert.ok(result.blockers.includes("non_transactional_cross_system_inspection"));
+  assert.equal(deletes, 0);
+});
