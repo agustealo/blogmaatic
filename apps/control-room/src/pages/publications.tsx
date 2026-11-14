@@ -14,6 +14,7 @@ import type {
   PublicationWorkspaceEntry,
   PublicationWorkspaceUpdateBody,
   SourceAssetRecord,
+  SourceAssetDeletionPreflight,
   SourceAuthorRecord,
   SourceContentRecord,
   SourceContentRevision,
@@ -2732,6 +2733,7 @@ function SourceAssetLibraryPanel({
   const [uploadFeatured, setUploadFeatured] = useState(false);
   const [editingMetadata, setEditingMetadata] = useState<string | null>(null);
   const [confirmDetachRemoteId, setConfirmDetachRemoteId] = useState<string | null>(null);
+  const [preflight, setPreflight] = useState<SourceAssetDeletionPreflight | null>(null);
   const [metadataTitle, setMetadataTitle] = useState("");
   const [metadataAlt, setMetadataAlt] = useState("");
   const [metadataCaption, setMetadataCaption] = useState("");
@@ -2797,6 +2799,19 @@ function SourceAssetLibraryPanel({
       setBusy(null);
     }
   }, [client, connectionId, contentType, entry.publication.id, entry.version, groupId, onAttached, routeId, routeScoped]);
+
+  const inspectReuse = useCallback(async (remoteId: string) => {
+    setBusy(`inspect:${remoteId}`);
+    setError(null);
+    setPreflight(null);
+    try {
+      setPreflight(await client.preflightSourceAssetDeletion(connectionId, remoteId));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Media reference inventory could not be completed"));
+    } finally {
+      setBusy(null);
+    }
+  }, [client, connectionId]);
 
   const detach = useCallback(async (asset: SourceAssetRecord) => {
     const key = `detach:${asset.remoteId}`;
@@ -3043,6 +3058,9 @@ function SourceAssetLibraryPanel({
                       Detach from publication
                     </button>
                   ) : null}
+                  <button className="button button--quiet" type="button" onClick={() => void inspectReuse(asset.remoteId)} disabled={busy !== null}>
+                    {busy === `inspect:${asset.remoteId}` ? "Inspecting…" : "Inspect reuse"}
+                  </button>
                   {!routeScoped ? (
                     <button className="button button--primary" type="button" onClick={() => void attach(asset, true)} disabled={busy !== null}>
                       {busy === `featured:${asset.remoteId}` ? "Setting…" : "Use as featured"}
@@ -3057,6 +3075,27 @@ function SourceAssetLibraryPanel({
                     Edit metadata
                   </button>
                 </div>
+                {preflight?.connectionId === connectionId && preflight.remoteId === asset.remoteId ? (
+                  <div className="source-asset-card__preflight" role="status">
+                    <strong>Permanent deletion blocked</strong>
+                    <p>{preflight.references.length} known reference{preflight.references.length === 1 ? "" : "s"} found. WordPress media is retained.</p>
+                    <small>Inspected {preflight.inspected.publicationHeads} publications, {preflight.inspected.publicationVersions} versions, {preflight.inspected.schedules} schedules, and {preflight.inspected.wordpressPosts} WordPress posts in {preflight.inspected.wordpressContentTypes} exposed content types.</small>
+                    {preflight.references.length > 0 ? (
+                      <ul>
+                        {preflight.references.map((reference, index) => (
+                          <li key={index}>
+                            {reference.kind.replaceAll("_", " ")}
+                            {reference.publicationId ? ` · ${reference.publicationId}` : ""}
+                            {reference.scheduleId ? ` · schedule ${reference.scheduleId}` : ""}
+                            {reference.remotePostId ? ` · WordPress post ${reference.remotePostId}` : ""}
+                            {reference.contentType ? ` (${reference.contentType})` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <small>Verification limitations: {preflight.blockers.join(", ").replaceAll("_", " ")}. No permanent deletion is available.</small>
+                  </div>
+                ) : null}
                 {confirmDetachRemoteId === asset.remoteId ? (
                   <div className="confirmation-strip" role="group" aria-label="Confirm WordPress media detach">
                     <small>Removes this reference from the entire publication, including its destinations. The WordPress image is kept. Referenced or featured images must be unlinked first.</small>
