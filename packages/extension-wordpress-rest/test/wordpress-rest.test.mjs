@@ -312,7 +312,7 @@ function makeServer() {
       }
     }
 
-    for (const [name, collection] of [["tags", tags], ["categories", categories]]) {
+    for (const [name, collection] of [["tags", tags], ["categories", categories], ["genres", genres]]) {
       if (request.method === "GET" && path === `/${name}`) {
         const slug = url.searchParams.get("slug");
         const search = url.searchParams.get("search")?.toLowerCase();
