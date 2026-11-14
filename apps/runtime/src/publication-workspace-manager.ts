@@ -497,7 +497,7 @@ export class PublicationWorkspaceManager {
       readonly remoteRevisionId: string;
       readonly title: string;
       readonly summary?: string;
-      readonly contentHtml: string;
+      readonly blocks: readonly PublicationBlock[];
       readonly sourceModifiedAt?: string;
       readonly sourceAuthorId?: number;
     },
@@ -520,7 +520,6 @@ export class PublicationWorkspaceManager {
     const oldContent = current.publication.current.content;
     const title = source.title.trim() || oldContent.title;
     const summary = source.summary?.trim();
-    const html = source.contentHtml;
     const now = this.#now();
     const publication: Publication = {
       ...current.publication,
@@ -533,13 +532,7 @@ export class PublicationWorkspaceManager {
           title,
           ...(summary ? { summary } : {}),
           language: oldContent.language,
-          blocks: html.trim()
-            ? [{
-              id: `source-revision-${remoteRevisionId}`,
-              kind: "embed",
-              data: { html },
-            }]
-            : [],
+          blocks: source.blocks,
           assets: oldContent.assets,
           tags: oldContent.tags,
           attributes: {
