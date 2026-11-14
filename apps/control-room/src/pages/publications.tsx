@@ -2930,7 +2930,7 @@ function SourceAssetLibraryPanel({
     entry.publication.current.content.assets.flatMap((asset) => {
       const attributes = asset.attributes;
       const mediaId = attributes?.wordpressMediaId;
-      if (asset.kind !== "image" || typeof mediaId !== "number" || !Number.isSafeInteger(mediaId) || mediaId < 1) {
+      if (asset.kind !== "image" || !attributes || typeof mediaId !== "number" || !Number.isSafeInteger(mediaId) || mediaId < 1) {
         return [];
       }
       const explicitOwnership = attributes.sourceConnectionId === connectionId &&
