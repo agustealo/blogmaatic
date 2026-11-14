@@ -245,9 +245,10 @@ try {
 
   const semanticNav = await cdp.evaluate(`(() => {
     const nav = document.querySelector("nav.mobile-nav[aria-label='Mobile navigation']");
-    return Boolean(nav && [...nav.querySelectorAll("a")].some((link) => link.textContent?.trim() === "Schedules"));
+    return Boolean(nav && [...nav.querySelectorAll("a")].some((link) =>
+      link.getAttribute("href") === "/schedules" && link.textContent?.trim() === "Calendar"));
   })()`);
-  assert.equal(semanticNav, true, "Semantic mobile navigation must expose the Schedules destination");
+  assert.equal(semanticNav, true, "Semantic mobile navigation must expose the Calendar (/schedules) destination");
 
   await cdp.send("Emulation.setEmulatedMedia", {
     media: "screen",
