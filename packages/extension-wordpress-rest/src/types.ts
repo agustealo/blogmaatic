@@ -89,6 +89,8 @@ export interface WordPressMediaRecord {
   readonly alt_text?: string;
   readonly modified_gmt?: string;
   readonly title?: { readonly raw?: string; readonly rendered?: string };
+  readonly caption?: { readonly raw?: string; readonly rendered?: string };
+  readonly description?: { readonly raw?: string; readonly rendered?: string };
   readonly media_details?: {
     readonly width?: number;
     readonly height?: number;
@@ -109,6 +111,8 @@ export interface WordPressMediaView {
   readonly mediaKind?: string;
   readonly alt: string;
   readonly title: string;
+  readonly caption: string;
+  readonly description: string;
   readonly width?: number;
   readonly height?: number;
   readonly modifiedGmt?: string;
