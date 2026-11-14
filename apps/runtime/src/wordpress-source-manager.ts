@@ -1405,9 +1405,16 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     };
 
     // Inspect all present and historical workspace revisions, not only current heads.
+    // Shared request budget prevents one publication with huge history from starving the API.
+    let canonicalRequests = 0;
     try {
       let cursor: string | undefined;
       for (let page = 0; page < 500; page += 1) {
+        if (canonicalRequests >= 300) {
+          blockers.add("canonical_publication_scan_budget_exhausted");
+          break;
+        }
+        canonicalRequests += 1;
         const batch = await this.#publications.list({ limit: 100, ...(cursor ? { cursor } : {}) });
         inspected.publicationHeads += batch.items.length;
         for (const head of batch.items) {
@@ -1419,6 +1426,11 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
           let historyCursor: string | undefined;
           let finished = false;
           for (let versionPage = 0; versionPage < 500; versionPage += 1) {
+            if (canonicalRequests >= 300) {
+              blockers.add("canonical_version_scan_budget_exhausted");
+              break;
+            }
+            canonicalRequests += 1;
             const versions = await this.#publications.listVersions(head.publication.id, {
               limit: 100, ...(historyCursor ? { cursor: historyCursor } : {}),
             });
@@ -1478,10 +1490,16 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     try {
       const types = await this.#content.listContentTypes(connectionId);
       inspected.wordpressContentTypes = types.length;
+      let remoteRequests = 0;
       for (const type of types) {
         let finished = false;
         try {
           for (let page = 1; page <= 20; page += 1) {
+            if (remoteRequests >= 60) {
+              blockers.add("wordpress_post_scan_budget_exhausted");
+              break;
+            }
+            remoteRequests += 1;
             const batch = await this.#content.list(connectionId, {
               contentType: type.restBase, page, perPage: 100,
             });
