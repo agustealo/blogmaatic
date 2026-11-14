@@ -31,6 +31,8 @@ import type {
   OperatorSourceContentManager,
   SourceAssetAttachBody,
   SourceAssetAttachResult,
+  SourceAssetDetachBody,
+  SourceAssetDetachResult,
   SourceAssetMetadataUpdateBody,
   SourceAssetMetadataUpdateResult,
   SourceAssetPage,
@@ -1386,17 +1388,13 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         asset: sourceAssetRecord(connectionId, media),
       };
     } catch (error) {
-      try {
-        await this.#content.deleteMediaPermanent(connectionId, String(media.id));
-      } catch (cleanupError) {
-        throw new Error(
-          `Canonical source asset attachment failed and WordPress media cleanup also failed for media ${media.id}: ${
-            cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-          }`,
-          { cause: error },
-        );
-      }
-      throw error;
+      // A CAS race cannot prove the new media is unused elsewhere. Retain it on WordPress.
+      throw new Error(
+        `Canonical source asset attachment failed for WordPress media ${media.id}; media was retained on WordPress: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
     }
   }
 
@@ -1438,6 +1436,46 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       publication,
       asset: sourceAssetRecord(connectionId, media),
     };
+  }
+
+  async detachAsset(
+    connectionId: string,
+    remoteId: string,
+    body: SourceAssetDetachBody,
+  ): Promise<SourceAssetDetachResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(`Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`);
+    }
+    await this.#assertAssetContext(current, connectionId, body);
+    const mediaId = Number(remoteId);
+    if (!Number.isSafeInteger(mediaId) || mediaId < 1 || String(mediaId) !== remoteId) {
+      throw new Error("WordPress media id must be a canonical positive integer");
+    }
+    const legacySource =
+      current.publication.provenance.extensionId === WORDPRESS_REST_EXTENSION_ID &&
+      current.publication.provenance.connectionId === connectionId;
+    const matches = current.publication.current.content.assets.filter((asset) => {
+      const attributes = asset.attributes;
+      if (asset.kind !== "image" || attributes?.wordpressMediaId !== mediaId) return false;
+      if (attributes.sourceConnectionId === connectionId) {
+        return (attributes.sourceExtensionId === undefined ||
+          attributes.sourceExtensionId === WORDPRESS_REST_EXTENSION_ID) &&
+          (attributes.sourceRemoteId === undefined || attributes.sourceRemoteId === remoteId);
+      }
+      return attributes.sourceConnectionId === undefined && legacySource &&
+        (attributes.sourceRemoteId === undefined || attributes.sourceRemoteId === remoteId);
+    });
+    if (matches.length !== 1) {
+      throw new Error("Cannot detach media without a unique attachment on the exact WordPress connection");
+    }
+    const publication = await this.#publications.detachAsset(
+      body.publicationId,
+      body.expectedVersion,
+      matches[0]!.id,
+    );
+    return { publication, remoteId, wordpressMediaRetained: true };
   }
 
   async updateAssetMetadata(
