@@ -96,12 +96,15 @@ async function withApi(fn) {
         media: asset,
         references: [{
           kind: "publication_current", publicationId: "publication-wp", revisionId: "revision-2",
+        }, {
+          kind: "delivery_history", publicationId: "publication-wp", revisionId: "revision-1", deliveryId: "delivery-1",
         }],
         inspected: {
           publicationHeads: 1, publicationVersions: 2, schedules: 0,
-          wordpressContentTypes: 1, wordpressPosts: 3,
+          automationRuns: 4, deliveryHistory: 2, wordpressContentTypes: 1, wordpressPosts: 3,
         },
         blockers: ["known_media_references_exist", "permanent_deletion_not_enabled"],
+        scanConsistency: "not_proven",
       };
     },
     async attachAsset(connectionId, remoteId, body) {
@@ -573,6 +576,10 @@ test("media deletion preflight is authenticated, read-only, and always blocked",
     assert.equal(result.wordpressMediaRetained, true);
     assert.equal(result.references[0].publicationId, "publication-wp");
     assert.equal(result.inspected.publicationVersions, 2);
+    assert.equal(result.inspected.automationRuns, 4);
+    assert.equal(result.inspected.deliveryHistory, 2);
+    assert.equal(result.references[1].kind, "delivery_history");
+    assert.equal(result.scanConsistency, "not_proven");
     assert.equal(state().preflightCalls, 1);
 
     const audit = await store.listAudit({ limit: 20 });
