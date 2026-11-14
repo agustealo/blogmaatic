@@ -334,6 +334,8 @@ export interface SourceAssetRecord {
   readonly mediaType?: string;
   readonly title?: string;
   readonly alt?: string;
+  readonly caption?: string;
+  readonly description?: string;
   readonly width?: number;
   readonly height?: number;
   readonly modifiedAt?: string;
@@ -358,6 +360,22 @@ export interface SourceAssetAttachBody {
 
 export interface SourceAssetAttachResult {
   readonly publication: PublicationWorkspaceEntry;
+  readonly asset: SourceAssetRecord;
+}
+
+export interface SourceAssetMetadataUpdateBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
+  readonly alt?: string;
+  readonly title?: string;
+  readonly caption?: string;
+  readonly description?: string;
+}
+
+export interface SourceAssetMetadataUpdateResult {
   readonly asset: SourceAssetRecord;
 }
 
@@ -593,6 +611,11 @@ export interface OperatorSourceContentManager {
   setPageStructure(connectionId: string, body: SourcePageStructureBody): Promise<SourcePageStructureResult>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
+  updateAssetMetadata(
+    connectionId: string,
+    remoteId: string,
+    body: SourceAssetMetadataUpdateBody,
+  ): Promise<SourceAssetMetadataUpdateResult>;
   uploadAsset(connectionId: string, input: SourceAssetUploadInput): Promise<SourceAssetAttachResult>;
   setFeaturedMedia(connectionId: string, body: SourceFeaturedMediaBody): Promise<SourceFeaturedMediaResult>;
   listTaxonomyDefinitions(connectionId: string, contentType: string): Promise<readonly SourceTaxonomyDefinitionRecord[]>;

@@ -6,6 +6,7 @@ import type {
   OperatorApiOptions,
   OperatorSourceContentManager,
   SourceAssetAttachBody,
+  SourceAssetMetadataUpdateBody,
   SourceAssetQuery,
   SourceAssetUploadInput,
   SourceAuthorAssignBody,
@@ -567,6 +568,67 @@ function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
     ...(contentType ? { contentType } : {}),
     ...(groupId ? { groupId } : {}),
     ...(routeId ? { routeId } : {}),
+  };
+}
+
+function parseAssetMetadataUpdateBody(body: unknown): SourceAssetMetadataUpdateBody {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new OperatorRequestError("request body must be an object");
+  }
+  const input = body as Record<string, unknown>;
+  const allowed = new Set([
+    "publicationId", "expectedVersion", "contentType", "groupId", "routeId",
+    "alt", "title", "caption", "description",
+  ]);
+  const unknown = Object.keys(input).find((key) => !allowed.has(key));
+  if (unknown) throw new OperatorRequestError(`request body contains unknown field: ${unknown}`);
+
+  const publicationId = input.publicationId;
+  if (typeof publicationId !== "string" || !publicationId.trim()) {
+    throw new OperatorRequestError("publicationId is required");
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion as number) < 1) {
+    throw new OperatorRequestError("expectedVersion must be a positive integer");
+  }
+
+  const clearableString = (key: "alt" | "title" | "caption" | "description", maxLength: number): string | undefined => {
+    const value = input[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== "string") throw new OperatorRequestError(`${key} must be a string when provided`);
+    if (value.length > maxLength) {
+      throw new OperatorRequestError(`${key} must not exceed ${maxLength} characters`);
+    }
+    return value;
+  };
+
+  const alt = clearableString("alt", 1000);
+  const title = clearableString("title", 500);
+  const caption = clearableString("caption", 5000);
+  const description = clearableString("description", 20000);
+  if (alt === undefined && title === undefined && caption === undefined && description === undefined) {
+    throw new OperatorRequestError("at least one media metadata field is required");
+  }
+
+  const contentType = optionalContentType(input.contentType);
+  const groupId = optionalString(input, "groupId");
+  const routeId = optionalString(input, "routeId");
+  if ((groupId === undefined) !== (routeId === undefined)) {
+    throw new OperatorRequestError("groupId and routeId must be provided together");
+  }
+  if (groupId && !contentType) {
+    throw new OperatorRequestError("contentType is required for route-scoped media");
+  }
+
+  return {
+    publicationId: publicationId.trim(),
+    expectedVersion: input.expectedVersion as number,
+    ...(contentType ? { contentType } : {}),
+    ...(groupId ? { groupId } : {}),
+    ...(routeId ? { routeId } : {}),
+    ...(alt === undefined ? {} : { alt }),
+    ...(title === undefined ? {} : { title }),
+    ...(caption === undefined ? {} : { caption }),
+    ...(description === undefined ? {} : { description }),
   };
 }
 
@@ -1314,6 +1376,43 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           revisionId: value.publication.publication.current.id,
           version: value.publication.version,
           assetRemoteId: value.asset.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.post("/v1/connections/:connectionId/assets/:remoteId/metadata", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const remoteId = requirePathString(values.remoteId, "remoteId");
+    const body = parseAssetMetadataUpdateBody(request.body);
+    const changedFields = ["alt", "title", "caption", "description"].filter(
+      (key) => body[key as keyof SourceAssetMetadataUpdateBody] !== undefined,
+    );
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-asset.metadata.update",
+      resource: { type: "source-asset", id: `${connectionId}:${remoteId}` },
+      evidence: {
+        connectionId,
+        remoteId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType ?? null,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
+        changedFields,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).updateAssetMetadata(connectionId, remoteId, body)),
+      success: (value) => ({
+        evidence: {
+          assetRemoteId: value.asset.remoteId,
+          changedFields,
         },
       }),
     });

@@ -410,6 +410,8 @@ function makeServer() {
         ...current,
         ...body,
         ...(typeof body.title === "string" ? { title: { raw: body.title } } : {}),
+        ...(typeof body.caption === "string" ? { caption: { raw: body.caption } } : {}),
+        ...(typeof body.description === "string" ? { description: { raw: body.description } } : {}),
       };
       media.set(id, item);
       return json(response, 200, item);
@@ -1248,6 +1250,8 @@ test("source content service searches and maps WordPress Media Library images", 
       mime_type: "image/jpeg",
       alt_text: "Editorial hero",
       title: { raw: "Editorial Hero" },
+      caption: { raw: "Launch caption" },
+      description: { raw: "Long-form image description" },
       modified_gmt: "2026-10-18T12:00:00",
       media_details: { width: 1600, height: 900 },
     });
@@ -1263,6 +1267,8 @@ test("source content service searches and maps WordPress Media Library images", 
       mediaType: "image/jpeg",
       alt: "Editorial hero",
       title: "Editorial Hero",
+      caption: "Launch caption",
+      description: "Long-form image description",
       width: 1600,
       height: 900,
       modifiedGmt: "2026-10-18T12:00:00",
@@ -1282,6 +1288,81 @@ test("source content service searches and maps WordPress Media Library images", 
       content.getMedia("wp-1", "88"),
       /is not an image/,
     );
+  } finally {
+    api.server.close();
+  }
+});
+
+test("source content service updates existing image metadata without clobbering omitted fields and supports explicit clears", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: {
+        siteUrl: `http://127.0.0.1:${port}`,
+        username: "editor",
+      },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-13T21:00:00.000Z",
+      updatedAt: "2026-11-13T21:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    api.media.set(91, {
+      id: 91,
+      slug: "metadata-image",
+      source_url: "http://example.test/uploads/metadata-image.jpg",
+      media_type: "image",
+      mime_type: "image/jpeg",
+      alt_text: "Original alt",
+      title: { raw: "Original title" },
+      caption: { raw: "Original caption" },
+      description: { raw: "Original description" },
+      modified_gmt: "2026-11-13T21:30:00",
+      media_details: { width: 1200, height: 800 },
+    });
+
+    const partial = await content.updateMediaMetadata("wp-1", "91", {
+      alt: "Updated alt",
+      caption: "Updated caption",
+    });
+    assert.equal(partial.alt, "Updated alt");
+    assert.equal(partial.caption, "Updated caption");
+    assert.equal(partial.title, "Original title");
+    assert.equal(partial.description, "Original description");
+
+    const cleared = await content.updateMediaMetadata("wp-1", "91", {
+      title: "",
+      description: "",
+    });
+    assert.equal(cleared.title, "");
+    assert.equal(cleared.description, "");
+    assert.equal(cleared.alt, "Updated alt");
+    assert.equal(cleared.caption, "Updated caption");
+
+    api.media.set(92, {
+      id: 92,
+      slug: "not-an-image",
+      source_url: "http://example.test/uploads/file.pdf",
+      media_type: "file",
+      mime_type: "application/pdf",
+      alt_text: "",
+      title: { raw: "PDF" },
+      caption: { raw: "" },
+      description: { raw: "" },
+    });
+    await assert.rejects(
+      content.updateMediaMetadata("wp-1", "92", { title: "Should not write" }),
+      /is not an image/,
+    );
+    assert.equal(api.media.get(92).title.raw, "PDF");
   } finally {
     api.server.close();
   }

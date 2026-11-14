@@ -270,6 +270,8 @@ function mediaView(media: WordPressMediaRecord): WordPressMediaView {
     ...(media.media_type ? { mediaKind: media.media_type } : {}),
     alt: media.alt_text ?? "",
     title: rawValue(media.title),
+    caption: rawValue(media.caption),
+    description: rawValue(media.description),
     ...(typeof media.media_details?.width === "number" ? { width: media.media_details.width } : {}),
     ...(typeof media.media_details?.height === "number" ? { height: media.media_details.height } : {}),
     ...(media.modified_gmt ? { modifiedGmt: media.modified_gmt } : {}),
@@ -827,6 +829,46 @@ export class WordPressContentService {
       });
     }
     return mediaView(current);
+  }
+
+  async updateMediaMetadata(
+    connectionId: string,
+    remoteId: string,
+    input: {
+      readonly alt?: string;
+      readonly title?: string;
+      readonly caption?: string;
+      readonly description?: string;
+    },
+  ): Promise<WordPressMediaView> {
+    const { client } = this.#client(connectionId);
+    const id = requireRemoteId(remoteId);
+    const current = await this.getMedia(connectionId, remoteId);
+    if (
+      input.alt === undefined &&
+      input.title === undefined &&
+      input.caption === undefined &&
+      input.description === undefined
+    ) {
+      return current;
+    }
+    const saved = await client.requestJson<WordPressMediaRecord>(`/media/${id}`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...(input.alt === undefined ? {} : { alt_text: input.alt }),
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.caption === undefined ? {} : { caption: input.caption }),
+        ...(input.description === undefined ? {} : { description: input.description }),
+      }),
+    });
+    const view = mediaView(saved);
+    if (
+      (view.mediaKind && view.mediaKind !== "image") ||
+      (view.mediaType && !view.mediaType.toLowerCase().startsWith("image/"))
+    ) {
+      throw new Error(`WordPress media ${id} is not an image`);
+    }
+    return view;
   }
 
   async deleteMediaPermanent(connectionId: string, remoteId: string): Promise<void> {

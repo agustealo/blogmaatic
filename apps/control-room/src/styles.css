@@ -1385,3 +1385,20 @@ a.data-table__row:hover { background: var(--surface-2); }
   color: var(--muted);
   font-size: .78rem;
 }
+
+
+/* WordPress Media Library metadata editor */
+.source-asset-card__metadata-editor {
+  padding: 14px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  background: var(--surface-2);
+}
+.source-asset-card__metadata-editor textarea { resize: vertical; min-height: 72px; }
+.source-asset-card__metadata-editor > small { color: var(--muted); font-size: .74rem; line-height: 1.45; }
+.source-asset-card__metadata-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+@media (max-width: 620px) {
+  .source-asset-card__metadata-actions .button { flex: 1; }
+}

@@ -61,6 +61,8 @@ import type {
   SourceAuthorQuery,
   SourceAssetAttachBody,
   SourceAssetAttachResult,
+  SourceAssetMetadataUpdateBody,
+  SourceAssetMetadataUpdateResult,
   SourceAssetPage,
   SourceAssetQuery,
   SourceAssetUploadInput,
@@ -486,6 +488,17 @@ export class OperatorClient {
   ): Promise<SourceFeaturedMediaResult> {
     return this.#request<SourceFeaturedMediaResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/featured-media`,
+      { method: "POST", body: input },
+    );
+  }
+
+  updateSourceAssetMetadata(
+    connectionId: string,
+    remoteId: string,
+    input: SourceAssetMetadataUpdateBody,
+  ): Promise<SourceAssetMetadataUpdateResult> {
+    return this.#request<SourceAssetMetadataUpdateResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/assets/${encodeURIComponent(remoteId)}/metadata`,
       { method: "POST", body: input },
     );
   }

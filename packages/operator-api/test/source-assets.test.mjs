@@ -25,6 +25,8 @@ async function withApi(fn) {
   let uploadCalls = 0;
   let featuredInput;
   let featuredCalls = 0;
+  let metadataInput;
+  let metadataCalls = 0;
   const asset = {
     connectionId: "wp-main",
     extensionId: "blogmaatic.wordpress-rest",
@@ -94,6 +96,21 @@ async function withApi(fn) {
       uploadInput = input;
       return { publication, asset };
     },
+    async updateAssetMetadata(connectionId, remoteId, body) {
+      metadataCalls += 1;
+      assert.equal(connectionId, "wp-main");
+      assert.equal(remoteId, "77");
+      metadataInput = body;
+      return {
+        asset: {
+          ...asset,
+          title: body.title ?? asset.title,
+          alt: body.alt ?? asset.alt,
+          ...(body.caption === undefined ? {} : { caption: body.caption }),
+          ...(body.description === undefined ? {} : { description: body.description }),
+        },
+      };
+    },
     async setFeaturedMedia(connectionId, input) {
       featuredCalls += 1;
       assert.equal(connectionId, "wp-main");
@@ -142,6 +159,8 @@ async function withApi(fn) {
         uploadCalls,
         featuredInput,
         featuredCalls,
+        metadataInput,
+        metadataCalls,
       }),
     });
   } finally {
@@ -225,6 +244,71 @@ test("source asset attach is validated, audited, and records resulting canonical
   });
 });
 
+
+test("source asset metadata update accepts explicit clears and audits field names without values", async () => {
+  await withApi(async ({ app, store, state }) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/assets/77/metadata",
+      headers: bearer(),
+      payload: {
+        publicationId: "publication-wp",
+        expectedVersion: 5,
+        contentType: "posts",
+        groupId: "group-main",
+        routeId: "wordpress",
+        title: "Private editorial title",
+        alt: "",
+        caption: "Private launch caption",
+        description: "",
+      },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(state().metadataCalls, 1);
+    assert.deepEqual(state().metadataInput, {
+      publicationId: "publication-wp",
+      expectedVersion: 5,
+      contentType: "posts",
+      groupId: "group-main",
+      routeId: "wordpress",
+      title: "Private editorial title",
+      alt: "",
+      caption: "Private launch caption",
+      description: "",
+    });
+    assert.equal(response.json().asset.title, "Private editorial title");
+    assert.equal(response.json().asset.alt, "");
+    assert.equal(response.json().asset.caption, "Private launch caption");
+
+    const audit = await store.listAudit({ action: "source-asset.metadata.update", limit: 10 });
+    assert.equal(audit.items.length, 2);
+    const succeeded = audit.items.find((entry) => entry.phase === "succeeded");
+    assert.equal(succeeded.resource.type, "source-asset");
+    assert.equal(succeeded.resource.id, "wp-main:77");
+    assert.equal(succeeded.evidence.connectionId, "wp-main");
+    assert.equal(succeeded.evidence.remoteId, "77");
+    assert.equal(succeeded.evidence.publicationId, "publication-wp");
+    assert.equal(succeeded.evidence.groupId, "group-main");
+    assert.equal(succeeded.evidence.routeId, "wordpress");
+    assert.deepEqual(succeeded.evidence.changedFields, ["alt", "title", "caption", "description"]);
+    const serializedAudit = JSON.stringify(audit.items);
+    assert.doesNotMatch(serializedAudit, /Private editorial title/);
+    assert.doesNotMatch(serializedAudit, /Private launch caption/);
+
+    const empty = await app.inject({
+      method: "POST",
+      url: "/v1/connections/wp-main/assets/77/metadata",
+      headers: bearer(),
+      payload: {
+        publicationId: "publication-wp",
+        expectedVersion: 5,
+      },
+    });
+    assert.equal(empty.statusCode, 400);
+    assert.equal(empty.json().error.code, "INVALID_REQUEST");
+    assert.equal(state().metadataCalls, 1);
+  });
+});
 
 test("source asset binary upload validates metadata, forwards bytes, and records audit evidence", async () => {
   await withApi(async ({ app, store, state }) => {

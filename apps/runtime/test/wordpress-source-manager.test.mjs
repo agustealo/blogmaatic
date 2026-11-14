@@ -2661,3 +2661,138 @@ test("semantic SEO refuses fields that are not uniquely writable on the connecte
   const fields = await manager.listSeoFields("wp-main", "posts");
   assert.deepEqual(fields.map((field) => field.semantic), ["description"]);
 });
+
+
+test("WordPress media metadata edits are version- and route-bound before remote mutation", async () => {
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") {
+        return { enabled: true, group: { id: "group-a", name: "A", policySetId: "allow", routes: [routeFor("wp-a")] } };
+      }
+      if (groupId === "group-b") {
+        return { enabled: true, group: { id: "group-b", name: "B", policySetId: "allow", routes: [routeFor("wp-b")] } };
+      }
+      return undefined;
+    },
+  };
+  const current = {
+    publication: {
+      id: "publication-media-metadata",
+      createdAt: "2026-11-13T22:00:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-11-13T22:00:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "Media metadata",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: { publishingTargets: { groupIds: ["group-a", "group-b"] } },
+        },
+      },
+      provenance: { source: "blogmaatic.publication-workspace" },
+    },
+    version: 4,
+    recordedAt: "2026-11-13T22:00:00.000Z",
+    updatedAt: "2026-11-13T22:00:00.000Z",
+  };
+  let updateCalls = 0;
+  let updateInput;
+  const manager = new WordPressSourceManager({
+    content: {
+      async updateMediaMetadata(connectionId, remoteId, input) {
+        updateCalls += 1;
+        assert.equal(connectionId, "wp-a");
+        assert.equal(remoteId, "77");
+        updateInput = input;
+        return {
+          id: 77,
+          sourceUrl: "https://wp-a.test/uploads/77.jpg",
+          slug: "hero",
+          mediaType: "image/jpeg",
+          mediaKind: "image",
+          title: input.title ?? "Original",
+          alt: input.alt ?? "Original alt",
+          caption: input.caption ?? "Original caption",
+          description: input.description ?? "Original description",
+          modifiedGmt: "2026-11-13T22:30:00",
+        };
+      },
+    },
+    publisher: {},
+    publicationGroups: groups,
+    publications: {
+      async get(id) {
+        return id === "publication-media-metadata" ? current : undefined;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.updateAssetMetadata("wp-a", "77", {
+      publicationId: "publication-media-metadata",
+      expectedVersion: 3,
+      contentType: "posts",
+      groupId: "group-a",
+      routeId: "wordpress",
+      alt: "Stale",
+    }),
+    /changed from version 3 to 4/,
+  );
+  assert.equal(updateCalls, 0);
+
+  await assert.rejects(
+    () => manager.updateAssetMetadata("wp-a", "77", {
+      publicationId: "publication-media-metadata",
+      expectedVersion: 4,
+      contentType: "posts",
+      groupId: "group-b",
+      routeId: "wordpress",
+      title: "Wrong site",
+    }),
+    /does not match the requested connection/,
+  );
+  assert.equal(updateCalls, 0);
+
+  const result = await manager.updateAssetMetadata("wp-a", "77", {
+    publicationId: "publication-media-metadata",
+    expectedVersion: 4,
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+    title: "Hero title",
+    alt: "",
+    caption: "Caption",
+    description: "",
+  });
+  assert.equal(updateCalls, 1);
+  assert.deepEqual(updateInput, {
+    title: "Hero title",
+    alt: "",
+    caption: "Caption",
+    description: "",
+  });
+  assert.equal(result.asset.remoteId, "77");
+  assert.equal(result.asset.title, "Hero title");
+  assert.equal(result.asset.caption, "Caption");
+  assert.equal(result.asset.alt, undefined);
+  assert.equal(result.asset.description, undefined);
+  assert.equal(current.version, 4);
+});

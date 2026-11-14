@@ -31,6 +31,8 @@ import type {
   OperatorSourceContentManager,
   SourceAssetAttachBody,
   SourceAssetAttachResult,
+  SourceAssetMetadataUpdateBody,
+  SourceAssetMetadataUpdateResult,
   SourceAssetPage,
   SourceAssetQuery,
   SourceAssetRecord,
@@ -338,6 +340,8 @@ function sourceAssetRecord(connectionId: string, media: WordPressMediaView): Sou
     ...(media.mediaType ? { mediaType: media.mediaType } : {}),
     ...(media.title ? { title: media.title } : {}),
     ...(media.alt ? { alt: media.alt } : {}),
+    ...(media.caption ? { caption: media.caption } : {}),
+    ...(media.description ? { description: media.description } : {}),
     ...(media.width === undefined ? {} : { width: media.width }),
     ...(media.height === undefined ? {} : { height: media.height }),
     ...(media.modifiedGmt ? { modifiedAt: media.modifiedGmt } : {}),
@@ -1434,6 +1438,28 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
       publication,
       asset: sourceAssetRecord(connectionId, media),
     };
+  }
+
+  async updateAssetMetadata(
+    connectionId: string,
+    remoteId: string,
+    body: SourceAssetMetadataUpdateBody,
+  ): Promise<SourceAssetMetadataUpdateResult> {
+    const current = await this.#publications.get(body.publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${body.publicationId}`);
+    if (current.version !== body.expectedVersion) {
+      throw new Error(
+        `Publication ${body.publicationId} changed from version ${body.expectedVersion} to ${current.version}`,
+      );
+    }
+    await this.#assertAssetContext(current, connectionId, body);
+    const media = await this.#content.updateMediaMetadata(connectionId, remoteId, {
+      ...(body.alt === undefined ? {} : { alt: body.alt }),
+      ...(body.title === undefined ? {} : { title: body.title }),
+      ...(body.caption === undefined ? {} : { caption: body.caption }),
+      ...(body.description === undefined ? {} : { description: body.description }),
+    });
+    return { asset: sourceAssetRecord(connectionId, media) };
   }
 
   async setFeaturedMedia(

@@ -81,6 +81,16 @@ Remote WordPress media may be selected as featured only by the connection that o
 
 Content Studio renders Media Library and Featured image controls inside each selected WordPress Destination Settings card. Browse/upload/attach operations are therefore performed against the specific site's Media Library, while the shared global Featured image field remains the inheritance default.
 
+### Media metadata editing
+
+Existing WordPress image attachments expose the safe editorial metadata WordPress publishes in edit context: title, alt text, caption, and description. Content may update those fields through the provider-neutral source asset boundary.
+
+A metadata edit is a remote Media Library mutation only. It does not create a new canonical Publication revision, attach the media to a Publication, change featured-image selection, or rewrite Publication blocks. Those remain separate explicit actions.
+
+Route-scoped metadata edits require the exact Publication id, current workspace version, Publication Group id, route id, content type, and WordPress connection. The runtime validates those coordinates before issuing the remote request. Legacy imported-source edits are allowed only when Publication provenance belongs to that exact WordPress connection.
+
+Omitted metadata fields are preserved. Explicit empty strings clear the corresponding WordPress field. The API exposes only title, alt text, caption, and description rather than arbitrary media REST properties. Audit evidence records the changed field names and destination coordinates, never the metadata values themselves.
+
 ## Author ownership
 
 WordPress author selection is exposed through the same provider-neutral source boundary as source content, taxonomy, and media. Control Room never calls `/wp/v2/users` directly.
