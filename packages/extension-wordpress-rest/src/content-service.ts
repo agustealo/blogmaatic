@@ -418,7 +418,7 @@ export function inspectWordPressMediaReferences(
 
   let visited = 0;
   let scanIncomplete = false;
-  const mediaKey = /(?:^|[_-])(?:image|images|media|attachment|attachments|thumbnail|gallery|featured|photo|photos|logo|banner|cover|background|hero|icon)(?:[_-]|$)/i;
+  const mediaKey = /(?:^|[._-])(?:image|images|media|attachment|attachments|thumbnail|gallery|featured|photo|photos|logo|banner|cover|background|hero|icon)(?:[._-]|$)/i;
   const idToken = new RegExp("(?:^|[^0-9])" + escapedId + "(?![0-9])");
   const wpImageToken = new RegExp("wp-image-" + escapedId + "(?!\\d)", "i");
   const traverse = (value: unknown, path: string, depth: number): boolean => {
