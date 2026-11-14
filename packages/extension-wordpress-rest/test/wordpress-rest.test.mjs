@@ -1861,6 +1861,110 @@ test("WordPress managed top-level REST fields deliver at request root and drift 
   }
 });
 
+test("route-scoped top-level REST fields compile independently for two WordPress destinations", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-13T23:30:00.000Z",
+      updatedAt: "2026-11-13T23:30:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-a", displayName: "Site A" },
+        { ...baseConnection, id: "wp-b", displayName: "Site B" },
+      ]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = textPublication();
+    const publication = {
+      ...base,
+      provenance: { source: "blogmaatic.publication-workspace" },
+      current: {
+        ...base.current,
+        content: {
+          ...base.current.content,
+          attributes: {
+            ...base.current.content.attributes,
+            publishingTargets: { groupIds: ["group-a", "group-b"] },
+            destinationOverrides: {
+              schemaVersion: 1,
+              groups: {
+                "group-a": {
+                  routes: {
+                    wordpress: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      channel: "posts",
+                      restFields: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-a",
+                        contentType: "posts",
+                        values: { partner_label: "Alpha" },
+                      },
+                    },
+                  },
+                },
+                "group-b": {
+                  routes: {
+                    wordpress: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      channel: "posts",
+                      restFields: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-b",
+                        contentType: "posts",
+                        values: { partner_label: "Beta" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const routeFor = (connectionId) => ({
+      ...route(),
+      id: "wordpress",
+      destination: {
+        ...route().destination,
+        connectionId,
+        channel: "posts",
+      },
+    });
+
+    const siteA = await publisher.compile({
+      publication,
+      route: routeFor("wp-a"),
+      groupId: "group-a",
+    });
+    const siteB = await publisher.compile({
+      publication,
+      route: routeFor("wp-b"),
+      groupId: "group-b",
+    });
+    assert.deepEqual(siteA.payload.restFields, { partner_label: "Alpha" });
+    assert.deepEqual(siteB.payload.restFields, { partner_label: "Beta" });
+
+    const wrongCoordinate = await publisher.compile({
+      publication,
+      route: routeFor("wp-a"),
+      groupId: "group-b",
+    });
+    assert.equal(wrongCoordinate.payload.restFields, undefined);
+  } finally {
+    api.server.close();
+  }
+});
+
 test("WordPress managed REST meta compiles delivers and detects only managed-key drift", async () => {
   const api = makeServer();
   await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
