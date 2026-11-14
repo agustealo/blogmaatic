@@ -474,3 +474,20 @@ Credentials never appear in health evidence.
 ## Deferred WordPress-specific work
 
 Future WordPress slices may add direct plugin-specific SEO adapters where stable writable contracts can be verified, richer relationship/media widgets for REST meta and custom REST fields, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.
+
+
+## Canonical media detach versus permanent WordPress deletion
+
+Media Library **Detach from publication** is a canonical workspace operation, not a WordPress REST media deletion. The Operator API exposes:
+
+- `POST /v1/connections/:connectionId/assets/:remoteId/detach` with publication ID, current expected version, and optional exact group/route/content-type context
+- response `wordpressMediaRetained: true` and an immutable Publication revision
+- audited intent and outcome, including destination identifiers, revision and retained state, without image metadata values
+
+The runtime requires a unique current attachment whose numeric WordPress media ID and owning connection match the request. Legacy imports without a source-connection attribute are eligible only when the Publication provenance itself binds to the same WordPress connection. Cross-connection ID collisions cannot detach another site's assets.
+
+Canonical detach fails closed when the asset remains the shared featured image, is referenced in publication blocks or raw HTML, or is referenced by destination overrides, including featured-image and social-media selections. The operator must remove those references before detaching. The action removes the asset from the current canonical content revision across all destinations; it does not rewrite historical Publication revisions, existing WordPress posts, or remote Media Library items. An attachment can remain safely reused by other publications.
+
+Upload-attachment CAS failure deliberately **retains** the newly created remote WordPress file instead of invoking irreversible DELETE without proof that no other WordPress content already uses it. The error identifies the remote media ID for reconciliation. Such an orphan is not permission to delete it.
+
+**Permanent WordPress media deletion is intentionally unavailable from Content Studio and Operator API.** The lower-level WordPress adapter exposes a force-delete primitive for internal use, but no user-facing route may call it until reference-proof acceptance in [issue #109](https://github.com/agustealo/blogmaatic/issues/109). A future deletion flow must exhaustively check current and historical canonical references, scheduled and distribution snapshots, live WordPress posts' body/featured media across content types and statuses, plus any unobservable external/plugin usage. Any unknown, partial, raced, or unreachable result must block irreversible deletion. Publishing existing WordPress media to other sites does not transfer their ownership.
