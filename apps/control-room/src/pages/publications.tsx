@@ -2731,6 +2731,7 @@ function SourceAssetLibraryPanel({
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadFeatured, setUploadFeatured] = useState(false);
   const [editingMetadata, setEditingMetadata] = useState<string | null>(null);
+  const [confirmDetachRemoteId, setConfirmDetachRemoteId] = useState<string | null>(null);
   const [metadataTitle, setMetadataTitle] = useState("");
   const [metadataAlt, setMetadataAlt] = useState("");
   const [metadataCaption, setMetadataCaption] = useState("");
@@ -2796,6 +2797,27 @@ function SourceAssetLibraryPanel({
       setBusy(null);
     }
   }, [client, connectionId, contentType, entry.publication.id, entry.version, groupId, onAttached, routeId, routeScoped]);
+
+  const detach = useCallback(async (asset: SourceAssetRecord) => {
+    const key = `detach:${asset.remoteId}`;
+    setBusy(key);
+    setError(null);
+    try {
+      const result = await client.detachSourceAsset(connectionId, asset.remoteId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        ...(contentType ? { contentType } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
+      });
+      setConfirmDetachRemoteId(null);
+      onAttached(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Media reference could not be detached"));
+    } finally {
+      setBusy(null);
+    }
+  }, [client, connectionId, contentType, entry.publication.id, entry.version, groupId, onAttached, routeId]);
 
   const upload = useCallback(async () => {
     if (!uploadFile) return;
@@ -2906,15 +2928,21 @@ function SourceAssetLibraryPanel({
 
   const attachedIds = useMemo(() => new Set(
     entry.publication.current.content.assets.flatMap((asset) => {
-      const remoteId = asset.attributes?.sourceRemoteId;
-      const sourceConnectionId = asset.attributes?.sourceConnectionId;
-      if (typeof remoteId === "string" && sourceConnectionId === connectionId) return [remoteId];
-      const wordpressMediaId = asset.attributes?.wordpressMediaId;
-      return typeof wordpressMediaId === "number" && Number.isSafeInteger(wordpressMediaId)
-        ? [String(wordpressMediaId)]
-        : [];
+      const attributes = asset.attributes;
+      const mediaId = attributes?.wordpressMediaId;
+      if (asset.kind !== "image" || typeof mediaId !== "number" || !Number.isSafeInteger(mediaId) || mediaId < 1) {
+        return [];
+      }
+      const explicitOwnership = attributes.sourceConnectionId === connectionId &&
+        (attributes.sourceExtensionId === undefined || attributes.sourceExtensionId === "blogmaatic.wordpress-rest");
+      const legacyOwnership = attributes.sourceConnectionId === undefined &&
+        entry.publication.provenance.extensionId === "blogmaatic.wordpress-rest" &&
+        entry.publication.provenance.connectionId === connectionId;
+      if (!explicitOwnership && !legacyOwnership) return [];
+      if (attributes.sourceRemoteId !== undefined && attributes.sourceRemoteId !== String(mediaId)) return [];
+      return [String(mediaId)];
     }),
-  ), [connectionId, entry.publication.current.content.assets]);
+  ), [connectionId, entry.publication.current.content.assets, entry.publication.provenance]);
 
   return (
     <Panel
@@ -3010,6 +3038,11 @@ function SourceAssetLibraryPanel({
                   <button className="button button--quiet" type="button" onClick={() => void attach(asset, false)} disabled={busy !== null || attached}>
                     {busy === `attach:${asset.remoteId}` ? "Attaching…" : attached ? "Attached" : "Attach"}
                   </button>
+                  {attached ? (
+                    <button className="button button--quiet" type="button" onClick={() => setConfirmDetachRemoteId(asset.remoteId)} disabled={busy !== null}>
+                      Detach from publication
+                    </button>
+                  ) : null}
                   {!routeScoped ? (
                     <button className="button button--primary" type="button" onClick={() => void attach(asset, true)} disabled={busy !== null}>
                       {busy === `featured:${asset.remoteId}` ? "Setting…" : "Use as featured"}
@@ -3024,6 +3057,15 @@ function SourceAssetLibraryPanel({
                     Edit metadata
                   </button>
                 </div>
+                {confirmDetachRemoteId === asset.remoteId ? (
+                  <div className="confirmation-strip" role="group" aria-label="Confirm WordPress media detach">
+                    <small>Removes this reference from the entire publication, including its destinations. The WordPress image is kept. Referenced or featured images must be unlinked first.</small>
+                    <button className="button button--primary" type="button" onClick={() => void detach(asset)} disabled={busy !== null}>
+                      {busy === `detach:${asset.remoteId}` ? "Detaching…" : "Confirm detach"}
+                    </button>
+                    <button className="button button--quiet" type="button" onClick={() => setConfirmDetachRemoteId(null)} disabled={busy !== null}>Cancel</button>
+                  </div>
+                ) : null}
                 {editingMetadata === asset.remoteId ? (
                   <div className="source-asset-card__metadata-editor">
                     <label className="field">
