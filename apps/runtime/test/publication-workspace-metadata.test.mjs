@@ -1699,3 +1699,64 @@ test("workspace-native top-level WordPress REST fields stay isolated across two 
   );
   assert.equal(current().version, 3);
 });
+
+
+test("canonical detach creates a new immutable revision and refuses stale, featured, missing, and referenced assets", async () => {
+  const { manager, current } = managerWith(importedPublication());
+
+  await assert.rejects(
+    () => manager.detachAsset("publication-wp", 1, "hero"),
+    /clear the shared featured image first/,
+  );
+  await assert.rejects(
+    () => manager.detachAsset("publication-wp", 1, "missing"),
+    /not attached/,
+  );
+  assert.equal(current().version, 1);
+
+  const detached = await manager.detachAsset("publication-wp", 1, "alternate");
+  assert.equal(detached.version, 2);
+  assert.equal(detached.publication.current.ordinal, 2);
+  assert.deepEqual(detached.publication.current.content.assets.map((asset) => asset.id), ["hero", "document"]);
+  assert.equal(detached.publication.current.content.assets[0].attributes.featured, true);
+
+  await assert.rejects(
+    () => manager.detachAsset("publication-wp", 1, "document"),
+    /changed from version 1 to 2/,
+  );
+  assert.equal(current().version, 2);
+
+  const blockPublication = importedPublication();
+  blockPublication.current.content.blocks = [{
+    id: "image-1", kind: "image", data: { assetId: "alternate" },
+  }];
+  const referenced = managerWith(blockPublication);
+  await assert.rejects(
+    () => referenced.manager.detachAsset("publication-wp", 1, "alternate"),
+    /publication blocks or HTML still reference/,
+  );
+  assert.equal(referenced.current().version, 1);
+
+  const htmlPublication = importedPublication();
+  htmlPublication.current.content.blocks = [{
+    id: "html-source", kind: "embed",
+    data: { html: '<img src="https://example.test/alternate.jpg">' },
+  }];
+  await assert.rejects(
+    () => managerWith(htmlPublication).manager.detachAsset("publication-wp", 1, "alternate"),
+    /publication blocks or HTML still reference/,
+  );
+
+  const routePublication = importedPublication();
+  routePublication.current.content.attributes.destinationOverrides = {
+    "group-main": {
+      wordpress: { featuredMedia: { mode: "asset", assetId: "alternate" } },
+    },
+  };
+  const destination = managerWith(routePublication);
+  await assert.rejects(
+    () => destination.manager.detachAsset("publication-wp", 1, "alternate"),
+    /destination or publication settings still reference/,
+  );
+  assert.equal(destination.current().version, 1);
+});
