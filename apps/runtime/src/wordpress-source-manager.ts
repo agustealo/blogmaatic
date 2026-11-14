@@ -464,7 +464,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   readonly #publications: PublicationWorkspaceManager;
   readonly #projectionState: ProjectionStateStore;
   readonly #distributionHistory: DistributionHistoryStore;
-  readonly #schedules?: Pick<ControlPlaneStore, "listSchedules">;
+  readonly #schedules: Pick<ControlPlaneStore, "listSchedules"> | undefined;
   readonly #now: () => string;
   readonly #id: () => string;
 
