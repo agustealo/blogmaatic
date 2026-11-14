@@ -40,30 +40,19 @@ function makeServer() {
     response.writeHead(status, { "content-type": "application/json" });
     response.end(JSON.stringify(body));
   };
-  const flatten = (post) => ({
-    title: post.title.raw,
-    excerpt: post.excerpt.raw,
-    content: post.content.raw,
-    slug: post.slug,
-    status: post.status,
-    categories: post.categories,
-    tags: post.tags,
-    featured_media: post.featured_media,
-    author: post.author,
-    parent: post.parent,
-    template: post.template,
-    menu_order: post.menu_order,
-    password: post.password,
-    comment_status: post.comment_status,
-    ping_status: post.ping_status,
-    sticky: post.sticky,
-    format: post.format,
-    meta: post.meta,
-    date_gmt: post.date_gmt,
-  });
+  const flatten = (post) => {
+    const { id: _id, link: _link, modified_gmt: _modified, title, excerpt, content, ...rest } = post;
+    return {
+      ...rest,
+      title: title.raw,
+      excerpt: excerpt.raw,
+      content: content.raw,
+    };
+  };
   const toPost = (id, body) => {
     modification += 1;
     return {
+      ...body,
       id,
       author: body.author ?? 1,
       link: `http://example.test/?p=${id}`,
@@ -151,6 +140,16 @@ function makeServer() {
       return json(response, 200, {
         schema: {
           properties: {
+            title: { type: "object" },
+            genres: { type: "array", items: { type: "integer" } },
+            reading_time: { type: "integer", title: "Reading time", description: "Estimated minutes" },
+            shelf_label: { type: "string", title: "Shelf label" },
+            access_level: { type: "string", enum: ["public", "members"] },
+            promo_data: { type: "object", properties: { badge: { type: "string" } } },
+            optional_score: { type: ["number", "null"] },
+            api_secret: { type: "string" },
+            readonly_note: { type: "string", readOnly: true },
+            schema_only: { type: "boolean" },
             meta: {
               type: "object",
               properties: {
@@ -167,6 +166,21 @@ function makeServer() {
             },
           },
         },
+        endpoints: [{
+          methods: ["POST"],
+          args: {
+            title: {},
+            genres: {},
+            reading_time: {},
+            shelf_label: {},
+            access_level: {},
+            promo_data: {},
+            optional_score: {},
+            api_secret: {},
+            readonly_note: {},
+            meta: {},
+          },
+        }],
       });
     }
 
