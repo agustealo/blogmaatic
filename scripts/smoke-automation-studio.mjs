@@ -413,9 +413,9 @@ try {
   await cdp.send("Runtime.enable");
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 
-  await waitForText("A live operational view over the canonical control plane and durable runtime.");
+  await waitForText("See what you're working on, what publishes next");
   await clickText("Automations", "nav a");
-  await waitForText("Compose manual and event publishing workflows");
+  await waitForText("Choose what should happen automatically when content is approved");
   await waitForText("Schedule ownership guard");
 
   const scheduleActions = await cdp.evaluate(`(() => {
@@ -449,7 +449,7 @@ try {
   })()`);
   assert.equal(reordered, true, "Delay step could not be reordered");
   await clickText("Create Automation");
-  await waitForText("Version history", 30_000);
+  await waitForExpression(`Boolean(document.querySelector(".automation-detail .version-list"))`, 30_000);
 
   const manualV1 = await activeByName(client, "Studio manual burn");
   assert.equal(manualV1.definition.trigger.kind, "manual");
@@ -469,7 +469,7 @@ try {
   await waitForText("new immutable v2");
   await setLabeledValue("Require any tag", "news, bulletin");
   await clickText("Save version 2");
-  await waitForText("Version history", 30_000);
+  await waitForExpression(`Boolean(document.querySelector(".automation-detail .version-list"))`, 30_000);
   await waitForExpression(`document.body?.innerText.includes("v2") && document.body?.innerText.includes("v1")`);
 
   const versions = await client.listAutomationVersions(manualV1.definition.id, { limit: 10 });
@@ -493,7 +493,7 @@ try {
   await setLabeledValue("Delay", "1");
   await setLabeledValue("Unit", "seconds");
   await clickText("Create Automation");
-  await waitForText("Version history", 30_000);
+  await waitForExpression(`Boolean(document.querySelector(".automation-detail .version-list"))`, 30_000);
 
   const event = await activeByName(client, "Studio event burn");
   assert.deepEqual(event.definition.trigger, { kind: "event", eventType: "publication.approved" });

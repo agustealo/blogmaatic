@@ -87,7 +87,7 @@ async function startBrowser() {
   child.once("exit", () => { state.exited = true; });
 
   const activePortFile = join(chromeProfile, "DevToolsActivePort");
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     if (state.exited) throw new Error(`Browser exited before DevTools was ready:\n${state.output}`);
     try {
@@ -245,9 +245,10 @@ try {
 
   const semanticNav = await cdp.evaluate(`(() => {
     const nav = document.querySelector("nav.mobile-nav[aria-label='Mobile navigation']");
-    return Boolean(nav && [...nav.querySelectorAll("a")].some((link) => link.textContent?.trim() === "Schedules"));
+    return Boolean(nav && [...nav.querySelectorAll("a")].some((link) =>
+      link.getAttribute("href") === "/schedules" && link.textContent?.trim() === "Calendar"));
   })()`);
-  assert.equal(semanticNav, true, "Semantic mobile navigation must expose the Schedules destination");
+  assert.equal(semanticNav, true, "Semantic mobile navigation must expose the Calendar (/schedules) destination");
 
   await cdp.send("Emulation.setEmulatedMedia", {
     media: "screen",

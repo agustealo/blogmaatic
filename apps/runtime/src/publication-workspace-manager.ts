@@ -1473,6 +1473,49 @@ export class PublicationWorkspaceManager {
     return this.#store.update(publication, expectedVersion, now);
   }
 
+  async detachAsset(publicationId: string, expectedVersion: number, assetId: string): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    const id = requireText(assetId, "Publication asset id");
+    const content = current.publication.current.content;
+    const asset = content.assets.find((candidate) => candidate.id === id);
+    if (!asset) throw new Error(`Publication asset is not attached: ${id}`);
+    if (asset.attributes?.featured === true) {
+      throw new Error(`Cannot detach featured asset ${id}; clear the shared featured image first`);
+    }
+    const isReferenced = (value: unknown): boolean => {
+      if (typeof value === "string") return value.includes(id) || value.includes(asset.source);
+      if (Array.isArray(value)) return value.some(isReferenced);
+      if (value !== null && typeof value === "object") {
+        return Object.values(value as Record<string, unknown>).some(isReferenced);
+      }
+      return false;
+    };
+    if (isReferenced(content.blocks)) {
+      throw new Error(`Cannot detach asset ${id}; publication blocks or HTML still reference it`);
+    }
+    if (isReferenced(content.attributes)) {
+      throw new Error(`Cannot detach asset ${id}; destination or publication settings still reference it`);
+    }
+
+    const now = this.#now();
+    return this.#store.update({
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...content,
+          assets: content.assets.filter((candidate) => candidate.id !== id),
+        },
+      },
+    }, expectedVersion, now);
+  }
+
   async approveAndDispatch(publicationId: string, expectedVersion: number): Promise<PublicationWorkspaceDispatchResult> {
     let entry = await this.#store.get(publicationId);
     if (!entry) throw new Error(`Publication is not registered: ${publicationId}`);

@@ -363,6 +363,20 @@ export interface SourceAssetAttachResult {
   readonly asset: SourceAssetRecord;
 }
 
+export interface SourceAssetDetachBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
+}
+
+export interface SourceAssetDetachResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly remoteId: string;
+  readonly wordpressMediaRetained: true;
+}
+
 export interface SourceAssetMetadataUpdateBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
@@ -611,6 +625,7 @@ export interface OperatorSourceContentManager {
   setPageStructure(connectionId: string, body: SourcePageStructureBody): Promise<SourcePageStructureResult>;
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
+  detachAsset(connectionId: string, remoteId: string, body: SourceAssetDetachBody): Promise<SourceAssetDetachResult>;
   updateAssetMetadata(
     connectionId: string,
     remoteId: string,

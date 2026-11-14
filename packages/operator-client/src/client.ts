@@ -61,6 +61,8 @@ import type {
   SourceAuthorQuery,
   SourceAssetAttachBody,
   SourceAssetAttachResult,
+  SourceAssetDetachBody,
+  SourceAssetDetachResult,
   SourceAssetMetadataUpdateBody,
   SourceAssetMetadataUpdateResult,
   SourceAssetPage,
@@ -510,6 +512,17 @@ export class OperatorClient {
   ): Promise<SourceAssetAttachResult> {
     return this.#request<SourceAssetAttachResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/assets/${encodeURIComponent(remoteId)}/attach`,
+      { method: "POST", body: input },
+    );
+  }
+
+  detachSourceAsset(
+    connectionId: string,
+    remoteId: string,
+    input: SourceAssetDetachBody,
+  ): Promise<SourceAssetDetachResult> {
+    return this.#request<SourceAssetDetachResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/assets/${encodeURIComponent(remoteId)}/detach`,
       { method: "POST", body: input },
     );
   }

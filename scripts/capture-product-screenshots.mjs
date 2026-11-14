@@ -292,6 +292,15 @@ async function navigate(origin, path, readyText) {
   await new Promise((resolveWait) => setTimeout(resolveWait, 350));
 }
 
+async function waitForSeededSchedule(schedule) {
+  await waitForExpression(`(() => {
+    const title = ${JSON.stringify(schedule.publication.current.content.title)};
+    const localDate = ${JSON.stringify(schedule.localDate)};
+    return [...document.querySelectorAll(".data-table--schedules .data-table__row")]
+      .some((row) => row.textContent?.includes(title) && row.textContent?.includes(localDate));
+  })()`);
+}
+
 async function assertMobileLayout() {
   await waitForExpression(`(() => {
     const nav = document.querySelector(".mobile-nav");
@@ -392,6 +401,7 @@ async function seedProductState(token) {
       body: "Blogmaatic keeps delivery, policy, verification, and reconciliation behind one durable publishing authority.",
       language: "en",
       tags: ["publishing", "automation"],
+      publishingTargetGroupIds: [group.group.id],
       slug: "durable-publishing",
       canonicalUrl: "https://journal.example.test/durable-publishing/",
       status: "ready",
@@ -507,7 +517,7 @@ try {
   await navigate(origin, "/setup", "Blogmaatic is ready");
   await capture("02-first-run-ready");
 
-  await navigate(origin, "/connections", "Connections");
+  await navigate(origin, "/connections", "Destinations");
   await cdp.evaluate(`(() => {
     const button = [...document.querySelectorAll("button")].find((candidate) => candidate.textContent?.trim() === "Test");
     if (button) button.click();
@@ -517,7 +527,7 @@ try {
   await new Promise((resolveWait) => setTimeout(resolveWait, 350));
   await capture("03-connections");
 
-  await navigate(origin, "/", "Overview");
+  await navigate(origin, "/", "See what you're working on");
   await capture("04-control-room-overview");
 
   await navigate(origin, "/automations", "Automations");
@@ -532,28 +542,28 @@ try {
   await navigate(origin, "/operations", "Operations");
   await capture("08-operations");
 
-  await navigate(origin, "/publication-groups", "Publication Groups");
+  await navigate(origin, "/publication-groups", "Publishing routes");
   await capture("09-publication-groups");
 
-  await navigate(origin, "/publications", "Publications");
+  await navigate(origin, "/publications", "Content library");
   await capture("10-publications");
 
-  await navigate(origin, "/schedules", "Schedules");
-  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await navigate(origin, "/schedules", "Calendar");
+  await waitForSeededSchedule(state.schedule);
   await capture("11-schedules");
 
   await setViewport(mobileViewport);
-  await navigate(origin, "/publications", "Publications");
+  await navigate(origin, "/publications", "Content library");
   await assertMobileLayout();
   await capture("12-mobile-publications");
 
-  await navigate(origin, "/publication-groups", "Publication Groups");
+  await navigate(origin, "/publication-groups", "Publishing routes");
   await assertMobileLayout();
   await capture("13-mobile-publication-groups");
 
-  await navigate(origin, "/schedules", "Schedules");
+  await navigate(origin, "/schedules", "Calendar");
   await assertMobileLayout();
-  await waitForExpression(`document.body.innerText.includes(${JSON.stringify(state.schedule.id)})`);
+  await waitForSeededSchedule(state.schedule);
   await capture("14-mobile-schedules");
 
   const manifest = {

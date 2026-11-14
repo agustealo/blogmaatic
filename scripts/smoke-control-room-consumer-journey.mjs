@@ -285,7 +285,7 @@ try {
   await waitForText("No active destination is ready");
   await clickText("Open Connections");
   await waitForText("No destinations yet");
-  await clickText("New connection");
+  await clickText("Add destination");
   await waitForText("New destination");
 
   await selectOptionContaining("Publisher", "jekyll-git");
@@ -304,15 +304,25 @@ try {
   await clickText("Create Automation");
   await waitForText("Blogmaatic is ready", 30_000);
   await clickText("Enter Control Room");
-  await waitForText("A live operational view over the canonical control plane and durable runtime.");
+  await waitForText("See what you're working on, what publishes next");
 
-  await clickText("Publications", "nav a");
-  await waitForText("Content workspace");
+  await clickText("Content", "nav a");
+  await waitForText("Content library");
   await clickText("New Publication");
   await waitForText("New Publication");
   await setLabeledValue("Title", publicationTitle);
   await setLabeledValue("Summary", "Created entirely through the real Control Room browser journey.");
-  await setLabeledValue("Body", "This article proves the visible consumer flow can create durable publishing state without hidden OperatorClient seeding.");
+  await setLabeledValue("Paragraph", "This article proves the visible consumer flow can create durable publishing state without hidden OperatorClient seeding.");
+  await waitForText("Publishing targets");
+  await waitForExpression(`Boolean([...document.querySelectorAll(".publication-target-option")].some((label) => label.textContent?.includes("Browser publishing")))`);
+  const targetSelected = await cdp.evaluate(`(() => {
+    const label = [...document.querySelectorAll(".publication-target-option")].find((item) => item.textContent?.includes("Browser publishing"));
+    const checkbox = label?.querySelector('input[type="checkbox"]');
+    if (!(checkbox instanceof HTMLInputElement)) return false;
+    if (!checkbox.checked) checkbox.click();
+    return checkbox.checked;
+  })()`);
+  assert.equal(targetSelected, true, "Publication must explicitly select its verified publishing group");
   await setLabeledValue("Tags", "browser, e2e");
   await clickText("Create Draft");
 
