@@ -596,7 +596,7 @@ test("WordPress source image upload validates source/version before remote side 
   assert.equal(deleteCalls, 0);
 });
 
-test("WordPress source image upload compensates remote media when canonical attach loses its CAS race", async () => {
+test("WordPress source image upload retains remote media when canonical attach loses its CAS race", async () => {
   const deleted = [];
   const manager = new WordPressSourceManager({
     content: {
@@ -668,7 +668,7 @@ test("WordPress source image upload compensates remote media when canonical atta
     }),
     /changed from version 4 to 5/,
   );
-  assert.deepEqual(deleted, [["wp-main", "91"]]);
+  assert.deepEqual(deleted, [], "a CAS race must never permanently delete remote WordPress media");
 });
 
 
@@ -2795,4 +2795,120 @@ test("WordPress media metadata edits are version- and route-bound before remote 
   assert.equal(result.asset.alt, undefined);
   assert.equal(result.asset.description, undefined);
   assert.equal(current.version, 4);
+});
+
+
+test("WordPress canonical detach is connection-scoped and leaves shared remote media intact", async () => {
+  const routeFor = (connectionId) => ({
+    id: "wordpress", enabled: true, desiredState: "present",
+    destination: { extensionId: "blogmaatic.wordpress-rest", connectionId, channel: "posts" },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      const connectionId = groupId === "group-a" ? "wp-a" : groupId === "group-b" ? "wp-b" : null;
+      return connectionId ? {
+        enabled: true,
+        group: { id: groupId, name: groupId, policySetId: "allow", routes: [routeFor(connectionId)] },
+      } : undefined;
+    },
+  };
+  const media = (connectionId) => ({
+    id: `wordpress-media-${connectionId}-77`, kind: "image",
+    source: `https://${connectionId}.test/uploads/77.jpg`,
+    attributes: {
+      wordpressMediaId: 77, sourceConnectionId: connectionId,
+      sourceExtensionId: "blogmaatic.wordpress-rest", sourceRemoteId: "77",
+    },
+  });
+  const initial = (id, assets) => ({
+    publication: {
+      id, createdAt: "2026-11-14T02:00:00Z", status: "draft",
+      current: {
+        id: "revision-1", ordinal: 1, createdAt: "2026-11-14T02:00:00Z",
+        content: {
+          schemaVersion: 1, title: "Shared remote media", language: "en",
+          blocks: [], assets, tags: [],
+          attributes: { publishingTargets: { groupIds: ["group-a", "group-b"] } },
+        },
+      },
+      provenance: { source: "blogmaatic.publication-workspace" },
+    },
+    version: 5, recordedAt: "2026-11-14T02:00:00Z", updatedAt: "2026-11-14T02:00:00Z",
+  });
+  const entries = new Map([
+    ["pub-one", initial("pub-one", [media("wp-a"), media("wp-b")])],
+    ["pub-two", initial("pub-two", [media("wp-a")])],
+  ]);
+  let remoteDeleteCalls = 0;
+  let detachCalls = 0;
+  const manager = new WordPressSourceManager({
+    content: {
+      async deleteMediaPermanent() { remoteDeleteCalls += 1; },
+      async getMedia() { throw new Error("detach should never fetch or delete remote media"); },
+    },
+    publisher: {},
+    publicationGroups: groups,
+    publications: {
+      async get(id) { return entries.get(id); },
+      async detachAsset(id, expectedVersion, assetId) {
+        const old = entries.get(id);
+        assert.equal(old.version, expectedVersion);
+        detachCalls += 1;
+        const next = {
+          ...old, version: old.version + 1,
+          publication: {
+            ...old.publication,
+            current: {
+              ...old.publication.current, id: `revision-${old.version + 1}`,
+              ordinal: old.publication.current.ordinal + 1,
+              content: {
+                ...old.publication.current.content,
+                assets: old.publication.current.content.assets.filter((asset) => asset.id !== assetId),
+              },
+            },
+          },
+        };
+        entries.set(id, next);
+        return next;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  await assert.rejects(
+    () => manager.detachAsset("wp-a", "77", {
+      publicationId: "pub-one", expectedVersion: 4,
+      contentType: "posts", groupId: "group-a", routeId: "wordpress",
+    }),
+    /changed from version 4 to 5/,
+  );
+  await assert.rejects(
+    () => manager.detachAsset("wp-a", "77", {
+      publicationId: "pub-one", expectedVersion: 5,
+      contentType: "posts", groupId: "group-b", routeId: "wordpress",
+    }),
+    /does not match the requested connection/,
+  );
+  await assert.rejects(
+    () => manager.detachAsset("wp-a", "78", {
+      publicationId: "pub-one", expectedVersion: 5,
+      contentType: "posts", groupId: "group-a", routeId: "wordpress",
+    }),
+    /unique attachment on the exact WordPress connection/,
+  );
+  assert.equal(detachCalls, 0);
+  assert.equal(remoteDeleteCalls, 0);
+
+  const result = await manager.detachAsset("wp-a", "77", {
+    publicationId: "pub-one", expectedVersion: 5,
+    contentType: "posts", groupId: "group-a", routeId: "wordpress",
+  });
+  assert.equal(result.wordpressMediaRetained, true);
+  assert.equal(result.publication.version, 6);
+  assert.deepEqual(entries.get("pub-one").publication.current.content.assets.map((asset) => asset.id), ["wordpress-media-wp-b-77"]);
+  assert.deepEqual(entries.get("pub-two").publication.current.content.assets.map((asset) => asset.id), ["wordpress-media-wp-a-77"]);
+  assert.equal(remoteDeleteCalls, 0);
+  assert.equal(detachCalls, 1);
 });
