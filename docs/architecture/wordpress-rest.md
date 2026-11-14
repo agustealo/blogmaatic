@@ -491,3 +491,18 @@ Canonical detach fails closed when the asset remains the shared featured image, 
 Upload-attachment CAS failure deliberately **retains** the newly created remote WordPress file instead of invoking irreversible DELETE without proof that no other WordPress content already uses it. The error identifies the remote media ID for reconciliation. Such an orphan is not permission to delete it.
 
 **Permanent WordPress media deletion is intentionally unavailable from Content Studio and Operator API.** The lower-level WordPress adapter exposes a force-delete primitive for internal use, but no user-facing route may call it until reference-proof acceptance in [issue #109](https://github.com/agustealo/blogmaatic/issues/109). A future deletion flow must exhaustively check current and historical canonical references, scheduled and distribution snapshots, live WordPress posts' body/featured media across content types and statuses, plus any unobservable external/plugin usage. Any unknown, partial, raced, or unreachable result must block irreversible deletion. Publishing existing WordPress media to other sites does not transfer their ownership.
+
+
+## Read-only media deletion preflight
+
+The Content Studio **Inspect reuse** control uses `GET /v1/connections/:connectionId/assets/:remoteId/deletion-preflight`, requiring `source-content:read`. It never asks for write authority and never invokes WordPress DELETE. The result exposes `disposition: "blocked"`, `canDelete: false`, `wordpressMediaRetained: true`, reference identifiers, scanned counts, and explicit verification limitations. An empty reference list does **not** imply deletability.
+
+The existing WordPress source manager performs a bounded inspection:
+
+1. Read the exact WordPress Media Library attachment from its owning connection.
+2. Enumerate every canonical Publication Workspace head, then all persisted versions for each head, including archived and detached revisions. Match explicit same-connection WordPress media identity (or provenance-bound legacy imports), and known image URLs in assets, blocks and destination attributes.
+3. Inspect all frozen schedule snapshots through the canonical Control Plane schedule store.
+4. Enumerate viewable authenticated WordPress content types and available paginated posts. Record featured media ID matches and exact source URL occurrences in editable body content.
+5. Report incomplete inventories for errors or scan limits. Pagination is bounded to prevent a stuck or runaway preflight.
+
+The inventory is **diagnostic, not authorization**: hidden/unregistered content types, plugin-specific metadata and markup, custom image derivatives and CDN URLs, external embeds, in-flight runs, and previously delivered copies cannot be proven absent through these APIs. Therefore `permanent_deletion_not_enabled`, `external_and_plugin_media_reuse_unverifiable`, and `historical_delivery_and_inflight_run_reuse_unverifiable` remain explicit blockers even after a successful scan. A future destructive workflow requires independently proven completeness, immutable reference ownership, race-safe recheck, scoped permission and intentional confirmation. No direct DELETE method is exposed by Operator API or Studio.

@@ -1321,6 +1321,14 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
     return domainCall(() => manager(options).listAssets(connectionId, parseAssetQuery(request)));
   });
 
+  app.get("/v1/connections/:connectionId/assets/:remoteId/deletion-preflight", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const remoteId = requirePathString(values.remoteId, "remoteId");
+    return domainCall(() => manager(options).preflightAssetDeletion(connectionId, remoteId));
+  });
+
   app.post("/v1/connections/:connectionId/assets/upload", async (request, reply) => {
     const principal = await authorize(options, request, "source-content:write");
     const connectionId = requirePathString(params(request).connectionId, "connectionId");

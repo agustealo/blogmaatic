@@ -363,6 +363,40 @@ export interface SourceAssetAttachResult {
   readonly asset: SourceAssetRecord;
 }
 
+export type SourceAssetReferenceKind =
+  | "publication_current"
+  | "publication_history"
+  | "schedule_snapshot"
+  | "wordpress_featured"
+  | "wordpress_content";
+
+export interface SourceAssetReferenceRecord {
+  readonly kind: SourceAssetReferenceKind;
+  readonly publicationId?: string;
+  readonly revisionId?: string;
+  readonly scheduleId?: string;
+  readonly remotePostId?: string;
+  readonly contentType?: string;
+}
+
+export interface SourceAssetDeletionPreflight {
+  readonly connectionId: string;
+  readonly remoteId: string;
+  readonly disposition: "blocked";
+  readonly canDelete: false;
+  readonly wordpressMediaRetained: true;
+  readonly media?: SourceAssetRecord;
+  readonly references: readonly SourceAssetReferenceRecord[];
+  readonly inspected: {
+    readonly publicationHeads: number;
+    readonly publicationVersions: number;
+    readonly schedules: number;
+    readonly wordpressContentTypes: number;
+    readonly wordpressPosts: number;
+  };
+  readonly blockers: readonly string[];
+}
+
 export interface SourceAssetDetachBody {
   readonly publicationId: string;
   readonly expectedVersion: number;
@@ -626,6 +660,7 @@ export interface OperatorSourceContentManager {
   listAssets(connectionId: string, query?: SourceAssetQuery): Promise<SourceAssetPage>;
   attachAsset(connectionId: string, remoteId: string, body: SourceAssetAttachBody): Promise<SourceAssetAttachResult>;
   detachAsset(connectionId: string, remoteId: string, body: SourceAssetDetachBody): Promise<SourceAssetDetachResult>;
+  preflightAssetDeletion(connectionId: string, remoteId: string): Promise<SourceAssetDeletionPreflight>;
   updateAssetMetadata(
     connectionId: string,
     remoteId: string,

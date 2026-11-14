@@ -267,6 +267,7 @@ export async function startRuntime(options: {
       publications,
       projectionState,
       distributionHistory: projectionState,
+      schedules: controlPlaneStore,
     });
     operator = await startOperatorApi({
       controlPlane,

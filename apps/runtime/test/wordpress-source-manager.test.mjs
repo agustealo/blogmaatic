@@ -2912,3 +2912,145 @@ test("WordPress canonical detach is connection-scoped and leaves shared remote m
   assert.equal(remoteDeleteCalls, 0);
   assert.equal(detachCalls, 1);
 });
+
+
+test("WordPress deletion preflight inventories current, historical, scheduled and remote references without DELETE", async () => {
+  const asset = {
+    id: "wordpress-media-wp-a-77", kind: "image",
+    source: "https://wp-a.test/uploads/77.jpg",
+    attributes: {
+      wordpressMediaId: 77, sourceConnectionId: "wp-a",
+      sourceExtensionId: "blogmaatic.wordpress-rest", sourceRemoteId: "77",
+    },
+  };
+  const publication = (id, revision, assets, extra = {}) => ({
+    id, status: "draft", createdAt: "2026-11-14T00:00:00Z",
+    provenance: { source: "blogmaatic.publication-workspace" },
+    current: {
+      id: revision, ordinal: 1, createdAt: "2026-11-14T00:00:00Z",
+      content: {
+        schemaVersion: 1, title: id, language: "en",
+        blocks: [], assets, tags: [], attributes: extra,
+      },
+    },
+  });
+  const head = publication("pub-one", "current-one", []);
+  const previous = publication("pub-one", "previous-one", [asset]);
+  const current = publication("pub-two", "current-two", [asset]);
+  let deleteCalls = 0;
+  let mediaReads = 0;
+  const pages = (items) => ({ items, nextCursor: undefined });
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { return "posts"; },
+      async getMedia(connectionId, remoteId) {
+        mediaReads++;
+        assert.equal(connectionId, "wp-a");
+        assert.equal(remoteId, "77");
+        return {
+          id: 77, slug: "hero", sourceUrl: asset.source,
+          title: "Hero", alt: "", caption: "", description: "",
+          mediaKind: "image", mediaType: "image/jpeg",
+        };
+      },
+      async listContentTypes(connectionId) {
+        assert.equal(connectionId, "wp-a");
+        return [{ slug: "post", name: "Posts", restBase: "posts", taxonomies: [], supports: [], viewable: true, hierarchical: false }];
+      },
+      async list(connectionId, query) {
+        assert.equal(connectionId, "wp-a");
+        assert.equal(query.contentType, "posts");
+        assert.equal(query.page, 1);
+        return {
+          items: [
+            { id: 201, featuredMediaId: 77, contentHtml: "" },
+            { id: 202, contentHtml: `<img src="${asset.source}">` },
+            { id: 203, contentHtml: '<!-- wp:image {"id":77,"sizeSlug":"thumbnail"} --><img src="https://cdn.example.test/alternate.webp">' },
+          ], page: 1, perPage: 100, hasMore: false,
+        };
+      },
+      async deleteMediaPermanent() { deleteCalls++; },
+    },
+    publisher: {}, publicationGroups: {},
+    publications: {
+      async list() {
+        return pages([
+          { publication: head, version: 3 },
+          { publication: current, version: 1 },
+        ]);
+      },
+      async listVersions(id) {
+        if (id === "pub-one") return pages([
+          { publication: head, version: 3 },
+          { publication: previous, version: 2 },
+        ]);
+        return pages([{ publication: current, version: 1 }]);
+      },
+    },
+    schedules: {
+      async listSchedules() {
+        return pages([{
+          id: "schedule-one",
+          publication: publication("pub-one", "scheduled-one", [asset]),
+        }]);
+      },
+    },
+    projectionState: {}, distributionHistory: {},
+  });
+  const preflight = await manager.preflightAssetDeletion("wp-a", "77");
+  assert.equal(preflight.canDelete, false);
+  assert.equal(preflight.disposition, "blocked");
+  assert.equal(preflight.wordpressMediaRetained, true);
+  assert.equal(preflight.media.remoteId, "77");
+  assert.equal(preflight.inspected.publicationHeads, 2);
+  assert.equal(preflight.inspected.publicationVersions, 3);
+  assert.equal(preflight.inspected.schedules, 1);
+  assert.equal(preflight.inspected.wordpressPosts, 3);
+  assert.ok(preflight.references.some((reference) =>
+    reference.kind === "wordpress_content" && reference.remotePostId === "203"), "Serialized Gutenberg IDs must be detected");
+  assert.deepEqual(new Set(preflight.references.map((reference) => reference.kind)), new Set([
+    "publication_current", "publication_history", "schedule_snapshot",
+    "wordpress_featured", "wordpress_content",
+  ]));
+  assert.equal(preflight.blockers.includes("known_media_references_exist"), true);
+  assert.equal(preflight.blockers.includes("permanent_deletion_not_enabled"), true);
+  assert.equal(deleteCalls, 0);
+  assert.equal(mediaReads, 1);
+});
+
+test("WordPress media deletion preflight fails closed on missing media and incomplete inventories", async () => {
+  let deleteCalls = 0;
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { return "posts"; },
+      async getMedia() { throw new Error("WordPress offline"); },
+      async listContentTypes() { throw new Error("Discovery unavailable"); },
+      async deleteMediaPermanent() { deleteCalls++; },
+    },
+    publisher: {}, publicationGroups: {},
+    publications: {
+      async list() { throw new Error("Canonical database offline"); },
+    },
+    projectionState: {}, distributionHistory: {},
+  });
+  await assert.rejects(
+    () => manager.preflightAssetDeletion("wp-a", "0"),
+    /canonical positive integer/,
+  );
+  await assert.rejects(
+    () => manager.preflightAssetDeletion("wp-a", "077"),
+    /canonical positive integer/,
+  );
+  const result = await manager.preflightAssetDeletion("wp-a", "77");
+  assert.equal(result.canDelete, false);
+  assert.equal(result.media, undefined);
+  assert.equal(result.references.length, 0);
+  for (const reason of [
+    "remote_media_unavailable",
+    "canonical_publication_scan_incomplete",
+    "schedule_scan_unavailable",
+    "wordpress_content_type_scan_incomplete",
+    "external_and_plugin_media_reuse_unverifiable",
+  ]) assert.ok(result.blockers.includes(reason), `Missing fail-closed reason: ${reason}`);
+  assert.equal(deleteCalls, 0);
+});

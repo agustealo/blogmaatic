@@ -63,6 +63,7 @@ import type {
   SourceAssetAttachResult,
   SourceAssetDetachBody,
   SourceAssetDetachResult,
+  SourceAssetDeletionPreflight,
   SourceAssetMetadataUpdateBody,
   SourceAssetMetadataUpdateResult,
   SourceAssetPage,
@@ -513,6 +514,15 @@ export class OperatorClient {
     return this.#request<SourceAssetAttachResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/assets/${encodeURIComponent(remoteId)}/attach`,
       { method: "POST", body: input },
+    );
+  }
+
+  preflightSourceAssetDeletion(
+    connectionId: string,
+    remoteId: string,
+  ): Promise<SourceAssetDeletionPreflight> {
+    return this.#request<SourceAssetDeletionPreflight>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/assets/${encodeURIComponent(remoteId)}/deletion-preflight`,
     );
   }
 
