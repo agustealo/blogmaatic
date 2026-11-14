@@ -3436,3 +3436,52 @@ test("plugin-registered meta, ACF REST fields and Gutenberg media IDs provide re
   }
   assert.equal(inspectWordPressMediaReferences(deeplyNested, 77, sourceUrl).scanIncomplete, true);
 });
+
+
+test("authenticated media preflight reads plugin REST meta without mutating posts or leaking field data", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-14T10:00:00.000Z",
+      updatedAt: "2026-11-14T10:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    api.posts.set(111, {
+      id: 111, status: "publish", slug: "plugin-hero",
+      link: "http://example.test/?p=111",
+      title: { raw: "Custom image" }, content: { raw: "<p>Opaque plugin data</p>" },
+      excerpt: { raw: "" }, featured_media: 0,
+      meta: { landing_page_image: { id: 77, secret: "must-never-be-returned" } },
+      acf: { hero_image: 77, customer_id: 77 },
+    });
+    const result = await content.listMediaReferences("wp-1", "77", "https://site.test/uploads/77.jpg", {
+      contentType: "posts", page: 1, perPage: 100,
+    });
+    assert.equal(result.scannedPosts, 1);
+    assert.equal(result.hasMore, false);
+    assert.equal(result.scanIncomplete, false);
+    assert.deepEqual(new Set(result.items.map((item) => item.kind)),
+      new Set(["wordpress_plugin_meta", "wordpress_rest_field"]));
+    assert.deepEqual(new Set(result.items.map((item) => item.remotePostId)), new Set([111]));
+    assert.equal(JSON.stringify(result).includes("must-never-be-returned"), false);
+    assert.equal(api.posts.has(111), true);
+    assert.equal(api.counts.postUpdates, 0);
+    await assert.rejects(
+      () => content.listMediaReferences("wp-1", "077", "", { contentType: "posts" }),
+      /canonical positive media id/,
+    );
+  } finally {
+    api.server.close();
+  }
+});
