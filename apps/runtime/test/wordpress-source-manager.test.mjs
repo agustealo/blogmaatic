@@ -2957,16 +2957,21 @@ test("WordPress deletion preflight inventories current, historical, scheduled an
         assert.equal(connectionId, "wp-a");
         return [{ slug: "post", name: "Posts", restBase: "posts", taxonomies: [], supports: [], viewable: true, hierarchical: false }];
       },
-      async list(connectionId, query) {
+      async listMediaReferences(connectionId, mediaId, sourceUrl, query) {
         assert.equal(connectionId, "wp-a");
+        assert.equal(mediaId, "77");
+        assert.equal(sourceUrl, asset.source);
         assert.equal(query.contentType, "posts");
         assert.equal(query.page, 1);
         return {
           items: [
-            { id: 201, featuredMediaId: 77, contentHtml: "" },
-            { id: 202, contentHtml: `<img src="${asset.source}">` },
-            { id: 203, contentHtml: '<!-- wp:image {"id":77,"sizeSlug":"thumbnail"} --><img src="https://cdn.example.test/alternate.webp">' },
-          ], page: 1, perPage: 100, hasMore: false,
+            { remotePostId: 201, kind: "wordpress_featured" },
+            { remotePostId: 202, kind: "wordpress_content" },
+            { remotePostId: 203, kind: "wordpress_content" },
+            { remotePostId: 204, kind: "wordpress_plugin_meta" },
+            { remotePostId: 204, kind: "wordpress_rest_field" },
+          ],
+          scannedPosts: 4, hasMore: false, scanIncomplete: false,
         };
       },
       async deleteMediaPermanent() { deleteCalls++; },
@@ -2986,16 +2991,49 @@ test("WordPress deletion preflight inventories current, historical, scheduled an
         ]);
         return pages([{ publication: current, version: 1 }]);
       },
+      async get(id) {
+        return id === "pub-one" ? { publication: head, version: 3 } :
+          { publication: current, version: 1 };
+      },
     },
     schedules: {
       async listSchedules() {
         return pages([{
-          id: "schedule-one",
+          id: "schedule-one", updatedAt: "2026-11-14T10:00:00Z",
+          groups: [{ routes: [{ destination: {
+            extensionId: "blogmaatic.wordpress-rest", connectionId: "wp-a", channel: "posts",
+          } }] }],
           publication: publication("pub-one", "scheduled-one", [asset]),
         }]);
       },
+      async getSchedule(id) {
+        assert.equal(id, "schedule-one");
+        return { id, updatedAt: "2026-11-14T10:00:00Z" };
+      },
     },
-    projectionState: {}, distributionHistory: {},
+    runs: {
+      async listRuns() {
+        return pages([{
+          runId: "run-one",
+          request: {
+            publication: previous,
+            groups: [{ routes: [{ destination: {
+              extensionId: "blogmaatic.wordpress-rest", connectionId: "wp-a", channel: "posts",
+            } }] }],
+          },
+        }]);
+      },
+    },
+    projectionState: {},
+    distributionHistory: {
+      async list(publicationId) {
+        return publicationId === "pub-one" ? pages([{
+          id: "delivery-one", publicationId, revisionId: "previous-one",
+          destination: { extensionId: "blogmaatic.wordpress-rest", connectionId: "wp-a", channel: "posts" },
+          receipt: { evidence: {} },
+        }]) : pages([]);
+      },
+    },
   });
   const preflight = await manager.preflightAssetDeletion("wp-a", "77");
   assert.equal(preflight.canDelete, false);
@@ -3005,17 +3043,21 @@ test("WordPress deletion preflight inventories current, historical, scheduled an
   assert.equal(preflight.inspected.publicationHeads, 2);
   assert.equal(preflight.inspected.publicationVersions, 3);
   assert.equal(preflight.inspected.schedules, 1);
-  assert.equal(preflight.inspected.wordpressPosts, 3);
+  assert.equal(preflight.inspected.wordpressPosts, 4);
+  assert.equal(preflight.inspected.deliveryHistory, 1);
+  assert.equal(preflight.inspected.automationRuns, 1);
+  assert.equal(preflight.scanConsistency, "not_proven");
   assert.ok(preflight.references.some((reference) =>
     reference.kind === "wordpress_content" && reference.remotePostId === "203"), "Serialized Gutenberg IDs must be detected");
   assert.deepEqual(new Set(preflight.references.map((reference) => reference.kind)), new Set([
     "publication_current", "publication_history", "schedule_snapshot",
-    "wordpress_featured", "wordpress_content",
+    "delivery_history", "automation_run", "wordpress_featured",
+    "wordpress_content", "wordpress_plugin_meta", "wordpress_rest_field",
   ]));
   assert.equal(preflight.blockers.includes("known_media_references_exist"), true);
   assert.equal(preflight.blockers.includes("permanent_deletion_not_enabled"), true);
   assert.equal(deleteCalls, 0);
-  assert.equal(mediaReads, 1);
+  assert.equal(mediaReads, 2);
 });
 
 test("WordPress media deletion preflight fails closed on missing media and incomplete inventories", async () => {
@@ -3050,7 +3092,7 @@ test("WordPress media deletion preflight fails closed on missing media and incom
     "canonical_publication_scan_incomplete",
     "schedule_scan_unavailable",
     "wordpress_content_type_scan_incomplete",
-    "external_and_plugin_media_reuse_unverifiable",
+    "external_and_private_plugin_media_reuse_unverifiable",
   ]) assert.ok(result.blockers.includes(reason), `Missing fail-closed reason: ${reason}`);
   assert.equal(deleteCalls, 0);
 });
