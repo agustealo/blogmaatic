@@ -843,6 +843,92 @@ export class PublicationWorkspaceManager {
     }, expectedVersion, now);
   }
 
+  async setSourceRestFieldValues(
+    publicationId: string,
+    expectedVersion: number,
+    state: {
+      readonly extensionId: string;
+      readonly connectionId: string;
+      readonly contentType: string;
+      readonly values: Readonly<Record<string, JsonValue>>;
+      readonly groupId?: string;
+      readonly routeId?: string;
+    },
+  ): Promise<PublicationWorkspaceEntry> {
+    const current = await this.#store.get(publicationId);
+    if (!current) throw new Error(`Publication is not registered: ${publicationId}`);
+    if (current.version !== expectedVersion) {
+      throw new Error(`Publication ${publicationId} changed from version ${expectedVersion} to ${current.version}`);
+    }
+    const contentType = state.contentType.trim();
+    if (!contentType) throw new Error("Source REST field content type is required");
+
+    let targetRoute: PublicationGroup["routes"][number] | undefined;
+    if (state.groupId !== undefined || state.routeId !== undefined) {
+      if (!state.groupId || !state.routeId) {
+        throw new Error("Route-scoped source REST fields require both groupId and routeId");
+      }
+      targetRoute = await this.#publishingTargetRoute(current.publication, state.groupId, state.routeId);
+      if (
+        targetRoute.destination.extensionId !== state.extensionId ||
+        targetRoute.destination.connectionId !== state.connectionId ||
+        targetRoute.destination.channel !== contentType
+      ) {
+        throw new Error("Source REST field route does not match the requested destination/content type");
+      }
+    } else {
+      if (
+        current.publication.provenance.extensionId !== state.extensionId ||
+        current.publication.provenance.connectionId !== state.connectionId
+      ) {
+        throw new Error("Source REST field connection does not match the publication source");
+      }
+      const wordpress = jsonRecord(current.publication.current.content.attributes.wordpress);
+      if (wordpress?.contentType !== contentType) {
+        throw new Error("Source REST field content type does not match the publication source");
+      }
+    }
+
+    const values: Record<string, JsonValue> = {};
+    for (const [rawKey, value] of Object.entries(state.values)) {
+      const key = rawKey.trim();
+      if (!key) throw new Error("Source REST field key is required");
+      values[key] = value;
+    }
+
+    const nextState: JsonValue = {
+      extensionId: state.extensionId,
+      connectionId: state.connectionId,
+      contentType,
+      values,
+    };
+    const oldAttributes = current.publication.current.content.attributes;
+    const nextAttributes = targetRoute && state.groupId && state.routeId
+      ? withDestinationOverride(
+        oldAttributes,
+        state.groupId,
+        state.routeId,
+        targetRoute.destination,
+        { restFields: nextState },
+      )
+      : { ...oldAttributes, sourceRestFields: nextState };
+    if (JSON.stringify(oldAttributes) === JSON.stringify(nextAttributes)) return current;
+
+    const now = this.#now();
+    return this.#store.update({
+      ...current.publication,
+      current: {
+        id: `revision_${this.#id()}`,
+        ordinal: current.publication.current.ordinal + 1,
+        createdAt: now,
+        content: {
+          ...current.publication.current.content,
+          attributes: nextAttributes,
+        },
+      },
+    }, expectedVersion, now);
+  }
+
   async setSocialVariant(
     publicationId: string,
     input: {
