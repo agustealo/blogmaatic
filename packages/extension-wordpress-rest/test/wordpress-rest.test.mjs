@@ -10,6 +10,7 @@ import { ConnectionAuthority } from "@blogmaatic/extension-sdk";
 import { EnvironmentSecretProvider, SecretAuthority } from "@blogmaatic/secrets";
 import {
   WordPressContentService,
+  inspectWordPressMediaReferences,
   WordPressRestPublisher,
   decodeSeoValue,
   discoverSeoFields,
@@ -3395,4 +3396,43 @@ test("SEO discovery recognizes compatible registered Yoast and Rank Math meta wi
     new Set(rankMath.map((field) => field.semantic)),
     new Set(["title", "description", "canonical", "focus_keyphrase"]),
   );
+});
+
+
+test("plugin-registered meta, ACF REST fields and Gutenberg media IDs provide redacted reuse evidence", () => {
+  const sourceUrl = "https://cdn.example.test/uploads/original.jpg";
+  const post = {
+    id: 201,
+    status: "draft",
+    slug: "media-gallery",
+    link: "https://site.example.test/?p=201",
+    featured_media: 77,
+    content: { raw: '<!-- wp:image {"id":77,"sizeSlug":"large"} --><img src="https://cdn.example.test/transformed.webp" class="wp-image-77" />' },
+    meta: {
+      "_hero_image_id": 77,
+      "layout": { "brand_logo": { "attachment_id": 77 } },
+      "opaque": JSON.stringify({ component: { gallery: [10, 77, 92] } }),
+    },
+    acf: { "speaker_photo": 77, "decorativeNumber": 77 },
+  };
+  const result = inspectWordPressMediaReferences(post, 77, sourceUrl);
+  assert.deepEqual(new Set(result.kinds), new Set([
+    "wordpress_featured", "wordpress_content", "wordpress_plugin_meta", "wordpress_rest_field",
+  ]));
+  assert.equal(result.scanIncomplete, false);
+  const noMedia = inspectWordPressMediaReferences({
+    ...post,
+    featured_media: 0,
+    content: { raw: "<p>No media</p>" },
+    meta: { "_hero_image_id": 78 },
+    acf: { "speaker_photo": 78, "decorativeNumber": 77 },
+  }, 77, sourceUrl);
+  assert.deepEqual(noMedia.kinds, []);
+  const deeplyNested = { id: 204, featured_media: 0, content: { raw: "" }, meta: {} };
+  let child = deeplyNested.meta;
+  for (let index = 0; index < 20; index += 1) {
+    child.nested = {};
+    child = child.nested;
+  }
+  assert.equal(inspectWordPressMediaReferences(deeplyNested, 77, sourceUrl).scanIncomplete, true);
 });
