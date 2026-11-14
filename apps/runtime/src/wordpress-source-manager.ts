@@ -1353,6 +1353,8 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     if (!Number.isSafeInteger(id) || id < 1 || String(id) !== remoteId) {
       throw new Error("WordPress media id must be a canonical positive integer");
     }
+    // Reuse the authenticated active-connection gate before exposing canonical references.
+    this.#content.defaultContentType(connectionId);
 
     const blockers = new Set<string>([
       "permanent_deletion_not_enabled",
