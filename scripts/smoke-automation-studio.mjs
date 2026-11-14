@@ -413,9 +413,9 @@ try {
   await cdp.send("Runtime.enable");
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 
-  await waitForText("A live operational view over the canonical control plane and durable runtime.");
+  await waitForText("See what you're working on, what publishes next");
   await clickText("Automations", "nav a");
-  await waitForText("Compose manual and event publishing workflows");
+  await waitForText("Choose what should happen automatically when content is approved");
   await waitForText("Schedule ownership guard");
 
   const scheduleActions = await cdp.evaluate(`(() => {
