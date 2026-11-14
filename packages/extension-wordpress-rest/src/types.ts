@@ -320,6 +320,28 @@ export interface WordPressPostView {
   readonly ownership: WordPressManagedOwnership;
 }
 
+/**
+ * Read-only, intentionally non-authoritative WordPress media usage evidence.
+ * Only values exposed by the authenticated REST API can be inspected.
+ */
+export type WordPressMediaReferenceKind =
+  | "wordpress_featured"
+  | "wordpress_content"
+  | "wordpress_plugin_meta"
+  | "wordpress_rest_field";
+
+export interface WordPressMediaReferenceEvidence {
+  readonly remotePostId: number;
+  readonly kind: WordPressMediaReferenceKind;
+}
+
+export interface WordPressMediaReferencePage {
+  readonly items: readonly WordPressMediaReferenceEvidence[];
+  readonly scannedPosts: number;
+  readonly hasMore: boolean;
+  readonly scanIncomplete: boolean;
+}
+
 export interface WordPressPostPage {
   readonly items: readonly WordPressPostView[];
   readonly page: number;

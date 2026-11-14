@@ -367,14 +367,20 @@ export type SourceAssetReferenceKind =
   | "publication_current"
   | "publication_history"
   | "schedule_snapshot"
+  | "automation_run"
+  | "delivery_history"
   | "wordpress_featured"
-  | "wordpress_content";
+  | "wordpress_content"
+  | "wordpress_plugin_meta"
+  | "wordpress_rest_field";
 
 export interface SourceAssetReferenceRecord {
   readonly kind: SourceAssetReferenceKind;
   readonly publicationId?: string;
   readonly revisionId?: string;
   readonly scheduleId?: string;
+  readonly runId?: string;
+  readonly deliveryId?: string;
   readonly remotePostId?: string;
   readonly contentType?: string;
 }
@@ -391,10 +397,17 @@ export interface SourceAssetDeletionPreflight {
     readonly publicationHeads: number;
     readonly publicationVersions: number;
     readonly schedules: number;
+    readonly automationRuns: number;
+    readonly deliveryHistory: number;
     readonly wordpressContentTypes: number;
     readonly wordpressPosts: number;
   };
   readonly blockers: readonly string[];
+  /**
+   * A snapshot over autonomous systems is never authoritative without a
+   * deletion-time lock. Observed changes explicitly downgrade to "changed".
+   */
+  readonly scanConsistency: "changed" | "not_proven";
 }
 
 export interface SourceAssetDetachBody {

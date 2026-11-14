@@ -3079,7 +3079,15 @@ function SourceAssetLibraryPanel({
                   <div className="source-asset-card__preflight" role="status">
                     <strong>Permanent deletion blocked</strong>
                     <p>{preflight.references.length} known reference{preflight.references.length === 1 ? "" : "s"} found. WordPress media is retained.</p>
-                    <small>Inspected {preflight.inspected.publicationHeads} publications, {preflight.inspected.publicationVersions} versions, {preflight.inspected.schedules} schedules, and {preflight.inspected.wordpressPosts} WordPress posts in {preflight.inspected.wordpressContentTypes} exposed content types.</small>
+                    <small>
+                      Inspected {preflight.inspected.publicationHeads} publications, {preflight.inspected.publicationVersions} revisions,
+                      {" "}{preflight.inspected.schedules} schedules, {preflight.inspected.automationRuns} automation runs,
+                      {" "}{preflight.inspected.deliveryHistory} delivery receipts, and {preflight.inspected.wordpressPosts} WordPress posts
+                      in {preflight.inspected.wordpressContentTypes} exposed content types.
+                    </small>
+                    <small>{preflight.scanConsistency === "changed"
+                      ? "Concurrent changes were observed during inspection. This inventory is not stable."
+                      : "No changes were observed during inspection, but cross-system consistency is not proven."}</small>
                     {preflight.references.length > 0 ? (
                       <ul>
                         {preflight.references.map((reference, index) => (
@@ -3087,12 +3095,15 @@ function SourceAssetLibraryPanel({
                             {reference.kind.replaceAll("_", " ")}
                             {reference.publicationId ? ` · ${reference.publicationId}` : ""}
                             {reference.scheduleId ? ` · schedule ${reference.scheduleId}` : ""}
+                            {reference.runId ? ` · run ${reference.runId}` : ""}
+                            {reference.deliveryId ? ` · delivery ${reference.deliveryId}` : ""}
                             {reference.remotePostId ? ` · WordPress post ${reference.remotePostId}` : ""}
                             {reference.contentType ? ` (${reference.contentType})` : ""}
                           </li>
                         ))}
                       </ul>
                     ) : null}
+                    <small>Registered REST plugin metadata is inspected when exposed. Private plugin tables, theme options, external consumers and later edits cannot be ruled out.</small>
                     <small>Verification limitations: {preflight.blockers.join(", ").replaceAll("_", " ")}. No permanent deletion is available.</small>
                   </div>
                 ) : null}
