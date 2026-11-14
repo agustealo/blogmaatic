@@ -10,7 +10,7 @@ function snapshot(managed = false, publicationId, routeId, native = {}) {
       author: 7,
       title: "Existing WordPress article",
       excerpt: "<p>Imported summary</p>",
-      contentHtml: "<h2>Imported heading</h2><p>Imported body.</p>",
+      contentHtml: native.contentHtml ?? "<h2>Imported heading</h2><p>Imported body.</p>",
       slug: "existing-wordpress-article",
       status: native.status ?? "publish",
       ...(native.password === undefined ? {} : { password: native.password }),
@@ -49,6 +49,7 @@ test("WordPress import creates one canonical publication and recovers it on retr
     pingStatus: "closed",
     sticky: true,
     format: "quote",
+    contentHtml: "<!-- wp:paragraph --><p>Imported Gutenberg body.</p><!-- /wp:paragraph -->",
   };
   let currentSnapshot = snapshot(false, undefined, undefined, importedNative);
   let stored;
@@ -158,7 +159,11 @@ test("WordPress import creates one canonical publication and recovers it on retr
   assert.equal(first.publication.publication.provenance.remoteId, "55");
   assert.equal(first.publication.publication.current.content.tags[0], "automation");
   assert.equal(first.publication.publication.current.content.attributes.categories[0], "Publishing");
-  assert.equal(first.publication.publication.current.content.blocks[0].kind, "embed");
+  assert.deepEqual(first.publication.publication.current.content.blocks, [{
+    id: "wordpress-gutenberg-paragraph-0",
+    kind: "paragraph",
+    data: { text: "Imported Gutenberg body." },
+  }]);
   assert.equal(first.publication.publication.current.content.assets[0].attributes.wordpressMediaId, 12);
   assert.deepEqual(first.publication.publication.current.content.attributes.sourceAuthor, {
     extensionId: "blogmaatic.wordpress-rest",
@@ -950,7 +955,10 @@ test("WordPress revision recovery is source-bound before remote fetch and maps s
     modifiedGmt: "2026-10-17T20:00:00",
     title: "Recovered title",
     excerpt: "<p>Recovered <strong>summary</strong></p>",
-    contentHtml: "<h2>Recovered</h2><p>Body</p>",
+    contentHtml: [
+      "<!-- wp:heading {\"level\":3} --><h3>Recovered heading</h3><!-- /wp:heading -->",
+      "<!-- wp:paragraph --><p>Recovered body.</p><!-- /wp:paragraph -->",
+    ].join("\n"),
   };
   const manager = new WordPressSourceManager({
     content: {
@@ -986,7 +994,7 @@ test("WordPress revision recovery is source-bound before remote fetch and maps s
                 ...current.publication.current.content,
                 title: source.title,
                 summary: source.summary,
-                blocks: [{ id: "restored", kind: "embed", data: { html: source.contentHtml } }],
+                blocks: source.blocks,
               },
             },
           },
@@ -1036,7 +1044,18 @@ test("WordPress revision recovery is source-bound before remote fetch and maps s
     remoteRevisionId: "9055",
     title: "Recovered title",
     summary: "Recovered summary",
-    contentHtml: "<h2>Recovered</h2><p>Body</p>",
+    blocks: [
+      {
+        id: "wordpress-gutenberg-heading-0",
+        kind: "heading",
+        data: { level: 3, text: "Recovered heading" },
+      },
+      {
+        id: "wordpress-gutenberg-paragraph-2",
+        kind: "paragraph",
+        data: { text: "Recovered body." },
+      },
+    ],
     sourceModifiedAt: "2026-10-17T20:00:00",
     sourceAuthorId: 9,
   });
