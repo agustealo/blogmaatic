@@ -6,6 +6,7 @@ import type {
   OperatorApiOptions,
   OperatorSourceContentManager,
   SourceAssetAttachBody,
+  SourceAssetDetachBody,
   SourceAssetMetadataUpdateBody,
   SourceAssetQuery,
   SourceAssetUploadInput,
@@ -569,6 +570,14 @@ function parseAssetAttachBody(body: unknown): SourceAssetAttachBody {
     ...(groupId ? { groupId } : {}),
     ...(routeId ? { routeId } : {}),
   };
+}
+
+function parseAssetDetachBody(body: unknown): SourceAssetDetachBody {
+  const parsed = parseAssetAttachBody(body);
+  if (parsed.featured !== undefined) {
+    throw new OperatorRequestError("featured is not allowed when detaching media");
+  }
+  return parsed;
 }
 
 function parseAssetMetadataUpdateBody(body: unknown): SourceAssetMetadataUpdateBody {
@@ -1376,6 +1385,42 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
           revisionId: value.publication.publication.current.id,
           version: value.publication.version,
           assetRemoteId: value.asset.remoteId,
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.post("/v1/connections/:connectionId/assets/:remoteId/detach", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const values = params(request);
+    const connectionId = requirePathString(values.connectionId, "connectionId");
+    const remoteId = requirePathString(values.remoteId, "remoteId");
+    const body = parseAssetDetachBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-asset.detach",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        remoteId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
+        contentType: body.contentType ?? null,
+        wordpressMediaRetained: true,
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).detachAsset(connectionId, remoteId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          assetRemoteId: value.remoteId,
+          wordpressMediaRetained: value.wordpressMediaRetained,
         },
       }),
     });
