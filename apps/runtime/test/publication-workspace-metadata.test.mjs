@@ -330,7 +330,11 @@ test("source revision recovery creates a new canonical revision and preserves ma
     remoteRevisionId: "9055",
     title: "Recovered remote title",
     summary: "Recovered excerpt",
-    contentHtml: "<h2>Recovered heading</h2><p>Recovered body.</p>",
+    blocks: [{
+      id: "recovered-block",
+      kind: "embed",
+      data: { html: "<h2>Recovered heading</h2><p>Recovered body.</p>" },
+    }],
     sourceModifiedAt: "2026-10-17T20:00:00",
     sourceAuthorId: 9,
   });
@@ -341,7 +345,7 @@ test("source revision recovery creates a new canonical revision and preserves ma
   assert.equal(restored.publication.current.content.title, "Recovered remote title");
   assert.equal(restored.publication.current.content.summary, "Recovered excerpt");
   assert.deepEqual(restored.publication.current.content.blocks, [{
-    id: "source-revision-9055",
+    id: "recovered-block",
     kind: "embed",
     data: { html: "<h2>Recovered heading</h2><p>Recovered body.</p>" },
   }]);
@@ -368,7 +372,7 @@ test("source revision recovery creates a new canonical revision and preserves ma
       remoteId: "99",
       remoteRevisionId: "9001",
       title: "Wrong post",
-      contentHtml: "<p>wrong</p>",
+      blocks: [{ id: "wrong", kind: "paragraph", data: { text: "wrong" } }],
     }),
     /does not match the publication source identity/,
   );
@@ -386,7 +390,7 @@ test("source revision recovery can clear an empty remote excerpt without deletin
     remoteId: "55",
     remoteRevisionId: "9056",
     title: "",
-    contentHtml: "",
+    blocks: [],
   });
 
   assert.equal(restored.publication.current.content.title, "Imported WordPress article");
