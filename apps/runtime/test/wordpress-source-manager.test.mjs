@@ -2964,6 +2964,7 @@ test("WordPress deletion preflight inventories current, historical, scheduled an
           items: [
             { id: 201, featuredMediaId: 77, contentHtml: "" },
             { id: 202, contentHtml: `<img src="${asset.source}">` },
+            { id: 203, contentHtml: '<!-- wp:image {"id":77,"sizeSlug":"thumbnail"} --><img src="https://cdn.example.test/alternate.webp">' },
           ], page: 1, perPage: 100, hasMore: false,
         };
       },
@@ -3003,7 +3004,9 @@ test("WordPress deletion preflight inventories current, historical, scheduled an
   assert.equal(preflight.inspected.publicationHeads, 2);
   assert.equal(preflight.inspected.publicationVersions, 3);
   assert.equal(preflight.inspected.schedules, 1);
-  assert.equal(preflight.inspected.wordpressPosts, 2);
+  assert.equal(preflight.inspected.wordpressPosts, 3);
+  assert.ok(preflight.references.some((reference) =>
+    reference.kind === "wordpress_content" && reference.remotePostId === "203"), "Serialized Gutenberg IDs must be detected");
   assert.deepEqual(new Set(preflight.references.map((reference) => reference.kind)), new Set([
     "publication_current", "publication_history", "schedule_snapshot",
     "wordpress_featured", "wordpress_content",
