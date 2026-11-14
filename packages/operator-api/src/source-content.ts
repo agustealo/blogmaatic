@@ -17,6 +17,7 @@ import type {
   SourceMetaValuesBody,
   SourceSeoValuesBody,
   SourcePublishingStateBody,
+  SourceRestFieldValuesBody,
   SourceStandardTaxonomyBody,
   SourcePageStructureBody,
   SourceTaxonomyCreateBody,
