@@ -20,6 +20,8 @@ import type {
   WordPressImportSnapshot,
   WordPressMediaPage,
   WordPressMediaQuery,
+  WordPressMediaReferencePage,
+  WordPressMediaReferenceKind,
   WordPressMediaRecord,
   WordPressMediaView,
   WordPressPostPage,
@@ -394,6 +396,76 @@ function remoteStateHash(
   );
 }
 
+
+/**
+ * Examine REST-exposed reference-bearing fields without returning the fields
+ * themselves. This does NOT establish that private plugin/theme storage is unused.
+ */
+export function inspectWordPressMediaReferences(
+  post: WordPressPostRecord,
+  mediaId: number,
+  sourceUrl: string,
+): { readonly kinds: readonly WordPressMediaReferenceKind[]; readonly scanIncomplete: boolean } {
+  const kinds = new Set<WordPressMediaReferenceKind>();
+  if (post.featured_media === mediaId) kinds.add("wordpress_featured");
+  const html = rawValue(post.content);
+  const escapedId = String(mediaId);
+  const wpClass = new RegExp("(?:wp-image-|data-id=[\"']|attachment_id=[\"'])" + escapedId + "(?!\\d)", "i");
+  const wpBlock = new RegExp("<!--\\s*wp:(?:image|cover)\\s+\\{[^>]*\"id\"\\s*:\\s*" + escapedId + "(?!\\d)", "i");
+  if ((sourceUrl && html.includes(sourceUrl)) || wpClass.test(html) || wpBlock.test(html)) {
+    kinds.add("wordpress_content");
+  }
+
+  let visited = 0;
+  let scanIncomplete = false;
+  const mediaKey = /(?:^|[_-])(?:image|images|media|attachment|attachments|thumbnail|gallery|featured|photo|photos|logo|banner|cover|background|hero|icon)(?:[_-]|$)/i;
+  const idToken = new RegExp("(?:^|[^0-9])" + escapedId + "(?![0-9])");
+  const wpImageToken = new RegExp("wp-image-" + escapedId + "(?!\\d)", "i");
+  const traverse = (value: unknown, path: string, depth: number): boolean => {
+    visited += 1;
+    if (depth > 14 || visited > 5000) {
+      scanIncomplete = true;
+      return false;
+    }
+    if (value === null || value === undefined) return false;
+    const semantic = mediaKey.test(path);
+    if (typeof value === "number") return semantic && value === mediaId;
+    if (typeof value === "string") {
+      if (sourceUrl && value.includes(sourceUrl)) return true;
+      if (wpImageToken.test(value)) return true;
+      if (semantic && idToken.test(value)) return true;
+      const trimmed = value.trim();
+      if ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+          (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+        try { return traverse(JSON.parse(trimmed) as unknown, path, depth + 1); } catch { /* Opaque plugin value */ }
+      }
+      return false;
+    }
+    if (Array.isArray(value)) {
+      return value.some((entry) => traverse(entry, path, depth + 1));
+    }
+    if (typeof value === "object") {
+      for (const [key, entry] of Object.entries(value)) {
+        if (traverse(entry, path ? path + "." + key : key, depth + 1)) return true;
+      }
+    }
+    return false;
+  };
+  if (traverse(post.meta, "meta", 0)) kinds.add("wordpress_plugin_meta");
+
+  const builtins = new Set([
+    "id", "date", "date_gmt", "guid", "modified", "modified_gmt", "slug", "status",
+    "type", "link", "title", "excerpt", "content", "author", "featured_media",
+    "parent", "menu_order", "template", "password", "comment_status", "ping_status",
+    "sticky", "format", "categories", "tags", "meta", "_links", "_embedded",
+    "permalink_template", "generated_slug",
+  ]);
+  for (const [key, value] of Object.entries(post)) {
+    if (!builtins.has(key) && traverse(value, key, 0)) kinds.add("wordpress_rest_field");
+  }
+  return { kinds: [...kinds], scanIncomplete };
+}
+
 export class WordPressContentService {
   readonly #connections: ConnectionAuthority;
   readonly #secrets: SecretAuthority;
@@ -613,6 +685,54 @@ export class WordPressContentService {
       page,
       perPage,
       hasMore: records.length === perPage,
+    };
+  }
+
+
+  /**
+   * Inspect raw authenticated REST records including registered plugin meta and
+   * custom REST fields. No match is an incomplete proof: private storage, options,
+   * custom tables, rewritten derivative URLs and external embeds remain unknown.
+   */
+  async listMediaReferences(
+    connectionId: string,
+    remoteId: string,
+    sourceUrl: string,
+    query: WordPressPostQuery = {},
+  ): Promise<WordPressMediaReferencePage> {
+    const idText = requireRemoteId(remoteId);
+    const id = Number(idText);
+    if (!Number.isSafeInteger(id) || id < 1 || String(id) !== idText) {
+      throw new Error("WordPress media reference scan requires a canonical positive media id");
+    }
+    const { client, restBase } = this.#client(connectionId, query.contentType);
+    const page = requirePage(query.page);
+    const perPage = requirePerPage(query.perPage);
+    const params = new URLSearchParams({
+      context: "edit",
+      page: String(page),
+      per_page: String(perPage),
+      orderby: "modified",
+      order: "desc",
+      status: query.status?.trim() || ALL_POST_STATUSES,
+    });
+    const records = await client.requestJson<readonly WordPressPostRecord[]>(
+      "/" + restBase + "?" + params.toString(),
+    );
+    const evidence: Array<{ readonly remotePostId: number; readonly kind: WordPressMediaReferenceKind }> = [];
+    let scanIncomplete = false;
+    for (const record of records) {
+      const inspected = inspectWordPressMediaReferences(record, id, sourceUrl);
+      if (inspected.scanIncomplete) scanIncomplete = true;
+      for (const kind of inspected.kinds) {
+        evidence.push({ remotePostId: record.id, kind });
+      }
+    }
+    return {
+      items: evidence,
+      scannedPosts: records.length,
+      hasMore: records.length === perPage,
+      scanIncomplete,
     };
   }
 
