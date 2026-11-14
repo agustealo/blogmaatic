@@ -321,7 +321,7 @@ Supported source operations are:
 - restore a managed trashed post as a draft
 - permanently delete only a managed post that is already in Trash
 
-Import is route-bound. The operator selects the Publication Group route that will own the imported WordPress object. Blogmaatic creates a canonical draft Publication, preserves the imported raw WordPress HTML as an explicit `embed.html` block, resolves category/tag names, preserves featured-media identity, installs the Blogmaatic ownership marker on the existing WordPress post, seeds projection state, and appends import evidence to publication distribution history.
+Import is route-bound. The operator selects the Publication Group route that will own the imported WordPress object. Blogmaatic creates a canonical draft Publication, converts only provably lossless Gutenberg core blocks into editable canonical blocks, preserves every unsupported or unsafe fragment as raw Gutenberg/HTML `embed.html`, resolves category/tag names, preserves featured-media identity, installs the Blogmaatic ownership marker on the existing WordPress post, seeds projection state, and appends import evidence to publication distribution history.
 
 The source identity `extensionId + connectionId + remoteId` is stored in publication provenance. Retrying an interrupted import recovers the same canonical publication rather than creating a second one.
 
@@ -344,7 +344,23 @@ The restore flow is:
 7. record the remote post/revision identity in `PublicationIR.attributes.sourceRevisionRecovery`
 8. require an explicit later publish action before WordPress is changed
 
-Recovered WordPress HTML remains an explicit `embed.html` block so recovery does not perform a lossy HTML-to-block conversion. The Operator API audit ledger records both the remote revision identity and the resulting canonical revision/version.
+Revision recovery uses the same Gutenberg import adapter as first import. Safe simple core blocks become ordinary editable canonical blocks; unsupported/custom/nested/rich fragments remain raw `embed.html` blocks. The Operator API audit ledger records both the remote revision identity and the resulting canonical revision/version.
+
+### Gutenberg import fidelity
+
+Blogmaatic uses WordPress's official `@wordpress/block-serialization-default-parser` on the server-side source path. Control Room never parses Gutenberg markup.
+
+The first conversion slice is deliberately narrow:
+
+- `core/paragraph` maps to canonical paragraph only when it has no nested blocks, no block attributes, and no inline HTML/entity semantics that Blogmaatic would flatten.
+- `core/heading` maps only when the HTML heading level and optional Gutenberg `level` attribute agree and no other block attributes or inline markup would be lost.
+- `core/quote` maps only for the minimal paragraph plus optional citation shape that canonical quote can reproduce.
+- `core/code` maps only for minimal code markup that canonical code can reproduce without decoding or rewriting entities.
+- custom blocks, layout/nested blocks, rich inline formatting, freeform fragments, and unsupported core blocks remain raw.
+- classic HTML with no Gutenberg block delimiters remains one exact raw embed.
+- parser failure or an unsafe reconstruction fails closed to the original document as raw content.
+
+Raw Gutenberg fallback keeps block names, attributes, nested block comments, and HTML content so a later WordPress projection does not flatten custom block identity. Editable and raw blocks may coexist in canonical document order.
 
 ## REST-registered post meta
 
