@@ -3096,3 +3096,83 @@ test("WordPress media deletion preflight fails closed on missing media and incom
   ]) assert.ok(result.blockers.includes(reason), `Missing fail-closed reason: ${reason}`);
   assert.equal(deleteCalls, 0);
 });
+
+
+test("WordPress media preflight detects concurrent canonical and media changes, never authorizes delete", async () => {
+  let getCalls = 0;
+  let remoteDeleteCalls = 0;
+  const publication = {
+    id: "publication-concurrent", status: "draft",
+    provenance: { source: "blogmaatic.publication-workspace" },
+    current: {
+      id: "revision-one", content: {
+        schemaVersion: 1, title: "Concurrent edit", language: "en",
+        blocks: [], assets: [], tags: [], attributes: {},
+      },
+    },
+  };
+  const page = (items) => ({ items });
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { return "posts"; },
+      async getMedia() {
+        getCalls += 1;
+        return {
+          id: 77, sourceUrl: "https://wp.test/77.jpg", slug: "image",
+          title: "Photo", alt: "", caption: "", description: "",
+          modifiedGmt: getCalls === 1 ? "2026-11-14T10:00:00" : "2026-11-14T10:00:01",
+        };
+      },
+      async listContentTypes() { return [{ restBase: "posts" }]; },
+      async listMediaReferences() {
+        return { items: [], scannedPosts: 0, hasMore: false, scanIncomplete: false };
+      },
+      async deleteMediaPermanent() { remoteDeleteCalls += 1; },
+    },
+    publisher: {}, publicationGroups: {},
+    publications: {
+      async list() { return page([{ publication, version: 1 }]); },
+      async listVersions() { return page([{ publication, version: 1 }]); },
+      async get() { return { publication, version: 2 }; },
+    },
+    schedules: {
+      async listSchedules() { return page([]); },
+      async getSchedule() { throw new Error("Should not recheck absent schedules"); },
+    },
+    runs: { async listRuns() { return page([]); } },
+    distributionHistory: { async list() { return page([]); } },
+    projectionState: {},
+  });
+  const result = await manager.preflightAssetDeletion("wp-a", "77");
+  assert.equal(result.scanConsistency, "changed");
+  assert.equal(result.canDelete, false);
+  assert.equal(result.wordpressMediaRetained, true);
+  assert.ok(result.blockers.includes("canonical_head_changed_during_scan"));
+  assert.ok(result.blockers.includes("remote_media_changed_during_scan"));
+  assert.ok(result.blockers.includes("non_transactional_cross_system_inspection"));
+  assert.equal(getCalls, 2);
+  assert.equal(remoteDeleteCalls, 0);
+});
+
+test("media preflight rejects inactive cross-connection requests before disclosing canonical references", async () => {
+  let canonicalReads = 0;
+  let remoteDeleteCalls = 0;
+  const manager = new WordPressSourceManager({
+    content: {
+      defaultContentType() { throw new Error("Connection inactive or not authorized"); },
+      async deleteMediaPermanent() { remoteDeleteCalls += 1; },
+    },
+    publisher: {}, publicationGroups: {},
+    publications: {
+      async list() { canonicalReads += 1; return { items: [] }; },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+  await assert.rejects(
+    () => manager.preflightAssetDeletion("wp-other", "77"),
+    /Connection inactive or not authorized/,
+  );
+  assert.equal(canonicalReads, 0);
+  assert.equal(remoteDeleteCalls, 0);
+});
