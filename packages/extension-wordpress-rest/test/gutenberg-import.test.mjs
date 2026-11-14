@@ -55,17 +55,17 @@ test("simple Gutenberg core blocks become editable canonical blocks", () => {
       data: { text: "Plain paragraph" },
     },
     {
-      id: "wordpress-gutenberg-heading-2",
+      id: "wordpress-gutenberg-heading-1",
       kind: "heading",
       data: { level: 3, text: "Plain heading" },
     },
     {
-      id: "wordpress-gutenberg-quote-4",
+      id: "wordpress-gutenberg-quote-2",
       kind: "quote",
       data: { text: "Quoted text", attribution: "Ada" },
     },
     {
-      id: "wordpress-gutenberg-code-6",
+      id: "wordpress-gutenberg-code-3",
       kind: "code",
       data: { code: "const value = 42;\nreturn value;" },
     },
@@ -193,4 +193,14 @@ test("raw Gutenberg fallback survives WordPress projection compilation", async (
   assert.match(projection.payload.bodyTemplate, /"variant":"hero"/);
   assert.match(projection.payload.bodyTemplate, /<section>Custom card<\/section>/);
   assert.match(projection.payload.bodyTemplate, /<!-- \/wp:acme\/card -->/);
+});
+
+
+test("mismatched Gutenberg delimiters fail closed to the original raw document", () => {
+  const source = "<!-- wp:paragraph --><p>Broken structure</p><!-- /wp:heading -->";
+  assert.deepEqual(importWordPressContentBlocks(source), [{
+    id: "wordpress-gutenberg-malformed",
+    kind: "embed",
+    data: { html: source },
+  }]);
 });
