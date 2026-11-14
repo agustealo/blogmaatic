@@ -449,7 +449,7 @@ try {
   })()`);
   assert.equal(reordered, true, "Delay step could not be reordered");
   await clickText("Create Automation");
-  await waitForText("Version history", 30_000);
+  await waitForExpression(`Boolean(document.querySelector(".automation-detail .version-list"))`, 30_000);
 
   const manualV1 = await activeByName(client, "Studio manual burn");
   assert.equal(manualV1.definition.trigger.kind, "manual");
@@ -469,7 +469,7 @@ try {
   await waitForText("new immutable v2");
   await setLabeledValue("Require any tag", "news, bulletin");
   await clickText("Save version 2");
-  await waitForText("Version history", 30_000);
+  await waitForExpression(`Boolean(document.querySelector(".automation-detail .version-list"))`, 30_000);
   await waitForExpression(`document.body?.innerText.includes("v2") && document.body?.innerText.includes("v1")`);
 
   const versions = await client.listAutomationVersions(manualV1.definition.id, { limit: 10 });
@@ -493,7 +493,7 @@ try {
   await setLabeledValue("Delay", "1");
   await setLabeledValue("Unit", "seconds");
   await clickText("Create Automation");
-  await waitForText("Version history", 30_000);
+  await waitForExpression(`Boolean(document.querySelector(".automation-detail .version-list"))`, 30_000);
 
   const event = await activeByName(client, "Studio event burn");
   assert.deepEqual(event.definition.trigger, { kind: "event", eventType: "publication.approved" });
