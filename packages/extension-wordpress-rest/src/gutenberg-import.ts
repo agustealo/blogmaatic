@@ -10,6 +10,41 @@ interface ParsedWordPressBlock {
 }
 
 const GUTENBERG_DELIMITER = /<!--\s*\/?wp:/i;
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+const GUTENBERG_COMMENT = /^<!--\s*(\/?)wp:([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)?)(?:\s+(\{[\s\S]*\}))?\s*(\/?)-->$/;
+
+function validGutenbergCommentStructure(contentHtml: string): boolean {
+  const stack: string[] = [];
+  let sawGutenberg = false;
+  for (const comment of contentHtml.match(HTML_COMMENT) ?? []) {
+    if (!/<!--\s*\/?wp:/i.test(comment)) continue;
+    sawGutenberg = true;
+    const match = comment.match(GUTENBERG_COMMENT);
+    if (!match?.[2]) return false;
+    const closing = match[1] === "/";
+    const name = match[2];
+    const rawAttrs = match[3];
+    const selfClosing = match[4] === "/";
+
+    if (closing) {
+      if (rawAttrs !== undefined || selfClosing) return false;
+      if (stack.pop() !== name) return false;
+      continue;
+    }
+
+    if (rawAttrs !== undefined) {
+      try {
+        const parsed = JSON.parse(rawAttrs) as unknown;
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+      } catch {
+        return false;
+      }
+    }
+
+    if (!selfClosing) stack.push(name);
+  }
+  return sawGutenberg && stack.length === 0;
+}
 
 function attrsEmpty(attrs: ParsedWordPressBlock["attrs"]): boolean {
   return attrs === null || Object.keys(attrs).length === 0;
@@ -155,6 +190,14 @@ export function importWordPressContentBlocks(contentHtml: string): readonly Publ
     }];
   }
 
+  if (!validGutenbergCommentStructure(contentHtml)) {
+    return [{
+      id: "wordpress-gutenberg-malformed",
+      kind: "embed",
+      data: { html: contentHtml },
+    }];
+  }
+
   let parsed: readonly ParsedWordPressBlock[];
   try {
     parsed = parse(contentHtml) as readonly ParsedWordPressBlock[];
@@ -175,14 +218,15 @@ export function importWordPressContentBlocks(contentHtml: string): readonly Publ
   }
 
   const blocks: PublicationBlock[] = [];
-  for (const [index, block] of parsed.entries()) {
+  for (const block of parsed) {
+    const outputIndex = blocks.length;
     if (block.blockName === null) {
-      const raw = rawEmbed(block.innerHTML, index);
+      const raw = rawEmbed(block.innerHTML, outputIndex);
       if (raw) blocks.push(raw);
       continue;
     }
 
-    const mapped = mappedBlock(block, index);
+    const mapped = mappedBlock(block, outputIndex);
     if (mapped) {
       blocks.push(mapped);
       continue;
@@ -196,7 +240,7 @@ export function importWordPressContentBlocks(contentHtml: string): readonly Publ
         data: { html: contentHtml },
       }];
     }
-    const raw = rawEmbed(serialized, index);
+    const raw = rawEmbed(serialized, outputIndex);
     if (raw) blocks.push(raw);
   }
 
