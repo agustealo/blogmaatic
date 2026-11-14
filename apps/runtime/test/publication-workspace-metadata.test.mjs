@@ -1584,3 +1584,118 @@ test("route-scoped social variants are immutable idempotent ordered and isolated
   );
   assert.equal(current().version, 3);
 });
+
+
+test("workspace-native top-level WordPress REST fields stay isolated across two destinations", async () => {
+  const publication = {
+    id: "publication-rest-field-matrix",
+    createdAt: "2026-11-13T23:00:00.000Z",
+    status: "draft",
+    current: {
+      id: "revision-1",
+      ordinal: 1,
+      createdAt: "2026-11-13T23:00:00.000Z",
+      content: {
+        schemaVersion: 1,
+        title: "Two site REST fields",
+        language: "en",
+        blocks: [],
+        assets: [],
+        tags: [],
+        attributes: {
+          publishingTargets: { groupIds: ["group-a", "group-b"] },
+        },
+      },
+    },
+    provenance: { source: "blogmaatic.publication-workspace" },
+  };
+  const routeFor = (connectionId) => ({
+    id: "wordpress",
+    enabled: true,
+    desiredState: "present",
+    destination: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId,
+      channel: "posts",
+    },
+    requiredCapabilities: ["article.create", "article.update", "article.inspect"],
+  });
+  const groups = {
+    async get(groupId) {
+      if (groupId === "group-a") {
+        return {
+          enabled: true,
+          group: { id: groupId, name: "Site A", policySetId: "allow", routes: [routeFor("wp-a")] },
+        };
+      }
+      if (groupId === "group-b") {
+        return {
+          enabled: true,
+          group: { id: groupId, name: "Site B", policySetId: "allow", routes: [routeFor("wp-b")] },
+        };
+      }
+      return undefined;
+    },
+  };
+  const { manager, current } = managerWith(publication, groups);
+
+  const siteA = await manager.setSourceRestFieldValues("publication-rest-field-matrix", 1, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "posts",
+    groupId: "group-a",
+    routeId: "wordpress",
+    values: {
+      partner_label: "Site A",
+      reading_time: 7,
+    },
+  });
+  assert.equal(siteA.version, 2);
+
+  const siteB = await manager.setSourceRestFieldValues("publication-rest-field-matrix", 2, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    groupId: "group-b",
+    routeId: "wordpress",
+    values: {
+      partner_label: "Site B",
+      reading_time: 11,
+    },
+  });
+  assert.equal(siteB.version, 3);
+
+  const overrides = siteB.publication.current.content.attributes.destinationOverrides;
+  assert.deepEqual(overrides.groups["group-a"].routes.wordpress.restFields, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-a",
+    contentType: "posts",
+    values: {
+      partner_label: "Site A",
+      reading_time: 7,
+    },
+  });
+  assert.deepEqual(overrides.groups["group-b"].routes.wordpress.restFields, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-b",
+    contentType: "posts",
+    values: {
+      partner_label: "Site B",
+      reading_time: 11,
+    },
+  });
+  assert.equal(siteB.publication.current.content.attributes.sourceRestFields, undefined);
+
+  await assert.rejects(
+    () => manager.setSourceRestFieldValues("publication-rest-field-matrix", 3, {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-b",
+      contentType: "posts",
+      groupId: "group-a",
+      routeId: "wordpress",
+      values: { partner_label: "Wrong route" },
+    }),
+    /does not match the requested destination/,
+  );
+  assert.equal(current().version, 3);
+});

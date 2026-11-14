@@ -40,30 +40,19 @@ function makeServer() {
     response.writeHead(status, { "content-type": "application/json" });
     response.end(JSON.stringify(body));
   };
-  const flatten = (post) => ({
-    title: post.title.raw,
-    excerpt: post.excerpt.raw,
-    content: post.content.raw,
-    slug: post.slug,
-    status: post.status,
-    categories: post.categories,
-    tags: post.tags,
-    featured_media: post.featured_media,
-    author: post.author,
-    parent: post.parent,
-    template: post.template,
-    menu_order: post.menu_order,
-    password: post.password,
-    comment_status: post.comment_status,
-    ping_status: post.ping_status,
-    sticky: post.sticky,
-    format: post.format,
-    meta: post.meta,
-    date_gmt: post.date_gmt,
-  });
+  const flatten = (post) => {
+    const { id: _id, link: _link, modified_gmt: _modified, title, excerpt, content, ...rest } = post;
+    return {
+      ...rest,
+      title: title.raw,
+      excerpt: excerpt.raw,
+      content: content.raw,
+    };
+  };
   const toPost = (id, body) => {
     modification += 1;
     return {
+      ...body,
       id,
       author: body.author ?? 1,
       link: `http://example.test/?p=${id}`,
@@ -151,6 +140,16 @@ function makeServer() {
       return json(response, 200, {
         schema: {
           properties: {
+            title: { type: "object" },
+            genres: { type: "array", items: { type: "integer" } },
+            reading_time: { type: "integer", title: "Reading time", description: "Estimated minutes" },
+            shelf_label: { type: "string", title: "Shelf label" },
+            access_level: { type: "string", enum: ["public", "members"] },
+            promo_data: { type: "object", properties: { badge: { type: "string" } } },
+            optional_score: { type: ["number", "null"] },
+            api_secret: { type: "string" },
+            readonly_note: { type: "string", readOnly: true },
+            schema_only: { type: "boolean" },
             meta: {
               type: "object",
               properties: {
@@ -167,6 +166,21 @@ function makeServer() {
             },
           },
         },
+        endpoints: [{
+          methods: ["POST"],
+          args: {
+            title: {},
+            genres: {},
+            reading_time: {},
+            shelf_label: {},
+            access_level: {},
+            promo_data: {},
+            optional_score: {},
+            api_secret: {},
+            readonly_note: {},
+            meta: {},
+          },
+        }],
       });
     }
 
@@ -298,7 +312,7 @@ function makeServer() {
       }
     }
 
-    for (const [name, collection] of [["tags", tags], ["categories", categories]]) {
+    for (const [name, collection] of [["tags", tags], ["categories", categories], ["genres", genres]]) {
       if (request.method === "GET" && path === `/${name}`) {
         const slug = url.searchParams.get("slug");
         const search = url.searchParams.get("search")?.toLowerCase();
@@ -1692,6 +1706,262 @@ test("WordPress REST meta schema discovery filters unsafe fields and preserves t
     });
     assert.equal("api_token" in snapshot.restMeta.values, false);
     assert.equal("internal_score" in snapshot.restMeta.values, false);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress writable top-level REST field discovery excludes core taxonomy sensitive and read-only fields", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    api.books.set(81, {
+      id: 81,
+      author: 1,
+      link: "http://example.test/?book=81",
+      slug: "rest-field-book",
+      status: "draft",
+      title: { raw: "REST Field Book" },
+      excerpt: { raw: "Field excerpt" },
+      content: { raw: "<p>Field body.</p>" },
+      categories: [],
+      tags: [],
+      genres: [44],
+      featured_media: 0,
+      reading_time: 12,
+      shelf_label: "Reference",
+      access_level: "members",
+      promo_data: { badge: "staff-pick" },
+      optional_score: null,
+      api_secret: "DO_NOT_LEAK",
+      readonly_note: "server-owned",
+      schema_only: true,
+      meta: {},
+      date_gmt: null,
+      modified_gmt: "2026-11-13T22:00:00",
+    });
+    api.genres.set(44, { id: 44, name: "Systems", slug: "systems", description: "", count: 1 });
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-13T21:00:00.000Z",
+      updatedAt: "2026-11-13T21:00:00.000Z",
+    };
+    const content = new WordPressContentService(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+
+    const fields = await content.listRestFields("wp-1", "books");
+    assert.deepEqual(fields.map((field) => field.key), [
+      "access_level", "optional_score", "promo_data", "reading_time", "shelf_label",
+    ]);
+    assert.equal(fields.some((field) => field.key === "title"), false);
+    assert.equal(fields.some((field) => field.key === "genres"), false);
+    assert.equal(fields.some((field) => field.key === "api_secret"), false);
+    assert.equal(fields.some((field) => field.key === "readonly_note"), false);
+    assert.equal(fields.some((field) => field.key === "schema_only"), false);
+    assert.deepEqual(fields.find((field) => field.key === "access_level").enum, ["public", "members"]);
+    assert.equal(fields.find((field) => field.key === "optional_score").nullable, true);
+
+    const snapshot = await content.importSnapshot("wp-1", "81", "books");
+    assert.deepEqual(snapshot.restFields.values, {
+      access_level: "members",
+      optional_score: null,
+      promo_data: { badge: "staff-pick" },
+      reading_time: 12,
+      shelf_label: "Reference",
+    });
+    assert.equal("api_secret" in snapshot.restFields.values, false);
+    assert.equal("readonly_note" in snapshot.restFields.values, false);
+  } finally {
+    api.server.close();
+  }
+});
+
+test("WordPress managed top-level REST fields deliver at request root and drift only on managed keys", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const connection = {
+      id: "wp-1",
+      extensionId: "blogmaatic.wordpress-rest",
+      displayName: "Local WordPress",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-13T21:00:00.000Z",
+      updatedAt: "2026-11-13T21:00:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([connection]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = textPublication();
+    const publication = {
+      ...base,
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-1",
+        remoteId: "55",
+      },
+      current: {
+        ...base.current,
+        content: {
+          ...base.current.content,
+          attributes: {
+            ...base.current.content.attributes,
+            sourceRestFields: {
+              extensionId: "blogmaatic.wordpress-rest",
+              connectionId: "wp-1",
+              contentType: "books",
+              values: {
+                reading_time: 14,
+                shelf_label: "Architecture",
+                access_level: "members",
+                promo_data: { badge: "featured" },
+              },
+            },
+          },
+        },
+      },
+    };
+    const bookRoute = { ...route(), destination: { ...route().destination, channel: "books" } };
+    const projection = await publisher.compile({ publication, route: bookRoute });
+    assert.deepEqual(projection.payload.restFields, {
+      reading_time: 14,
+      shelf_label: "Architecture",
+      access_level: "members",
+      promo_data: { badge: "featured" },
+    });
+    const delivered = await publisher.deliver({ idempotencyKey: "book-rest-fields", projection });
+    const stored = api.books.get(Number(delivered.remote.id));
+    assert.equal(stored.reading_time, 14);
+    assert.equal(stored.shelf_label, "Architecture");
+    assert.equal(stored.access_level, "members");
+    assert.deepEqual(stored.promo_data, { badge: "featured" });
+    assert.deepEqual(stored.meta, {});
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+
+    stored.reading_time = 6;
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "drifted");
+
+    stored.reading_time = 14;
+    stored.unmanaged_plugin_field = "changed elsewhere";
+    assert.equal((await publisher.inspect({ projection, remote: delivered.remote })).state, "synchronized");
+  } finally {
+    api.server.close();
+  }
+});
+
+test("route-scoped top-level REST fields compile independently for two WordPress destinations", async () => {
+  const api = makeServer();
+  await new Promise((resolve) => api.server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = api.server.address().port;
+    const baseConnection = {
+      extensionId: "blogmaatic.wordpress-rest",
+      status: "active",
+      settings: { siteUrl: "http://127.0.0.1:" + port, username: "editor" },
+      secretRefs: { applicationPassword: "env:WP_APP_PASSWORD" },
+      createdAt: "2026-11-13T23:30:00.000Z",
+      updatedAt: "2026-11-13T23:30:00.000Z",
+    };
+    const publisher = new WordPressRestPublisher(
+      new ConnectionAuthority([
+        { ...baseConnection, id: "wp-a", displayName: "Site A" },
+        { ...baseConnection, id: "wp-b", displayName: "Site B" },
+      ]),
+      new SecretAuthority([new EnvironmentSecretProvider({ WP_APP_PASSWORD: "app password" })]),
+    );
+    const base = textPublication();
+    const publication = {
+      ...base,
+      provenance: { source: "blogmaatic.publication-workspace" },
+      current: {
+        ...base.current,
+        content: {
+          ...base.current.content,
+          attributes: {
+            ...base.current.content.attributes,
+            publishingTargets: { groupIds: ["group-a", "group-b"] },
+            destinationOverrides: {
+              schemaVersion: 1,
+              groups: {
+                "group-a": {
+                  routes: {
+                    wordpress: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-a",
+                      channel: "posts",
+                      restFields: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-a",
+                        contentType: "posts",
+                        values: { partner_label: "Alpha" },
+                      },
+                    },
+                  },
+                },
+                "group-b": {
+                  routes: {
+                    wordpress: {
+                      extensionId: "blogmaatic.wordpress-rest",
+                      connectionId: "wp-b",
+                      channel: "posts",
+                      restFields: {
+                        extensionId: "blogmaatic.wordpress-rest",
+                        connectionId: "wp-b",
+                        contentType: "posts",
+                        values: { partner_label: "Beta" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const routeFor = (connectionId) => ({
+      ...route(),
+      id: "wordpress",
+      destination: {
+        ...route().destination,
+        connectionId,
+        channel: "posts",
+      },
+    });
+
+    const siteA = await publisher.compile({
+      publication,
+      route: routeFor("wp-a"),
+      groupId: "group-a",
+    });
+    const siteB = await publisher.compile({
+      publication,
+      route: routeFor("wp-b"),
+      groupId: "group-b",
+    });
+    assert.deepEqual(siteA.payload.restFields, { partner_label: "Alpha" });
+    assert.deepEqual(siteB.payload.restFields, { partner_label: "Beta" });
+
+    await assert.rejects(
+      publisher.compile({
+        publication,
+        route: routeFor("wp-a"),
+        groupId: "group-b",
+      }),
+      /Canonical destination override identity no longer matches route group-b\/wordpress/,
+    );
   } finally {
     api.server.close();
   }

@@ -20,6 +20,8 @@ import type {
   SourceContentTypeRecord,
   SourceMetaFieldDefinition,
   SourceMetaValuesBody,
+  SourceRestFieldDefinition,
+  SourceRestFieldValuesBody,
   SourceSeoFieldDefinition,
   SourceSeoSemantic,
   SourceSeoValue,
@@ -1648,6 +1650,14 @@ function WordPressDestinationSettings({
             routeId={route.routeId}
             onUpdated={onUpdated}
           />
+          <SourceRestFieldsPanel
+            entry={entry}
+            connectionId={route.connectionId}
+            contentType={route.channel}
+            groupId={route.groupId}
+            routeId={route.routeId}
+            onUpdated={onUpdated}
+          />
         </section>
       ))}
     </div>
@@ -2089,6 +2099,22 @@ function SourceCustomTaxonomyPanel({
 }
 
 type SourceMetaValue = SourceMetaValuesBody["values"][string];
+type SourceRestFieldValue = SourceRestFieldValuesBody["values"][string];
+
+function canonicalSourceRestFieldValues(
+  entry: PublicationWorkspaceEntry,
+  connectionId: string,
+  groupId?: string,
+  routeId?: string,
+): Readonly<Record<string, SourceRestFieldValue>> {
+  const scoped = objectRecord(routeDestinationOverride(entry, groupId, routeId)?.restFields);
+  const source = scoped ?? (legacySourceRouteMatchesUi(entry, connectionId, groupId, routeId)
+    ? objectRecord(entry.publication.current.content.attributes.sourceRestFields)
+    : undefined);
+  const values = objectRecord(source?.values);
+  return values ? values as Readonly<Record<string, SourceRestFieldValue>> : {};
+}
+
 
 function canonicalSourceMetaValues(
   entry: PublicationWorkspaceEntry,
@@ -2458,6 +2484,217 @@ function SourceRestMetaPanel({
           })}
           <button className="button button--primary" type="button" onClick={() => void save()} disabled={saving || fields.length === 0}>
             {saving ? "Saving…" : "Save REST fields"}
+          </button>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function SourceRestFieldsPanel({
+  entry,
+  connectionId,
+  contentType: explicitContentType,
+  groupId,
+  routeId,
+  onUpdated,
+}: {
+  readonly entry: PublicationWorkspaceEntry;
+  readonly connectionId: string;
+  readonly contentType?: string;
+  readonly groupId?: string;
+  readonly routeId?: string;
+  readonly onUpdated: (entry: PublicationWorkspaceEntry) => void;
+}) {
+  const { session } = useConnection();
+  const client = session!.client;
+  const contentType = explicitContentType ?? wordpressContentType(entry);
+  const canonical = useMemo(
+    () => canonicalSourceRestFieldValues(entry, connectionId, groupId, routeId),
+    [connectionId, entry.publication.current.id, groupId, routeId],
+  );
+  const [fields, setFields] = useState<readonly SourceRestFieldDefinition[]>([]);
+  const [values, setValues] = useState<Readonly<Record<string, SourceRestFieldValue>>>(canonical);
+  const [complexDrafts, setComplexDrafts] = useState<Readonly<Record<string, string>>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    setValues(canonical);
+    setComplexDrafts(Object.fromEntries(
+      Object.entries(canonical)
+        .filter(([, value]) => Array.isArray(value) || (value !== null && typeof value === "object"))
+        .map(([key, value]) => [key, JSON.stringify(value, null, 2)]),
+    ));
+  }, [canonical]);
+
+  useEffect(() => {
+    let active = true;
+    if (!contentType) {
+      setFields([]);
+      setLoading(false);
+      return () => { active = false; };
+    }
+    setLoading(true);
+    setError(null);
+    void client.listSourceRestFields(connectionId, contentType)
+      .then((items) => {
+        if (active) setFields(items);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause : new Error("WordPress custom REST fields could not be loaded"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, connectionId, contentType]);
+
+  const setValue = useCallback((key: string, value: SourceRestFieldValue | undefined) => {
+    setValues((current) => {
+      const copy = { ...current };
+      if (value === undefined) delete copy[key];
+      else copy[key] = value;
+      return copy;
+    });
+  }, []);
+
+  const save = useCallback(async () => {
+    if (!contentType) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next: Record<string, SourceRestFieldValue> = { ...values };
+      for (const field of fields) {
+        if (field.type !== "array" && field.type !== "object") continue;
+        const raw = complexDrafts[field.key]?.trim() ?? "";
+        if (!raw) {
+          delete next[field.key];
+          continue;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          throw new Error(`Field ${field.title ?? field.key} must contain valid JSON.`);
+        }
+        if (field.type === "array" && !Array.isArray(parsed)) {
+          throw new Error(`Field ${field.title ?? field.key} must be a JSON array.`);
+        }
+        if (field.type === "object" && (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))) {
+          throw new Error(`Field ${field.title ?? field.key} must be a JSON object.`);
+        }
+        next[field.key] = parsed as SourceRestFieldValue;
+      }
+      const result = await client.setSourceRestFieldValues(connectionId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        contentType,
+        values: next,
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
+      });
+      onUpdated(result.publication);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("WordPress custom REST fields could not be saved"));
+    } finally {
+      setSaving(false);
+    }
+  }, [client, complexDrafts, connectionId, contentType, entry.publication.id, entry.version, fields, groupId, onUpdated, routeId, values]);
+
+  if (!loading && fields.length === 0) return null;
+
+  return (
+    <Panel title="Custom REST fields" meta="Writable top-level WordPress fields" className="source-meta-panel">
+      <ErrorBanner error={error} />
+      <div className="source-meta-note">
+        <strong>Only schema-proven writable fields are shown.</strong>
+        <span>These plugin-defined values are written at the WordPress request root, not inside meta. Core, taxonomy, read-only, and sensitive fields are excluded.</span>
+      </div>
+      {loading ? <LoadingBlock /> : (
+        <div className="source-meta-grid">
+          {fields.map((field) => {
+            const label = field.title ?? field.key;
+            const current = values[field.key];
+            if (field.enum && field.enum.length > 0) {
+              return (
+                <label className="field" key={field.key}>
+                  <span>{label}</span>
+                  <select
+                    value={current === undefined ? "" : JSON.stringify(current)}
+                    onChange={(event) => setValue(
+                      field.key,
+                      event.target.value ? JSON.parse(event.target.value) as SourceRestFieldValue : undefined,
+                    )}
+                    disabled={saving}
+                  >
+                    <option value="">Not set</option>
+                    {field.enum.map((value, index) => (
+                      <option value={JSON.stringify(value)} key={`${field.key}:${index}`}>
+                        {typeof value === "string" ? value : JSON.stringify(value)}
+                      </option>
+                    ))}
+                  </select>
+                  {field.description ? <small>{field.description}</small> : null}
+                </label>
+              );
+            }
+            if (field.type === "boolean") {
+              return (
+                <label className="source-editorial-toggle" key={field.key}>
+                  <input
+                    type="checkbox"
+                    checked={current === true}
+                    onChange={(event) => setValue(field.key, event.target.checked)}
+                    disabled={saving}
+                  />
+                  <span><strong>{label}</strong>{field.description ? <small>{field.description}</small> : null}</span>
+                </label>
+              );
+            }
+            if (field.type === "array" || field.type === "object") {
+              return (
+                <label className="field source-meta-json" key={field.key}>
+                  <span>{label}</span>
+                  <textarea
+                    value={complexDrafts[field.key] ?? ""}
+                    onChange={(event) => setComplexDrafts((currentDrafts) => ({
+                      ...currentDrafts,
+                      [field.key]: event.target.value,
+                    }))}
+                    placeholder={field.type === "array" ? "[]" : "{}"}
+                    disabled={saving}
+                  />
+                  <small>{field.description ?? `Validated JSON ${field.type}`}</small>
+                </label>
+              );
+            }
+            const numeric = field.type === "integer" || field.type === "number";
+            return (
+              <label className="field" key={field.key}>
+                <span>{label}</span>
+                <input
+                  type={numeric ? "number" : "text"}
+                  step={field.type === "integer" ? "1" : numeric ? "any" : undefined}
+                  value={numeric
+                    ? (typeof current === "number" ? String(current) : "")
+                    : (typeof current === "string" ? current : "")}
+                  onChange={(event) => {
+                    if (!event.target.value) {
+                      setValue(field.key, undefined);
+                      return;
+                    }
+                    setValue(field.key, numeric ? Number(event.target.value) : event.target.value);
+                  }}
+                  disabled={saving}
+                />
+                {field.description ? <small>{field.description}</small> : null}
+              </label>
+            );
+          })}
+          <button className="button button--primary" type="button" onClick={() => void save()} disabled={saving || fields.length === 0}>
+            {saving ? "Saving…" : "Save custom REST fields"}
           </button>
         </div>
       )}

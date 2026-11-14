@@ -82,6 +82,9 @@ import type {
   SourceMetaValuesResult,
   SourcePublishingStateBody,
   SourcePublishingStateResult,
+  SourceRestFieldDefinition,
+  SourceRestFieldValuesBody,
+  SourceRestFieldValuesResult,
   SourceSeoFieldDefinition,
   SourceSeoFieldQuery,
   SourceSeoValuesBody,
@@ -368,6 +371,26 @@ export class OperatorClient {
   ): Promise<SourceMetaValuesResult> {
     return this.#request<SourceMetaValuesResult>(
       `/v1/connections/${encodeURIComponent(connectionId)}/meta-values`,
+      { method: "POST", body: input },
+    );
+  }
+
+  async listSourceRestFields(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly SourceRestFieldDefinition[]> {
+    const response = await this.#request<{ readonly items: readonly SourceRestFieldDefinition[] }>(
+      pathWithQuery(`/v1/connections/${encodeURIComponent(connectionId)}/rest-fields`, { contentType }),
+    );
+    return response.items;
+  }
+
+  setSourceRestFieldValues(
+    connectionId: string,
+    input: SourceRestFieldValuesBody,
+  ): Promise<SourceRestFieldValuesResult> {
+    return this.#request<SourceRestFieldValuesResult>(
+      `/v1/connections/${encodeURIComponent(connectionId)}/rest-field-values`,
       { method: "POST", body: input },
     );
   }

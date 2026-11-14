@@ -59,6 +59,28 @@ function parseRestMeta(value: JsonValue | undefined): Readonly<Record<string, Js
   return result;
 }
 
+const RESERVED_REST_FIELD_KEYS = new Set([
+  "id", "date", "date_gmt", "guid", "modified", "modified_gmt", "slug", "status", "type", "link",
+  "title", "content", "author", "excerpt", "featured_media", "comment_status", "ping_status", "format",
+  "meta", "sticky", "template", "categories", "tags", "parent", "menu_order", "password",
+  "permalink_template", "generated_slug", "class_list", "_links", "_embedded",
+]);
+
+function parseRestFields(value: JsonValue | undefined): Readonly<Record<string, JsonValue>> {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new Error("WordPress restFields must be an object");
+  const result: Record<string, JsonValue> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = rawKey.trim();
+    if (!key) throw new Error("WordPress top-level REST field key must be non-empty");
+    if (secretLikeMetaKey(key) || RESERVED_REST_FIELD_KEYS.has(key)) {
+      throw new Error(`WordPress top-level REST field key is not allowed: ${key}`);
+    }
+    result[key] = rawValue;
+  }
+  return result;
+}
+
 function parseCustomTaxonomies(
   value: JsonValue | undefined,
 ): Readonly<Record<string, { readonly restBase: string; readonly restNamespace?: string; readonly names: readonly string[] }>> {
@@ -93,6 +115,7 @@ export interface ParsedWordPressPayload extends WordPressProjectionPayload {
     readonly names: readonly string[];
   }>>;
   readonly restMeta: Readonly<Record<string, JsonValue>>;
+  readonly restFields: Readonly<Record<string, JsonValue>>;
   readonly assetsParsed: readonly CompiledWordPressAsset[];
 }
 
@@ -156,6 +179,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
   const assetsParsed = parseAssets(projection.payload.assets);
   const customTaxonomies = parseCustomTaxonomies(projection.payload.customTaxonomies);
   const restMeta = parseRestMeta(projection.payload.restMeta);
+  const restFields = parseRestFields(projection.payload.restFields);
   return {
     contentType: requiredString(projection.payload, "contentType"),
     title: requiredString(projection.payload, "title"),
@@ -167,6 +191,7 @@ export function parsePayload(projection: CompiledProjection): ParsedWordPressPay
     categories: stringArray(projection.payload.categories),
     customTaxonomies,
     restMeta,
+    restFields,
     assets: projection.payload.assets && Array.isArray(projection.payload.assets)
       ? projection.payload.assets.filter(isRecord)
       : [],

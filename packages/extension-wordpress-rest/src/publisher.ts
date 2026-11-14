@@ -450,6 +450,50 @@ function sourceRestMeta(
   return result;
 }
 
+const RESERVED_TOP_LEVEL_REST_FIELDS = new Set([
+  "id", "date", "date_gmt", "guid", "modified", "modified_gmt", "slug", "status", "type", "link",
+  "title", "content", "author", "excerpt", "featured_media", "comment_status", "ping_status", "format",
+  "meta", "sticky", "template", "categories", "tags", "parent", "menu_order", "password",
+  "permalink_template", "generated_slug", "class_list", "_links", "_embedded",
+]);
+
+function sourceRestFields(
+  publication: Publication,
+  route: PublicationRoute,
+  contentType: string,
+  groupId?: string,
+): Readonly<Record<string, JsonValue>> {
+  const scoped = destinationOverride(publication, route, groupId);
+  const source = isRecord(scoped?.restFields)
+    ? scoped!.restFields
+    : legacySourceRouteMatches(publication, route, groupId)
+      ? publication.current.content.attributes.sourceRestFields
+      : undefined;
+  if (!isRecord(source)) return {};
+  if (
+    source.extensionId !== WORDPRESS_REST_EXTENSION_ID ||
+    source.connectionId !== route.destination.connectionId ||
+    source.contentType !== contentType
+  ) {
+    return {};
+  }
+  if (!isRecord(source.values)) throw new Error("Canonical WordPress sourceRestFields values must be an object");
+  const result: Record<string, JsonValue> = {};
+  for (const [rawKey, value] of Object.entries(source.values)) {
+    const key = rawKey.trim();
+    if (!key) throw new Error("Canonical WordPress top-level REST field key must be non-empty");
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    if (
+      RESERVED_TOP_LEVEL_REST_FIELDS.has(key) ||
+      /(^|_)(password|passwd|secret|token|credential|credentials|api_key|apikey|access_key|private_key|auth_token)($|_)/.test(normalized)
+    ) {
+      throw new Error(`Canonical WordPress top-level REST field key is not allowed: ${key}`);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
 function sourceEditorialOptions(
   publication: Publication,
   route: PublicationRoute,
@@ -577,6 +621,7 @@ function semanticPayload(
     sticky: payload.sticky ?? null,
     format: payload.format ?? null,
     restMeta: Object.fromEntries(Object.entries(payload.restMeta ?? {}).sort(([left], [right]) => left.localeCompare(right))),
+    restFields: Object.fromEntries(Object.entries(payload.restFields ?? {}).sort(([left], [right]) => left.localeCompare(right))),
     assets: parsedAssets.map((asset) => ({
       assetId: asset.assetId,
       source: asset.localPath ? "managed-local" : asset.source,
@@ -604,6 +649,7 @@ function remoteStateHash(
     readonly names: readonly string[];
   }>> = {},
   restMeta: Readonly<Record<string, JsonValue>> = {},
+  restFields: Readonly<Record<string, JsonValue>> = {},
 ): string {
   const customState = Object.fromEntries(
     Object.entries(customTaxonomies)
@@ -621,6 +667,11 @@ function remoteStateHash(
     Object.keys(restMeta)
       .sort()
       .map((key) => [key, post.meta?.[key] ?? null]),
+  );
+  const managedRestFields = Object.fromEntries(
+    Object.keys(restFields)
+      .sort()
+      .map((key) => [key, post[key] ?? null]),
   );
   return sha256(
     stableJson({
@@ -644,6 +695,7 @@ function remoteStateHash(
       sticky: post.sticky ?? null,
       format: post.format ?? null,
       restMeta: managedMeta,
+      restFields: managedRestFields,
     }),
   );
 }
@@ -724,7 +776,13 @@ function inspectRecord(
       detail: "WordPress object ownership marker belongs to a different publication or route",
     };
   }
-  const actualRemoteHash = remoteStateHash(post, stripMarker(raw), payload.customTaxonomies, payload.restMeta);
+  const actualRemoteHash = remoteStateHash(
+    post,
+    stripMarker(raw),
+    payload.customTaxonomies,
+    payload.restMeta,
+    payload.restFields,
+  );
   const synchronized =
     marker.projectionFingerprint === projection.fingerprint &&
     marker.renderedHash === actualRemoteHash;
@@ -756,6 +814,7 @@ function postRequestBody(
     categories,
     tags,
     ...customTaxonomyIds,
+    ...payload.restFields,
     featured_media: featuredMedia,
     ...(payload.authorId === undefined ? {} : { author: payload.authorId }),
     ...(payload.parentId === undefined ? {} : { parent: payload.parentId }),
@@ -882,6 +941,12 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
     const editorial = sourceEditorialOptions(publication, route, contentType, groupId);
     const customTaxonomies = sourceCustomTaxonomies(publication, route, contentType, groupId);
     const restMeta = sourceRestMeta(publication, route, contentType, groupId);
+    const restFields = sourceRestFields(publication, route, contentType, groupId);
+    for (const [key] of Object.entries(restFields)) {
+      if (Object.values(customTaxonomies).some((definition) => definition.restBase === key)) {
+        throw new Error(`Canonical WordPress top-level REST field collides with taxonomy REST base: ${key}`);
+      }
+    }
     const payload: WordPressProjectionPayload = {
       contentType,
       title: publication.current.content.title,
@@ -893,6 +958,7 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
       categories: categoryNames(publication, route, contentType, groupId),
       ...(Object.keys(customTaxonomies).length === 0 ? {} : { customTaxonomies }),
       ...(Object.keys(restMeta).length === 0 ? {} : { restMeta }),
+      ...(Object.keys(restFields).length === 0 ? {} : { restFields }),
       ...(groupId && publicationTargetGroupIds(publication).length === 1 &&
         publicationTargetGroupIds(publication)[0] === groupId
         ? { legacyOwnershipAllowed: true }
@@ -1057,6 +1123,9 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
         parent: payload.parentId ?? 0,
         template: payload.template ?? "",
         menuOrder: payload.menuOrder ?? 0,
+        restFields: Object.fromEntries(
+          Object.entries(payload.restFields).sort(([left], [right]) => left.localeCompare(right)),
+        ),
       }),
     );
     const markedContent = documentWithMarker(
@@ -1078,7 +1147,13 @@ export class WordPressRestPublisher implements ManagedPublisherExtension {
 
     let current = await fetchPost(client, restBase, String(saved.id));
     const currentBody = stripMarker(sourceBody(current));
-    const actualHash = remoteStateHash(current, currentBody, payload.customTaxonomies, payload.restMeta);
+    const actualHash = remoteStateHash(
+      current,
+      currentBody,
+      payload.customTaxonomies,
+      payload.restMeta,
+      payload.restFields,
+    );
     const currentMarker = parseMarker(sourceBody(current));
     if (
       !currentMarker ||

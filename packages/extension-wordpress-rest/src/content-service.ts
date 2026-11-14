@@ -28,6 +28,8 @@ import type {
   WordPressPostView,
   WordPressRevisionRecord,
   WordPressRevisionView,
+  WordPressRestFieldDefinition,
+  WordPressRestFieldSnapshot,
   WordPressRestMetaFieldDefinition,
   WordPressRestMetaSnapshot,
   WordPressRestMetaType,
@@ -149,6 +151,53 @@ function restMetaField(
     ...(enumValues && enumValues.length > 0 ? { enum: enumValues } : {}),
     ...(defaultValue === undefined ? {} : { defaultValue }),
   };
+}
+
+const RESERVED_TOP_LEVEL_REST_FIELDS = new Set([
+  "id", "date", "date_gmt", "guid", "modified", "modified_gmt", "slug", "status", "type", "link",
+  "title", "content", "author", "excerpt", "featured_media", "comment_status", "ping_status", "format",
+  "meta", "sticky", "template", "categories", "tags", "parent", "menu_order", "password",
+  "permalink_template", "generated_slug", "class_list", "_links", "_embedded",
+]);
+
+function optionProperties(options: unknown): Readonly<Record<string, unknown>> {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) return {};
+  const schema = (options as Readonly<Record<string, unknown>>).schema;
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return {};
+  const properties = (schema as Readonly<Record<string, unknown>>).properties;
+  return properties !== null && typeof properties === "object" && !Array.isArray(properties)
+    ? properties as Readonly<Record<string, unknown>>
+    : {};
+}
+
+function writableOptionKeys(options: unknown): ReadonlySet<string> {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) return new Set();
+  const endpoints = (options as Readonly<Record<string, unknown>>).endpoints;
+  if (!Array.isArray(endpoints)) return new Set();
+  const keys = new Set<string>();
+  for (const endpoint of endpoints) {
+    if (endpoint === null || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+    const record = endpoint as Readonly<Record<string, unknown>>;
+    const rawMethods = record.methods;
+    const methods = Array.isArray(rawMethods)
+      ? rawMethods.filter((method): method is string => typeof method === "string")
+      : typeof rawMethods === "string" ? [rawMethods] : [];
+    if (!methods.some((method) => ["POST", "PUT", "PATCH"].includes(method.toUpperCase()))) continue;
+    const args = record.args;
+    if (args === null || typeof args !== "object" || Array.isArray(args)) continue;
+    for (const key of Object.keys(args as Readonly<Record<string, unknown>>)) keys.add(key);
+  }
+  return keys;
+}
+
+function restTopLevelField(
+  key: string,
+  value: unknown,
+  writable: ReadonlySet<string>,
+  reserved: ReadonlySet<string>,
+): WordPressRestFieldDefinition | undefined {
+  if (!writable.has(key) || reserved.has(key)) return undefined;
+  return restMetaField(key, value);
 }
 
 function ownership(post: WordPressPostRecord): WordPressPostView["ownership"] {
@@ -384,6 +433,45 @@ export class WordPressContentService {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  async listRestFields(
+    connectionId: string,
+    contentType: string,
+  ): Promise<readonly WordPressRestFieldDefinition[]> {
+    const types = await this.listContentTypes(connectionId);
+    const type = types.find((candidate) => candidate.restBase === contentType);
+    if (!type) throw new Error(`WordPress content type is not available: ${contentType}`);
+
+    const { client } = this.#client(connectionId);
+    const options = type.restNamespace && type.restNamespace !== "wp/v2"
+      ? await client.requestNamespaceJson<unknown>(type.restNamespace, `/${type.restBase}`, { method: "OPTIONS" })
+      : await client.requestJson<unknown>(`/${type.restBase}`, { method: "OPTIONS" });
+    const properties = optionProperties(options);
+    const writable = writableOptionKeys(options);
+    const reserved = new Set(RESERVED_TOP_LEVEL_REST_FIELDS);
+    for (const taxonomy of await this.listTaxonomies(connectionId, contentType)) {
+      reserved.add(taxonomy.restBase);
+    }
+
+    return Object.entries(properties)
+      .map(([key, value]) => restTopLevelField(key, value, writable, reserved))
+      .filter((field): field is WordPressRestFieldDefinition => field !== undefined)
+      .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  async restFieldSnapshot(
+    connectionId: string,
+    post: WordPressPostRecord,
+    contentType: string,
+  ): Promise<WordPressRestFieldSnapshot> {
+    const fields = await this.listRestFields(connectionId, contentType);
+    const values: Record<string, JsonValue> = {};
+    for (const field of fields) {
+      const value = post[field.key];
+      if (isJsonValue(value)) values[field.key] = value;
+    }
+    return { fields, values };
+  }
+
   async listRestMetaFields(
     connectionId: string,
     contentType: string,
@@ -557,7 +645,10 @@ export class WordPressContentService {
         `/media/${post.featured_media}?context=edit`,
       );
     }
-    const restMeta = await this.restMetaSnapshot(connectionId, post, restBase);
+    const [restMeta, restFields] = await Promise.all([
+      this.restMetaSnapshot(connectionId, post, restBase),
+      this.restFieldSnapshot(connectionId, post, restBase),
+    ]);
     const customTaxonomies = await Promise.all(
       taxonomies
         .filter((taxonomy) => taxonomy.key !== "category" && taxonomy.key !== "post_tag")
@@ -588,6 +679,7 @@ export class WordPressContentService {
       tagNames,
       customTaxonomies,
       restMeta,
+      restFields,
       ...(featuredMedia ? { featuredMedia } : {}),
     };
   }

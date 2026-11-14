@@ -1794,6 +1794,191 @@ test("WordPress REST meta definitions map provider-neutrally and values are sche
   });
 });
 
+test("WordPress top-level REST fields map provider-neutrally and validate schema before canonical mutation", async () => {
+  let schemaReads = 0;
+  let persisted;
+  let current = {
+    publication: {
+      id: "publication-rest-fields",
+      createdAt: "2026-11-13T23:10:00.000Z",
+      status: "draft",
+      current: {
+        id: "revision-1",
+        ordinal: 1,
+        createdAt: "2026-11-13T23:10:00.000Z",
+        content: {
+          schemaVersion: 1,
+          title: "REST field book",
+          language: "en",
+          blocks: [],
+          assets: [],
+          tags: [],
+          attributes: {
+            wordpress: { connectionId: "wp-main", contentType: "books", remoteId: "55" },
+          },
+        },
+      },
+      provenance: {
+        source: "wordpress",
+        extensionId: "blogmaatic.wordpress-rest",
+        connectionId: "wp-main",
+        remoteId: "55",
+      },
+    },
+    version: 4,
+    recordedAt: "2026-11-13T23:10:00.000Z",
+    updatedAt: "2026-11-13T23:10:00.000Z",
+  };
+  const fields = [
+    { key: "reading_time", type: "integer", nullable: false, title: "Reading time" },
+    { key: "shelf_label", type: "string", nullable: false },
+    { key: "access_level", type: "string", nullable: false, enum: ["public", "members"] },
+    { key: "promo_data", type: "object", nullable: false },
+    { key: "optional_score", type: "number", nullable: true },
+  ];
+  const manager = new WordPressSourceManager({
+    content: {
+      async listRestFields(connectionId, contentType) {
+        schemaReads += 1;
+        assert.equal(connectionId, "wp-main");
+        assert.equal(contentType, "books");
+        return fields;
+      },
+    },
+    publisher: {},
+    publicationGroups: {},
+    publications: {
+      async get(id) {
+        return id === current.publication.id ? current : undefined;
+      },
+      async setSourceRestFieldValues(publicationId, expectedVersion, state) {
+        assert.equal(publicationId, current.publication.id);
+        assert.equal(expectedVersion, current.version);
+        persisted = state;
+        current = {
+          ...current,
+          version: current.version + 1,
+          publication: {
+            ...current.publication,
+            current: {
+              ...current.publication.current,
+              id: "revision-2",
+              ordinal: 2,
+              content: {
+                ...current.publication.current.content,
+                attributes: {
+                  ...current.publication.current.content.attributes,
+                  sourceRestFields: state,
+                },
+              },
+            },
+          },
+        };
+        return current;
+      },
+    },
+    projectionState: {},
+    distributionHistory: {},
+  });
+
+  const definitions = await manager.listRestFields("wp-main", "books");
+  assert.deepEqual(definitions[0], {
+    key: "reading_time",
+    type: "integer",
+    nullable: false,
+    title: "Reading time",
+    metadata: {
+      extensionId: "blogmaatic.wordpress-rest",
+      connectionId: "wp-main",
+      contentType: "books",
+      source: "wordpress-rest-field",
+    },
+  });
+
+  await assert.rejects(
+    () => manager.setRestFieldValues("wp-main", {
+      publicationId: "publication-rest-fields",
+      expectedVersion: 3,
+      contentType: "books",
+      values: { reading_time: 12 },
+    }),
+    /changed from version 3 to 4/,
+  );
+  assert.equal(schemaReads, 1);
+
+  await assert.rejects(
+    () => manager.setRestFieldValues("wp-other", {
+      publicationId: "publication-rest-fields",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { reading_time: 12 },
+    }),
+    /does not match the publication source/,
+  );
+  await assert.rejects(
+    () => manager.setRestFieldValues("wp-main", {
+      publicationId: "publication-rest-fields",
+      expectedVersion: 4,
+      contentType: "posts",
+      values: { reading_time: 12 },
+    }),
+    /content type does not match/,
+  );
+  await assert.rejects(
+    () => manager.setRestFieldValues("wp-main", {
+      publicationId: "publication-rest-fields",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { unknown: "x" },
+    }),
+    /not exposed as writable/,
+  );
+  await assert.rejects(
+    () => manager.setRestFieldValues("wp-main", {
+      publicationId: "publication-rest-fields",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { reading_time: 2.5 },
+    }),
+    /does not match schema/,
+  );
+  await assert.rejects(
+    () => manager.setRestFieldValues("wp-main", {
+      publicationId: "publication-rest-fields",
+      expectedVersion: 4,
+      contentType: "books",
+      values: { access_level: "private" },
+    }),
+    /does not match schema/,
+  );
+
+  const result = await manager.setRestFieldValues("wp-main", {
+    publicationId: "publication-rest-fields",
+    expectedVersion: 4,
+    contentType: "books",
+    values: {
+      reading_time: 12,
+      shelf_label: "Reference",
+      access_level: "members",
+      promo_data: { badge: "featured" },
+      optional_score: null,
+    },
+  });
+  assert.equal(result.publication.version, 5);
+  assert.deepEqual(persisted, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "books",
+    values: {
+      reading_time: 12,
+      shelf_label: "Reference",
+      access_level: "members",
+      promo_data: { badge: "featured" },
+      optional_score: null,
+    },
+  });
+});
+
 test("WordPress import preserves only filtered REST meta from canonical revision one", async () => {
   let stored;
   const snapshot = {
@@ -1822,6 +2007,13 @@ test("WordPress import preserves only filtered REST meta from canonical revision
         { key: "rating", type: "number", nullable: false },
       ],
       values: { isbn: "978-1-234", rating: 4.5 },
+    },
+    restFields: {
+      fields: [
+        { key: "reading_time", type: "integer", nullable: false },
+        { key: "shelf_label", type: "string", nullable: false },
+      ],
+      values: { reading_time: 12, shelf_label: "Reference" },
     },
   };
   const group = {
@@ -1903,6 +2095,12 @@ test("WordPress import preserves only filtered REST meta from canonical revision
     connectionId: "wp-main",
     contentType: "books",
     values: { isbn: "978-1-234", rating: 4.5 },
+  });
+  assert.deepEqual(imported.publication.publication.current.content.attributes.sourceRestFields, {
+    extensionId: "blogmaatic.wordpress-rest",
+    connectionId: "wp-main",
+    contentType: "books",
+    values: { reading_time: 12, shelf_label: "Reference" },
   });
 });
 

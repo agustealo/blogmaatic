@@ -17,6 +17,7 @@ import type {
   SourceMetaValuesBody,
   SourceSeoValuesBody,
   SourcePublishingStateBody,
+  SourceRestFieldValuesBody,
   SourceStandardTaxonomyBody,
   SourcePageStructureBody,
   SourceTaxonomyCreateBody,
@@ -228,6 +229,10 @@ function parseMetaValuesBody(body: unknown): SourceMetaValuesBody {
     ...(groupId ? { groupId } : {}),
     ...(routeId ? { routeId } : {}),
   };
+}
+
+function parseRestFieldValuesBody(body: unknown): SourceRestFieldValuesBody {
+  return parseMetaValuesBody(body);
 }
 
 function parseSeoValuesBody(body: unknown): SourceSeoValuesBody {
@@ -1146,6 +1151,50 @@ export function registerSourceContentRoutes(app: FastifyInstance, options: Opera
       },
       now: () => clock.now(),
       execute: () => domainCall(() => manager(options).setMetaValues(connectionId, body)),
+      success: (value) => ({
+        evidence: {
+          revisionId: value.publication.publication.current.id,
+          version: value.publication.version,
+          fieldKeys: Object.keys(value.values).sort(),
+        },
+      }),
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.get("/v1/connections/:connectionId/rest-fields", async (request) => {
+    await authorize(options, request, "source-content:read");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const queryValue = query(request).contentType;
+    if (typeof queryValue !== "string" || !queryValue.trim()) {
+      throw new OperatorRequestError("contentType is required");
+    }
+    return {
+      items: await domainCall(() => manager(options).listRestFields(connectionId, queryValue.trim())),
+    };
+  });
+
+  app.post("/v1/connections/:connectionId/rest-field-values", async (request, reply) => {
+    const principal = await authorize(options, request, "source-content:write");
+    const connectionId = requirePathString(params(request).connectionId, "connectionId");
+    const body = parseRestFieldValuesBody(request.body);
+    const result = await auditedMutation({
+      store: options.store,
+      principal,
+      requestId: request.id,
+      action: "source-rest-fields.update",
+      resource: { type: "publication", id: body.publicationId },
+      evidence: {
+        connectionId,
+        publicationId: body.publicationId,
+        expectedVersion: body.expectedVersion,
+        contentType: body.contentType,
+        groupId: body.groupId ?? null,
+        routeId: body.routeId ?? null,
+        fieldKeys: Object.keys(body.values).sort(),
+      },
+      now: () => clock.now(),
+      execute: () => domainCall(() => manager(options).setRestFieldValues(connectionId, body)),
       success: (value) => ({
         evidence: {
           revisionId: value.publication.publication.current.id,
