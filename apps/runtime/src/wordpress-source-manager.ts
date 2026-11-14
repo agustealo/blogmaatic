@@ -101,7 +101,8 @@ export interface WordPressSourceManagerOptions {
   readonly publications: PublicationWorkspaceManager;
   readonly projectionState: ProjectionStateStore;
   readonly distributionHistory: DistributionHistoryStore;
-  readonly schedules?: Pick<ControlPlaneStore, "listSchedules">;
+  readonly schedules?: Pick<ControlPlaneStore, "listSchedules" | "getSchedule">;
+  readonly runs?: Pick<ControlPlaneStore, "listRuns">;
   readonly now?: () => string;
   readonly id?: () => string;
 }
@@ -464,7 +465,8 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   readonly #publications: PublicationWorkspaceManager;
   readonly #projectionState: ProjectionStateStore;
   readonly #distributionHistory: DistributionHistoryStore;
-  readonly #schedules: Pick<ControlPlaneStore, "listSchedules"> | undefined;
+  readonly #schedules: Pick<ControlPlaneStore, "listSchedules" | "getSchedule"> | undefined;
+  readonly #runs: Pick<ControlPlaneStore, "listRuns"> | undefined;
   readonly #now: () => string;
   readonly #id: () => string;
 
@@ -476,6 +478,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
     this.#projectionState = options.projectionState;
     this.#distributionHistory = options.distributionHistory;
     this.#schedules = options.schedules;
+    this.#runs = options.runs;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#id = options.id ?? randomUUID;
   }
