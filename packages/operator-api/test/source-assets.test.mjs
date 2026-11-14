@@ -21,6 +21,8 @@ async function withApi(fn) {
   let listQuery;
   let attachInput;
   let attachCalls = 0;
+  let detachInput;
+  let detachCalls = 0;
   let uploadInput;
   let uploadCalls = 0;
   let featuredInput;
@@ -90,6 +92,13 @@ async function withApi(fn) {
       attachInput = body;
       return { publication, asset };
     },
+    async detachAsset(connectionId, remoteId, body) {
+      detachCalls += 1;
+      assert.equal(connectionId, "wp-main");
+      assert.equal(remoteId, "77");
+      detachInput = body;
+      return { publication, remoteId, wordpressMediaRetained: true };
+    },
     async uploadAsset(connectionId, input) {
       uploadCalls += 1;
       assert.equal(connectionId, "wp-main");
@@ -155,6 +164,8 @@ async function withApi(fn) {
         listQuery,
         attachInput,
         attachCalls,
+        detachInput,
+        detachCalls,
         uploadInput,
         uploadCalls,
         featuredInput,
@@ -473,5 +484,55 @@ test("route-scoped featured media validates mode and records exact destination a
     assert.equal(invalid.statusCode, 400);
     assert.equal(invalid.json().error.code, "INVALID_REQUEST");
     assert.equal(state().featuredCalls, 1);
+  });
+});
+
+
+test("source asset detach is audited, version-validated, and explicitly retains WordPress media", async () => {
+  await withApi(async ({ app, store, state }) => {
+    const url = "/v1/connections/wp-main/assets/77/detach";
+    for (const payload of [
+      { publicationId: "publication-wp", expectedVersion: 0 },
+      { publicationId: "publication-wp", expectedVersion: 5, featured: false },
+      { publicationId: "publication-wp", expectedVersion: 5, groupId: "group-main" },
+      { publicationId: "publication-wp", expectedVersion: 5, unexpected: true },
+    ]) {
+      const rejected = await app.inject({ method: "POST", url, headers: bearer(), payload });
+      assert.equal(rejected.statusCode, 400, rejected.body);
+      assert.equal(rejected.json().error.code, "INVALID_REQUEST");
+    }
+    assert.equal(state().detachCalls, 0);
+
+    const response = await app.inject({
+      method: "POST",
+      url,
+      headers: bearer(),
+      payload: {
+        publicationId: "publication-wp",
+        expectedVersion: 5,
+        contentType: "posts",
+        groupId: "group-main",
+        routeId: "wordpress",
+      },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.equal(response.json().wordpressMediaRetained, true);
+    assert.equal(response.json().publication.version, 5);
+    assert.equal(state().detachCalls, 1);
+    assert.deepEqual(state().detachInput, {
+      publicationId: "publication-wp",
+      expectedVersion: 5,
+      contentType: "posts",
+      groupId: "group-main",
+      routeId: "wordpress",
+    });
+
+    const audit = await store.listAudit({ action: "source-asset.detach", limit: 10 });
+    assert.equal(audit.items.length, 2);
+    const succeeded = audit.items.find((item) => item.phase === "succeeded");
+    assert.equal(succeeded.evidence.wordpressMediaRetained, true);
+    assert.equal(succeeded.evidence.assetRemoteId, "77");
+    assert.equal(succeeded.evidence.version, 5);
+    assert.ok(audit.items.every((item) => !JSON.stringify(item.evidence).includes("https://example.test/uploads")));
   });
 });
