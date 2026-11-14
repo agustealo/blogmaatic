@@ -3103,6 +3103,7 @@ function SourceAssetLibraryPanel({
                         ))}
                       </ul>
                     ) : null}
+                    <small>Registered REST plugin metadata is inspected when exposed. Private plugin tables, theme options, external consumers and later edits cannot be ruled out.</small>
                     <small>Verification limitations: {preflight.blockers.join(", ").replaceAll("_", " ")}. No permanent deletion is available.</small>
                   </div>
                 ) : null}
