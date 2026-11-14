@@ -17,6 +17,7 @@ import {
   decodeSeoValue,
   discoverSeoFields,
   encodeSeoValue,
+  importWordPressContentBlocks,
   type WordPressContentTypeView,
   type WordPressMediaView,
   type WordPressPostView,
@@ -1454,7 +1455,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
         remoteRevisionId: String(revision.id),
         title: revision.title,
         ...(plainText(revision.excerpt) ? { summary: plainText(revision.excerpt) } : {}),
-        contentHtml: revision.contentHtml,
+        blocks: importWordPressContentBlocks(revision.contentHtml),
         ...(revision.modifiedGmt ? { sourceModifiedAt: revision.modifiedGmt } : {}),
         ...(revision.author === undefined ? {} : { sourceAuthorId: revision.author }),
       },
@@ -1667,13 +1668,7 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
   ): Publication {
     const now = this.#now();
     const revisionId = `revision_${this.#id()}`;
-    const blocks: PublicationBlock[] = snapshot.post.contentHtml.trim()
-      ? [{
-        id: "wordpress-source-html",
-        kind: "embed",
-        data: { html: snapshot.post.contentHtml },
-      }]
-      : [];
+    const blocks = importWordPressContentBlocks(snapshot.post.contentHtml);
     const assets: PublicationAsset[] = snapshot.featuredMedia
       ? [{
         id: `wordpress-media-${snapshot.featuredMedia.id}`,
