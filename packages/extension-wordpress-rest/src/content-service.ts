@@ -442,12 +442,20 @@ export function inspectWordPressMediaReferences(
       return false;
     }
     if (Array.isArray(value)) {
-      return value.some((entry) => traverse(entry, path, depth + 1));
+      let matched = false;
+      for (const entry of value) {
+        if (visited >= 5000) { scanIncomplete = true; break; }
+        if (traverse(entry, path, depth + 1)) matched = true;
+      }
+      return matched;
     }
     if (typeof value === "object") {
+      let matched = false;
       for (const [key, entry] of Object.entries(value)) {
-        if (traverse(entry, path ? path + "." + key : key, depth + 1)) return true;
+        if (visited >= 5000) { scanIncomplete = true; break; }
+        if (traverse(entry, path ? path + "." + key : key, depth + 1)) matched = true;
       }
+      return matched;
     }
     return false;
   };
