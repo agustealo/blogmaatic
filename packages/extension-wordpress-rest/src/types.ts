@@ -221,6 +221,23 @@ export interface WordPressRestMetaSnapshot {
   readonly values: Readonly<Record<string, JsonValue>>;
 }
 
+export type WordPressRestFieldType = WordPressRestMetaType;
+
+export interface WordPressRestFieldDefinition {
+  readonly key: string;
+  readonly type: WordPressRestFieldType;
+  readonly nullable: boolean;
+  readonly title?: string;
+  readonly description?: string;
+  readonly enum?: readonly JsonValue[];
+  readonly defaultValue?: JsonValue;
+}
+
+export interface WordPressRestFieldSnapshot {
+  readonly fields: readonly WordPressRestFieldDefinition[];
+  readonly values: Readonly<Record<string, JsonValue>>;
+}
+
 export interface WordPressRevisionRecord {
   readonly id: number;
   readonly parent?: number;
@@ -322,5 +339,6 @@ export interface WordPressImportSnapshot {
   readonly tagNames: readonly string[];
   readonly customTaxonomies?: readonly WordPressCustomTaxonomySelection[];
   readonly restMeta?: WordPressRestMetaSnapshot;
+  readonly restFields?: WordPressRestFieldSnapshot;
   readonly featuredMedia?: WordPressMediaRecord;
 }
