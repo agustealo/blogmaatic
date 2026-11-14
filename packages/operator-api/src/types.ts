@@ -498,6 +498,34 @@ export interface SourceMetaValuesResult {
   readonly values: Readonly<Record<string, JsonValue>>;
 }
 
+export type SourceRestFieldType = SourceMetaFieldType;
+
+export interface SourceRestFieldDefinition {
+  readonly key: string;
+  readonly type: SourceRestFieldType;
+  readonly nullable: boolean;
+  readonly title?: string;
+  readonly description?: string;
+  readonly enum?: readonly JsonValue[];
+  readonly defaultValue?: JsonValue;
+  readonly metadata: Readonly<Record<string, JsonValue>>;
+}
+
+export interface SourceRestFieldValuesBody {
+  readonly publicationId: string;
+  readonly expectedVersion: number;
+  readonly contentType: string;
+  readonly values: Readonly<Record<string, JsonValue>>;
+  readonly groupId?: string;
+  readonly routeId?: string;
+}
+
+export interface SourceRestFieldValuesResult {
+  readonly publication: PublicationWorkspaceEntry;
+  readonly contentType: string;
+  readonly values: Readonly<Record<string, JsonValue>>;
+}
+
 export type SourceSeoSemantic =
   | "title"
   | "description"
@@ -574,6 +602,8 @@ export interface OperatorSourceContentManager {
   setStandardTaxonomy(connectionId: string, body: SourceStandardTaxonomyBody): Promise<SourceStandardTaxonomyResult>;
   listMetaFields(connectionId: string, contentType: string): Promise<readonly SourceMetaFieldDefinition[]>;
   setMetaValues(connectionId: string, body: SourceMetaValuesBody): Promise<SourceMetaValuesResult>;
+  listRestFields(connectionId: string, contentType: string): Promise<readonly SourceRestFieldDefinition[]>;
+  setRestFieldValues(connectionId: string, body: SourceRestFieldValuesBody): Promise<SourceRestFieldValuesResult>;
   listSeoFields(
     connectionId: string,
     contentType: string,
