@@ -2730,6 +2730,11 @@ function SourceAssetLibraryPanel({
   const [uploadAlt, setUploadAlt] = useState("");
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadFeatured, setUploadFeatured] = useState(false);
+  const [editingMetadata, setEditingMetadata] = useState<string | null>(null);
+  const [metadataTitle, setMetadataTitle] = useState("");
+  const [metadataAlt, setMetadataAlt] = useState("");
+  const [metadataCaption, setMetadataCaption] = useState("");
+  const [metadataDescription, setMetadataDescription] = useState("");
   const [error, setError] = useState<Error | null>(null);
 
   const load = useCallback(async (nextPage = 1, append = false) => {
@@ -2843,6 +2848,62 @@ function SourceAssetLibraryPanel({
     uploadTitle,
   ]);
 
+  const beginMetadataEdit = useCallback((asset: SourceAssetRecord) => {
+    setEditingMetadata(asset.remoteId);
+    setMetadataTitle(asset.title ?? "");
+    setMetadataAlt(asset.alt ?? "");
+    setMetadataCaption(asset.caption ?? "");
+    setMetadataDescription(asset.description ?? "");
+    setError(null);
+  }, []);
+
+  const cancelMetadataEdit = useCallback(() => {
+    setEditingMetadata(null);
+    setMetadataTitle("");
+    setMetadataAlt("");
+    setMetadataCaption("");
+    setMetadataDescription("");
+  }, []);
+
+  const saveMetadata = useCallback(async (asset: SourceAssetRecord) => {
+    const key = `metadata:${asset.remoteId}`;
+    setBusy(key);
+    setError(null);
+    try {
+      const result = await client.updateSourceAssetMetadata(connectionId, asset.remoteId, {
+        publicationId: entry.publication.id,
+        expectedVersion: entry.version,
+        ...(contentType ? { contentType } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(routeId ? { routeId } : {}),
+        title: metadataTitle,
+        alt: metadataAlt,
+        caption: metadataCaption,
+        description: metadataDescription,
+      });
+      setItems((current) => current.map((item) =>
+        item.remoteId === result.asset.remoteId ? result.asset : item));
+      cancelMetadataEdit();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error("Media metadata could not be saved"));
+    } finally {
+      setBusy(null);
+    }
+  }, [
+    cancelMetadataEdit,
+    client,
+    connectionId,
+    contentType,
+    entry.publication.id,
+    entry.version,
+    groupId,
+    metadataAlt,
+    metadataCaption,
+    metadataDescription,
+    metadataTitle,
+    routeId,
+  ]);
+
   const attachedIds = useMemo(() => new Set(
     entry.publication.current.content.assets.flatMap((asset) => {
       const remoteId = asset.attributes?.sourceRemoteId;
@@ -2954,7 +3015,77 @@ function SourceAssetLibraryPanel({
                       {busy === `featured:${asset.remoteId}` ? "Setting…" : "Use as featured"}
                     </button>
                   ) : null}
+                  <button
+                    className="button button--quiet"
+                    type="button"
+                    onClick={() => beginMetadataEdit(asset)}
+                    disabled={busy !== null || editingMetadata === asset.remoteId}
+                  >
+                    Edit metadata
+                  </button>
                 </div>
+                {editingMetadata === asset.remoteId ? (
+                  <div className="source-asset-card__metadata-editor">
+                    <label className="field">
+                      <span>Title</span>
+                      <input
+                        value={metadataTitle}
+                        onChange={(event) => setMetadataTitle(event.target.value)}
+                        maxLength={500}
+                        disabled={busy !== null}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Alt text</span>
+                      <textarea
+                        value={metadataAlt}
+                        onChange={(event) => setMetadataAlt(event.target.value)}
+                        maxLength={1000}
+                        rows={2}
+                        disabled={busy !== null}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Caption</span>
+                      <textarea
+                        value={metadataCaption}
+                        onChange={(event) => setMetadataCaption(event.target.value)}
+                        maxLength={5000}
+                        rows={3}
+                        disabled={busy !== null}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Description</span>
+                      <textarea
+                        value={metadataDescription}
+                        onChange={(event) => setMetadataDescription(event.target.value)}
+                        maxLength={20000}
+                        rows={4}
+                        disabled={busy !== null}
+                      />
+                    </label>
+                    <div className="source-asset-card__metadata-actions">
+                      <button
+                        className="button button--primary"
+                        type="button"
+                        onClick={() => void saveMetadata(asset)}
+                        disabled={busy !== null}
+                      >
+                        {busy === `metadata:${asset.remoteId}` ? "Saving…" : "Save metadata"}
+                      </button>
+                      <button
+                        className="button button--quiet"
+                        type="button"
+                        onClick={cancelMetadataEdit}
+                        disabled={busy !== null}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <small>Edits the WordPress Media Library item only. Publication content and featured-image selection do not change.</small>
+                  </div>
+                ) : null}
               </article>
             );
           })}
