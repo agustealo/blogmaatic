@@ -200,7 +200,9 @@ Capability rules come from authenticated WordPress content-type discovery rather
 
 - password protection is modeled for the source object
 - comments and pingbacks/trackbacks are exposed only when the type advertises `comments` support
-- post format is exposed only when the type advertises `post-formats`
+- post format
+- managed registered REST meta keys
+- managed top-level custom REST field keys is exposed only when the type advertises `post-formats`
 - sticky state is limited to WordPress's native `post` type
 - a sticky post with a non-empty password is rejected before delivery
 
@@ -396,6 +398,29 @@ Compilation writes managed values through the WordPress post endpoint's `meta` o
 
 Operator audit records field keys and resulting canonical revision identity, never field values. This base capability is plugin-neutral: ACF, Pods, Meta Box, or custom code may participate only when their values are actually registered into the ordinary authenticated WordPress REST `meta` schema.
 
+## Writable top-level custom REST fields
+
+WordPress plugins may expose writable post data as top-level REST properties through `register_rest_field()`. Blogmaatic treats those separately from registered post meta.
+
+Discovery is negotiated from the authenticated content-type `OPTIONS` contract. A top-level field is eligible only when:
+
+- the route schema advertises a supported JSON-safe type
+- a writable endpoint advertises the same key in its request arguments
+- the field is not read-only
+- the key is not a WordPress core post property or REST infrastructure property
+- the key does not collide with any taxonomy REST base attached to the selected content type
+- the key is not secret-, token-, credential-, password-, or API-key-like
+
+Supported values are string, integer, finite number, boolean, array, object, and null only when the schema is nullable. Enum constraints and safely exposed title, description, and default metadata are preserved.
+
+Imported WordPress objects preserve only eligible current values in source-bound canonical state. Workspace-native publications store values under the exact Publication Group + route destination override, allowing two WordPress sites to use the same field key with different values without cross-site leakage.
+
+Compilation writes managed custom REST values as top-level WordPress request properties. They never pass through the `meta` object. Managed values participate in the semantic projection fingerprint and in verified remote-state drift checks by managed key only. Unrelated top-level plugin properties are ignored for drift.
+
+Control Room renders the schema-driven Custom REST Fields panel inside the selected WordPress Destination Settings card. Scalar and enum fields use native controls; array and object fields use validated JSON input. The browser calls only the provider-neutral Operator API.
+
+Operator audit records field keys, destination coordinates, and resulting canonical revision identity. Field values are intentionally excluded from audit evidence.
+
 ## Drift verification
 
 Authenticated inspection uses `context=edit` so raw editable content can be observed.
@@ -438,4 +463,4 @@ Credentials never appear in health evidence.
 
 ## Deferred WordPress-specific work
 
-Future WordPress slices may add direct plugin-specific SEO adapters where stable writable contracts can be verified, richer relationship/media widgets for REST meta, arbitrary top-level custom REST fields, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.
+Future WordPress slices may add direct plugin-specific SEO adapters where stable writable contracts can be verified, richer relationship/media widgets for REST meta and custom REST fields, comment/engagement retrieval, and WordPress multisite routing. Those capabilities should be negotiated explicitly rather than assumed by the base REST publisher.
