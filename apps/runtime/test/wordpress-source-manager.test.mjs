@@ -1051,7 +1051,7 @@ test("WordPress revision recovery is source-bound before remote fetch and maps s
         data: { level: 3, text: "Recovered heading" },
       },
       {
-        id: "wordpress-gutenberg-paragraph-2",
+        id: "wordpress-gutenberg-paragraph-1",
         kind: "paragraph",
         data: { text: "Recovered body." },
       },
