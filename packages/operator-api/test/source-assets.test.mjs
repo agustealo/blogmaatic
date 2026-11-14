@@ -21,6 +21,7 @@ async function withApi(fn) {
   let listQuery;
   let attachInput;
   let attachCalls = 0;
+  let preflightCalls = 0;
   let detachInput;
   let detachCalls = 0;
   let uploadInput;
@@ -84,6 +85,24 @@ async function withApi(fn) {
       assert.equal(connectionId, "wp-main");
       listQuery = query;
       return { items: [asset], page: query.page ?? 1, limit: query.limit ?? 30, hasMore: true };
+    },
+    async preflightAssetDeletion(connectionId, remoteId) {
+      preflightCalls++;
+      assert.equal(connectionId, "wp-main");
+      assert.equal(remoteId, "77");
+      return {
+        connectionId, remoteId, disposition: "blocked",
+        canDelete: false, wordpressMediaRetained: true,
+        media: asset,
+        references: [{
+          kind: "publication_current", publicationId: "publication-wp", revisionId: "revision-2",
+        }],
+        inspected: {
+          publicationHeads: 1, publicationVersions: 2, schedules: 0,
+          wordpressContentTypes: 1, wordpressPosts: 3,
+        },
+        blockers: ["known_media_references_exist", "permanent_deletion_not_enabled"],
+      };
     },
     async attachAsset(connectionId, remoteId, body) {
       attachCalls += 1;
@@ -164,6 +183,7 @@ async function withApi(fn) {
         listQuery,
         attachInput,
         attachCalls,
+        preflightCalls,
         detachInput,
         detachCalls,
         uploadInput,
@@ -534,5 +554,31 @@ test("source asset detach is audited, version-validated, and explicitly retains 
     assert.equal(succeeded.evidence.assetRemoteId, "77");
     assert.equal(succeeded.evidence.version, 5);
     assert.ok(audit.items.every((item) => !JSON.stringify(item.evidence).includes("https://example.test/uploads")));
+  });
+});
+
+
+test("media deletion preflight is authenticated, read-only, and always blocked", async () => {
+  await withApi(async ({ app, store, state }) => {
+    const url = "/v1/connections/wp-main/assets/77/deletion-preflight";
+    const unauthorized = await app.inject({ method: "GET", url });
+    assert.ok([401, 403].includes(unauthorized.statusCode), unauthorized.body);
+    assert.equal(state().preflightCalls, 0);
+
+    const response = await app.inject({ method: "GET", url, headers: bearer() });
+    assert.equal(response.statusCode, 200, response.body);
+    const result = response.json();
+    assert.equal(result.canDelete, false);
+    assert.equal(result.disposition, "blocked");
+    assert.equal(result.wordpressMediaRetained, true);
+    assert.equal(result.references[0].publicationId, "publication-wp");
+    assert.equal(result.inspected.publicationVersions, 2);
+    assert.equal(state().preflightCalls, 1);
+
+    const audit = await store.listAudit({ limit: 20 });
+    assert.equal(audit.items.length, 0, "Read-only preflight may not create mutation intent");
+    const invalidVerb = await app.inject({ method: "DELETE", url, headers: bearer() });
+    assert.equal(invalidVerb.statusCode, 404);
+    assert.equal(state().preflightCalls, 1);
   });
 });
