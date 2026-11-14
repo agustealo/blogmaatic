@@ -1508,7 +1508,11 @@ export class WordPressSourceManager implements OperatorSourceContentManager {
               if (post.featuredMediaId === id) add({
                 kind: "wordpress_featured", remotePostId: String(post.id), contentType: type.restBase,
               });
-              if (media && post.contentHtml.includes(media.sourceUrl)) add({
+              const embeddedBlockId = new RegExp(
+                `<!--\\s*wp:(?:image|cover)\\s+\\{[^>]*"id"\\s*:\\s*${id}(?!\\d)`,
+                "i",
+              ).test(post.contentHtml);
+              if ((media?.sourceUrl && post.contentHtml.includes(media.sourceUrl)) || embeddedBlockId) add({
                 kind: "wordpress_content", remotePostId: String(post.id), contentType: type.restBase,
               });
             }
